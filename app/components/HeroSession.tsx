@@ -19,7 +19,7 @@ export default function HeroSession(){
                         <button className="px-6 py-3 rounded-full w-full lg:w-fit dark:bg-transparent border border-black dark:text-white dark:bg-slate-800 dark:border-white hover:bg-slate-400">Download Resume</button>
                     </div>
                 </div>
-                <div className="col-span-5 place-self-left mt-4 lg:mt-0">
+                <div className="col-span-5 place-self-center mt-4 lg:mt-0">
                     <div className="rounded-full w-[350px] h-[350px] lg:w-[400px] lg:h-[400px] relative bg-gray-100 dark:bg-[#1E1E1E]">
                         <Image className="absolute transform -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2" src="/images/avatar.jpg" alt="Avatar" width={300} height={300} />
                     </div>
