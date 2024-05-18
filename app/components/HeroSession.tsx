@@ -1,8 +1,6 @@
-"use client";
-
 import Image from "next/image";
 
-import { TypeAnimation } from 'react-type-animation';
+import TextAnimator from "./TextAnimator";
 
 
 export default function HeroSession(){
@@ -13,22 +11,7 @@ export default function HeroSession(){
                     <h1 className="mb-4 text-4xl lg:text-6xl font-extrabold">
                         <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400">Hello, I&apos;m {" "}</span>
                         <br/>
-                        <TypeAnimation
-                            sequence={[
-                                // Same substring at the start will only be typed out once, initially
-                                'Lwin Maung Maung',
-                                3000, // wait 1s before replacing "Mice" with "Hamsters"
-                                'a Software Engineer',
-                                3000,
-                                'a Backend Developer',
-                                3000,
-                                'a Full-Stack Developer',
-                                3000
-                            ]}
-                            wrapper="span"
-                            speed={50}
-                            repeat={Infinity}
-                        />
+                        <TextAnimator />
                     </h1>
                     <p className="text-lg lg:text-xl">This is paragraph about me</p>
                     <div className="space-y-3 lg:space-x-3 mt-3">
