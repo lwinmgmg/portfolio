@@ -23,12 +23,12 @@ export default function NavMobileMenu({ menus }:{
     const onClickBar = ()=>{
         setBtnClick(true);
     }
-    const btnClassName = "px-5 py-3 border border-white rounded-xl";
+    const btnClassName = "px-4 py-2 rounded-xl";
     return (
         <>
             {
-                btnClick ? <button className={btnClassName} onClick={onClickCross}><CrossIcon className="w-10 h-10" /></button>
-                : <button className={btnClassName} onClick={onClickBar}><Bar3Icon className="w-10 h-10" /></button>
+                btnClick ? <button className={clsx(btnClassName, "border border-white")} onClick={onClickCross}><CrossIcon className="w-12 h-12" /></button>
+                : <button className={clsx(btnClassName)} onClick={onClickBar}><Bar3Icon className="w-12 h-12" /></button>
             }
         </>
     );
