@@ -10,11 +10,11 @@ export default function TextAnimator(){
                     // Same substring at the start will only be typed out once, initially
                     'Lwin Maung Maung',
                     3000, // wait 1s before replacing "Mice" with "Hamsters"
-                    'a Software Engineer',
+                    'Software Engineer',
                     3000,
-                    'a Backend Developer',
+                    'Backend Developer',
                     3000,
-                    'a Full-Stack Developer',
+                    'Full-Stack Developer',
                     3000
                 ]}
                 wrapper="span"
