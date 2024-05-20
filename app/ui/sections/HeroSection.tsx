@@ -1,9 +1,9 @@
 import Image from "next/image";
 
-import TextAnimator from "./TextAnimator";
+import TextAnimator from "../components/TextAnimator";
 
 
-export default function HeroSession(){
+export default function HeroSection(){
     return (
         <section>
             <div className="grid grid-cols-1 lg:grid-cols-12">
@@ -11,9 +11,9 @@ export default function HeroSession(){
                     <h1 className="mb-4 text-4xl lg:text-6xl font-extrabold">
                         <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-green-400">Hello, I&apos;m {" "}</span>
                         <br/>
-                        <span className="text-slate-800 dark:text-slate-100"><TextAnimator /></span>
+                        <TextAnimator />
                     </h1>
-                    <p className="text-lg lg:text-xl text-slate-800 dark:text-slate-100">This is paragraph about me</p>
+                    <p className="text-lg lg:text-xl ">Thank you for visiting my Portfolio Website. If you want to contribute the design and source code, please visit <a className="text-blue-500 dark:text-blue-300 underline capitalize" href="https://github.com/lwinmgmg/portfolio" target="_blank">here</a>.</p>
                     <div className="space-y-3 lg:space-x-3 mt-3">
                         <button className="px-6 py-3 rounded-full w-full lg:w-fit text-white bg-gradient-to-r from-blue-400 to-green-400 hover:from-green-400 hover:to-blue-400">Hire Me</button>
                         <button className="px-6 py-3 rounded-full w-full lg:w-fit dark:bg-transparent border border-black dark:text-white dark:bg-slate-800 dark:border-white hover:bg-slate-400">Download Resume</button>
