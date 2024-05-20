@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-import TextAnimator from "../components/TextAnimator";
+import TextAnimator from "../components/hero/TextAnimator";
 
 
 export default function HeroSection(){
