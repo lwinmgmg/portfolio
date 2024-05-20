@@ -3,7 +3,7 @@ import SubMenu from "../components/about/SubMenu";
 
 export default function AboutSection() {
   return (
-    <section id="about">
+    <section id="about" className="pt-20">
         <div className="lg:grid lg:grid-cols-2 gap-8">
             <div>
                 <Image src="/images/about_me.png" height={500} width={500} alt="About Image" />

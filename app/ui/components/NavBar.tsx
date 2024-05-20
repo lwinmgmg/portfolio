@@ -24,7 +24,7 @@ const menus: Array<Menu> = [
 
 export default function NavBar(){
     return (
-        <nav className="w-full fixed top-0 left-0 z-10 bg-opacity-50">
+        <nav className="w-full fixed top-0 left-0 z-10 bg-slate-300 dark:bg-slate-950 bg-opacity-50 dark:bg-opacity-50">
             <div className="relative">
                 <div className="flex flex-row flex-wrap items-center justify-between mx-auto px-8 py-5">
                     <Link href={"/"} className="text-5xl font-semibold text-slate-800 hover:text-slate-500 dark:text-slate-100 dark:hover:text-white">LOGO</Link>
