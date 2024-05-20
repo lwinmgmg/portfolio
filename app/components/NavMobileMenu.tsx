@@ -28,11 +28,11 @@ export default function NavMobileMenu({ menus }:{
     return (
         <>
             {
-                btnClick ? <button className={clsx(btnClassName, "border border-white")} onClick={onClickCross}><CrossIcon className="w-10 h-10" /></button>
-                : <button className={clsx(btnClassName)} onClick={onClickBar}><Bar3Icon className="w-10 h-10" /></button>
+                btnClick ? <MenuOverlay onClickCross={onClickCross} menus={menus} /> : null
             }
             {
-                btnClick ? <MenuOverlay onClickCross={onClickCross} menus={menus} /> : null
+                btnClick ? <button className={clsx(btnClassName, "relative border border-white z-30")} onClick={onClickCross}><CrossIcon className="w-10 h-10" /></button>
+                : <button className={clsx(btnClassName)} onClick={onClickBar}><Bar3Icon className="w-10 h-10" /></button>
             }
         </>
     );

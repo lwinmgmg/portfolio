@@ -2,7 +2,9 @@
 
 import { TypeAnimation } from 'react-type-animation';
 
-export default function TextAnimator(){
+export default function TextAnimator({ className = "" }: {
+    className?: string
+}){
     return (
         <>
             <TypeAnimation
@@ -20,6 +22,7 @@ export default function TextAnimator(){
                 wrapper="span"
                 speed={50}
                 repeat={Infinity}
+                className={className}
             />
         </>
     );
