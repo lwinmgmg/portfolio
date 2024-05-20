@@ -24,14 +24,14 @@ export default function NavMobileMenu({ menus }:{
     const onClickBar = ()=>{
         setBtnClick(true);
     }
-    const btnClassName = "px-4 py-2 rounded-xl";
+    const btnClassName = "px-4 py-2 rounded-xl text-slate-800 dark:text-slate-100";
     return (
         <>
             {
                 btnClick ? <MenuOverlay onClickCross={onClickCross} menus={menus} /> : null
             }
             {
-                btnClick ? <button className={clsx(btnClassName, "relative border border-white z-30")} onClick={onClickCross}><CrossIcon className="w-10 h-10" /></button>
+                btnClick ? <button className={clsx(btnClassName, "relative border border-slate-800 dark:border-slate-100 z-30")} onClick={onClickCross}><CrossIcon className="w-10 h-10" /></button>
                 : <button className={clsx(btnClassName)} onClick={onClickBar}><Bar3Icon className="w-10 h-10" /></button>
             }
         </>

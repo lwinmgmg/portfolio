@@ -7,7 +7,7 @@ export default function NavWebMenu({ menus }:{
         <ul className="flex flex-row">
             {
                 menus.length>0 ? menus.map(({title, href})=>
-                    (<li key={title}><Link href={href} className="block py-3 px-4 dark:text-slate-200 dark:hover:text-white font-bold">{title}</Link></li>))
+                    (<li key={title}><Link href={href} className="block py-3 px-4 text-slate-800 hover:text-slate-500 dark:text-slate-200 dark:hover:text-white font-bold">{title}</Link></li>))
                     : null
             }
         </ul>
