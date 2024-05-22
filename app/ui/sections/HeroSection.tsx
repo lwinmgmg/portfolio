@@ -13,7 +13,7 @@ export default function HeroSection(){
                         <br/>
                         <TextAnimator />
                     </h1>
-                    <p className="text-lg lg:text-xl ">Thank you for visiting my Portfolio Website. If you want to contribute the design and source code, please visit <a className="text-blue-500 dark:text-blue-300 underline capitalize" href="https://github.com/lwinmgmg/portfolio" target="_blank">here</a>.</p>
+                    <p className="text-lg lg:text-xl ">Thank you for visiting my Portfolio Website. If you&apos;d like to contribute the design and the source code, please visit <a className="text-blue-500 dark:text-blue-300 underline capitalize" href="https://github.com/lwinmgmg/portfolio" target="_blank">here</a>.</p>
                     <div className="space-y-3 lg:space-x-3 mt-3">
                         <button className="px-6 py-3 rounded-full w-full lg:w-fit text-white bg-gradient-to-r from-blue-400 to-green-400 hover:from-green-400 hover:to-blue-400">Hire Me</button>
                         <button className="px-6 py-3 rounded-full w-full lg:w-fit dark:bg-transparent border border-black hover:bg-slate-400 dark:text-white dark:bg-slate-800 dark:border-white dark:hover:bg-slate-800">Download Resume</button>
