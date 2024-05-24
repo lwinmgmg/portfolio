@@ -10,7 +10,7 @@ export default function AboutSection() {
             </div>
             <div>
                 <h2 className="text-4xl font-bold mb-4">About Me</h2>
-                <p className="text-lg mb-4">Highly motivated Senior Software Engineer seeking a Backend or Full-Stack development role with expertise in cloud computing (including containerization with Docker and Kubernetes) and experience in various programming languages (Python, Golang).
+                <p className="text-lg mb-4 text-justify">Highly motivated Senior Software Engineer seeking a Backend or Full-Stack development role with expertise in cloud computing (including containerization with Docker and Kubernetes) and experience in various programming languages (Python, Golang).
 Proven ability to deliver robust software solutions through full-stack development (Python, PostgreSQL) and expertise in CI/CD pipelines for various frameworks. Additionally, I possess experience with Golang and Next.js, having built personal projects utilizing microservices architecture.
                 </p>
                 <SubMenu />
