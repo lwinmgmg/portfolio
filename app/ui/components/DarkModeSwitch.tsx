@@ -16,7 +16,7 @@ const MoonIncon = ()=>(
 );
 
 export default function DarkModeSwitch(){
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(true);
   useEffect(()=>{
     const theme = localStorage.getItem("color-theme") || "dark";
     if (theme === "light"){
