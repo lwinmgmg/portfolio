@@ -12,14 +12,14 @@ export default function Experience(){
             />
             <ExperienceItem
             name="System and Network Engineer"
-            title="T3K Technology Co., LTD"
+            title="T3K Technology Co., Ltd"
             location="Yangon, Myanmar"
             startDate={new Date("2020/06/01")}
             endDate={new Date("2020/12/30")}
             />
             <ExperienceItem
-            name="Software Engineer Engineer"
-            title="Frontiir Co., LTD"
+            name="Software Engineer"
+            title="Frontiir Co., Ltd"
             location="Yangon, Myanmar"
             startDate={new Date("2021/01/18")}
             endDate={new Date("2024/03/18")}

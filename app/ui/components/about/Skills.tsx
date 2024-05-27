@@ -44,7 +44,7 @@ export default function Skills(){
             ["Kubernetes", 75],
             ["Jenkin", 75],
         ]],
-        ["Operating System", [
+        ["Operating Systems", [
             ["Linux", 100],
             ["Window", 75],
             ["Mac", 50]

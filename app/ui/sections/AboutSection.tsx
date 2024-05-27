@@ -4,7 +4,7 @@ import Link from "next/link";
 
 export default function AboutSection() {
   return (
-    <section id="about" className="pt-20">
+    <section id="about" className="">
         <div className="lg:grid lg:grid-cols-2 gap-8">
             <div>
                 <Image src="/images/about_me.png" height={500} width={500} alt="About Image" />
