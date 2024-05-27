@@ -24,6 +24,13 @@ export default function Experience(){
             startDate={new Date("2019/11/01")}
             endDate={new Date("2020/04/30")}
             />
+            <ExperienceItem
+            name="Internship"
+            title="DigiNet Co., Ltd"
+            location="Yangon, Myanmar"
+            startDate={new Date("2018/11/26")}
+            endDate={new Date("2019/04/31")}
+            />
         </div>
     );
 }
