@@ -89,9 +89,9 @@ export default function Experience(){
                         />))
                 }
             </div>
-            <div className="grid grid-cols-1 gap-1 py-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
+            <div className="py-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
                 <h4 className="text-md font-semibold px-2">Achievements and Responsibilities</h4>
-                <ul className="list-disc text-sm px-8 text-justify space-y-1">
+                <ul className="list-disc text-sm px-8 mt-1 text-justify space-y-1">
                     {
                         experiences[selectedId].description.map((desc)=>(<li key={desc}>{desc}</li>))
                     }
