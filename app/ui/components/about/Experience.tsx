@@ -9,6 +9,7 @@ export default function Experience(){
             location="Yangon, Myanmar"
             startDate={new Date("2021/01/18")}
             endDate={new Date("2024/03/18")}
+            website="https://www.frontiir.com/"
             />
             <ExperienceItem
             name="System and Network Engineer"
@@ -16,6 +17,7 @@ export default function Experience(){
             location="Yangon, Myanmar"
             startDate={new Date("2020/06/01")}
             endDate={new Date("2020/12/30")}
+            website="https://www.t3ktechnology.com/"
             />
             <ExperienceItem
             name="Software Developer"
@@ -23,13 +25,15 @@ export default function Experience(){
             location="Yangon, Myanmar"
             startDate={new Date("2019/11/01")}
             endDate={new Date("2020/04/30")}
+            website="https://www.cosmosmm.com/"
             />
             <ExperienceItem
             name="Internship"
             title="DigiNet Co., Ltd"
             location="Yangon, Myanmar"
             startDate={new Date("2018/11/26")}
-            endDate={new Date("2019/04/31")}
+            endDate={new Date("2019/01/31")}
+            website="https://www.diginet-sg.com/"
             />
         </div>
     );
