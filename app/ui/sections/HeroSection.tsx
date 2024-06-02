@@ -5,7 +5,7 @@ import TextAnimator from "../components/hero/TextAnimator";
 
 export default function HeroSection(){
     return (
-        <section>
+        <section className="">
             <div className="grid grid-cols-1 lg:grid-cols-12">
                 <div className="col-span-7 w-full place-self-center text-center lg:text-left">
                     <h1 className="mb-4 text-4xl lg:text-6xl font-extrabold">

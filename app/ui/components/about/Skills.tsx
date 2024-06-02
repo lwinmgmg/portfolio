@@ -14,7 +14,7 @@ export default function Skills(){
             ["Golang", 95],
             ["NodeJS", 90],
             ["TypeScript", 90],
-            ["Java", 50],
+            ["Java", 65],
             ["C++", 50]
         ]],
         ["Databases", [
