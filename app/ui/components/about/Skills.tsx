@@ -54,7 +54,7 @@ export default function Skills(){
     const skillValues = skills.filter(skill=>skill[0] == selectedSkill)[0]
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-            <div className="p-10 rounded-3xl bg-slate-100 dark:bg-slate-800">
+            <div className="p-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
                 {
                     skills.map(skill=>(
                         <div key={skill[0]} className="mb-3 lg:mr-3">
@@ -65,7 +65,7 @@ export default function Skills(){
                     ))
                 }
             </div>
-            <div className="flex-grow grid grid-cols-1 gap-1 justify-center items-center p-10 rounded-3xl bg-slate-100 dark:bg-slate-800">
+            <div className="grid grid-cols-1 gap-1 justify-center items-center p-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
                 {
                     skillValues[1].map(([name, value])=>(
                         <div key={name}>

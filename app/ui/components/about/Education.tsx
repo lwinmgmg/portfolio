@@ -2,7 +2,7 @@ import EducationItem from "./EducationItem";
 
 export default function Education(){
     return (
-        <div className="space-y-3 p-10 rounded-3xl bg-slate-100 dark:bg-slate-800">
+        <div className="space-y-3 p-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
             <EducationItem
             name="Yangon Technological University"
             title="Bachelor of Engineering, BE. Mechatronics Engineering"

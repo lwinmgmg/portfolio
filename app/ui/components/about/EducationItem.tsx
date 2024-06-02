@@ -22,7 +22,7 @@ descriptions,
             <p className="text-lg">{title}</p>
             <p className="text-xs">{startDate.toLocaleString('en-us',{month:'short', year:'numeric'})} - {endDate ? endDate.toLocaleString('en-us',{month:'short', year:'numeric'}) : "current" }{" "}({Math.floor(years)}{" "} years{" "}{months}{" "}months)</p>
             <p className="text-sm font-bold">Descriptions</p>
-            <ul className="list-disc px-5 text-sm font-thin">
+            <ul className="list-disc px-5 text-sm">
                 {
                     descriptions.map(desc => <li key={desc}>{desc}</li>)
                 }
