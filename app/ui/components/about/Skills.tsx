@@ -58,7 +58,7 @@ export default function Skills(){
                 {
                     skills.map(skill=>(
                         <div key={skill[0]} className="mb-3 lg:mr-3">
-                            <h2  onClick={()=>setSelectedSkill(skill[0])} className={clsx("text-xl font-semibold cursor-pointer inline-block border-green-800 dark:border-green-200", {
+                            <h2  onClick={()=>setSelectedSkill(skill[0])} className={clsx("text-lg lg:text-xl font-semibold cursor-pointer inline-block border-green-800 dark:border-green-200", {
                                 "border-b-2": skill[0] === selectedSkill
                             })}>{skill[0]}</h2>
                         </div>
