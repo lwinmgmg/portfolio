@@ -27,7 +27,7 @@ export default function NavBar(){
         <nav className="w-full fixed top-0 left-0 z-10 bg-slate-300 dark:bg-slate-950 bg-opacity-50 dark:bg-opacity-50">
             <div className="relative">
                 <div className="flex flex-row flex-wrap items-center justify-between mx-auto px-8 py-5">
-                    <Link href={"/"} className="text-5xl font-semibold text-slate-800 hover:text-slate-500 dark:text-slate-100 dark:hover:text-white">LOGO</Link>
+                    <Link href={"/"} className="text-5xl font-semibold text-slate-800 hover:text-slate-500 dark:text-slate-100 dark:hover:text-white">LMM</Link>
                     <div className="flex flex-row items-center">
                         <div className="mr-2 relative z-30">
                             <DarkModeSwitch />

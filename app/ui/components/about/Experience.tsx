@@ -75,7 +75,8 @@ export default function Experience(){
     const [selectedId, setSelectedId] = useState(0);
     return (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-            <div className="py-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
+            <div className="">
+                <div className="flex flex-col py-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
                 {
                     experiences.map((exp, idx)=>(<ExperienceItem key={exp.title}
                         onClick={()=>setSelectedId(idx)}
@@ -88,14 +89,17 @@ export default function Experience(){
                         selected={idx===selectedId}
                         />))
                 }
+                </div>
             </div>
-            <div className="py-8 rounded-3xl bg-slate-100 dark:bg-slate-800">
+            <div className="py-8 rounded-3xl flex flex-col bg-slate-100 dark:bg-slate-800">
                 <h4 className="text-md font-semibold px-2">Achievements and Responsibilities</h4>
-                <ul className="list-disc text-sm px-8 mt-1 text-justify space-y-1">
-                    {
-                        experiences[selectedId].description.map((desc)=>(<li key={desc}>{desc}</li>))
-                    }
-                </ul>
+                <div className="flex-grow">
+                    <ul className="list-disc max-w-full text-sm px-8 mt-1 text-justify space-y-1 overflow-y-auto">
+                        {
+                            experiences[selectedId].description.map((desc)=>(<li key={desc}>{desc}</li>))
+                        }
+                    </ul>
+                </div>
             </div>
         </div>
     );
