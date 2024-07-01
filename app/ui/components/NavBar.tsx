@@ -22,7 +22,7 @@ const menus: Array<Menu> = [
     },
     {
         title: "Contact",
-        href: "#contact"
+        href: "#contact-us"
     }
 ]
 
@@ -50,7 +50,10 @@ export default function NavBar(){
         )}>
             <div className="relative">
                 <div className="flex flex-row flex-wrap items-center justify-between mx-auto px-8 py-5">
-                    <Link href={"/"} className="text-5xl font-semibold text-slate-800 hover:text-slate-500 dark:text-slate-100 dark:hover:text-white">LMM</Link>
+                    <Link href={"/"} className="text-5xl font-semibold text-slate-800 hover:text-slate-500 dark:text-slate-100 dark:hover:text-white">
+                        <span className="block lg:hidden">LMM</span>
+                        <span className="hidden lg:block">Lwin Maung Maung</span>
+                    </Link>
                     <div className="flex flex-row items-center">
                         <div className="mr-2 relative z-30">
                             <DarkModeSwitch />
