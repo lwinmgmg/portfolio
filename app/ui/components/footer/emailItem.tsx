@@ -1,5 +1,5 @@
 import Link from "next/link";
-import ContactItem from "./contact_item";
+import ContactItem from "./contactItem";
 
 export default function EmailItem({
     email

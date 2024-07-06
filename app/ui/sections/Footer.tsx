@@ -1,4 +1,4 @@
-import ContactUs from "../components/footer/contact_us"
+import ContactUs from "../components/footer/contactUs"
 
 export default function Footer(){
     return (

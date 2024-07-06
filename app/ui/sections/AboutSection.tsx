@@ -7,7 +7,7 @@ export default function AboutSection() {
     <section id="about" className="pt-20">
         <div className="lg:grid lg:grid-cols-2 gap-8">
             <div>
-                <Image src="/images/about_me.png" height={500} width={500} alt="About Image" />
+                <Image src="/images/about_me.png" priority height={500} width={500} alt="About Image" />
             </div>
             <div>
                 <h2 className="text-4xl font-bold mb-4">About Me</h2>

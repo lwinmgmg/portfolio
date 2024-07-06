@@ -1,6 +1,8 @@
-import EmailItem from "./email_item";
-import GithubItem from "./github_item";
-import PhoneItem from "./phone_item";
+import EmailItem from "./emailItem";
+import FacebookItem from "./facebookItem";
+import GithubItem from "./githubItem";
+import LinkedinItem from "./linkedinItem";
+import PhoneItem from "./phoneItem";
 
 export default function ContactUs(){
     return (
@@ -20,10 +22,10 @@ export default function ContactUs(){
                 </ul>
                 <ul className="space-y-1">
                     <li>
-                        <EmailItem email="lwinmaungmaung.ytu@gmail.com" />
+                        <FacebookItem href="" name="facebook.com" />
                     </li>
                     <li>
-                        <PhoneItem phone="+66842783635" />
+                        <LinkedinItem href="https://www.linkedin.com/in/lwinmgmg/" name="linkedin.com/in/lwinmgmg" />
                     </li>
                 </ul>
             </div>
