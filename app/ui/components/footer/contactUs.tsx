@@ -22,7 +22,7 @@ export default function ContactUs(){
                 </ul>
                 <ul className="space-y-1">
                     <li>
-                        <FacebookItem href="" name="facebook.com" />
+                        <FacebookItem href="https://www.facebook.com/lwinmgmg97" name="facebook.com/lwinmgmg97" />
                     </li>
                     <li>
                         <LinkedinItem href="https://www.linkedin.com/in/lwinmgmg/" name="linkedin.com/in/lwinmgmg" />

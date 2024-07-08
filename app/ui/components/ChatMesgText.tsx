@@ -10,18 +10,16 @@ export default function ChatMesgText({
     }>
 }){
     return (
-        <div className={clsx("flex m-1", {
+        <div className={clsx("flex m-1 mb-2", {
             "flex-row-reverse": role==="user",
             "flex-row": role==="model"
         })}>
             <div>
+            <p style={{whiteSpace: "pre-wrap"}} className="p-3 rounded-lg bg-slate-100 dark:bg-slate-950">
                 {
-                    parts.map((part, idx) => (
-                        <p style={{whiteSpace: "pre-wrap"}} key={part + idx.toString()} className="p-3 rounded-lg bg-slate-100 dark:bg-slate-950">
-                            {part.text}
-                        </p>
-                    ))
+                    parts.map((part) =>part.text).join("\n\n")
                 }
+            </p>
             </div>
         </div>
     );
