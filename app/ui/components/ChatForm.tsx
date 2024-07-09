@@ -63,7 +63,7 @@ export default function ChatForm({
 
     return (
         <form ref={formRef} onSubmit={onSubmit} className="flex flex-row">
-            <textarea readOnly={loading} autoFocus onKeyDown={onKeyPress} value={mesg} onChange={onChange} name="mesg" rows={1} className="flex-grow p-3 bg-slate-100 dark:bg-slate-950 rounded-md ring-0 border-none resize-y" />
+            <textarea readOnly={loading} autoFocus onKeyDown={onKeyPress} value={mesg} onChange={onChange} name="mesg" rows={1} className="flex-grow p-3 bg-slate-100 dark:bg-slate-900 rounded-md border border-slate-900 dark:border-slate-100 resize-y" />
             <button className="p-3 rounded-md border">Send</button>
         </form>
     );

@@ -40,7 +40,7 @@ const defaultContents: Array<Message> = [
             {text: "output: Okay"},
             {text: "input: Lwin Maung Maung also worked as a System and Network Engineer in T3K Technology Co., Ltd from JUN 2020 to DEC 2020."},
             {text: "output: Okay"},
-            {text: "input: who are you?"},
+            {text: "input: Act as Lwin Maung Maung."},
             {text: "output: "},
           ]
     },
