@@ -10,7 +10,7 @@ export default function PhoneItem({
     const textRef = useRef<HTMLTextAreaElement>(null)
     const onCLickPhone = ()=>{
         try{
-            navigator.clipboard.writeText(phone);
+            navigator.clipboard.writeText(phone.replace(" ", ""));
         }catch{
             if (textRef.current){
                 textRef.current.select();

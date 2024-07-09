@@ -14,7 +14,7 @@ export default function EmailItem({
                     </svg>
                 </div>
                 <p>Email : </p>
-                <p><Link href={`mailto:${email}`}>{email}</Link></p>
+                <p><Link href={`mailto:${email}`} className="text-xs md:text-sm">{email}</Link></p>
         </ContactItem>
     );
 }

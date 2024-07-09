@@ -1,4 +1,5 @@
 import AboutSection from "./ui/sections/AboutSection";
+import Certification from "./ui/sections/Certification";
 import HeroSession from "./ui/sections/HeroSection";
 import ProjectSection from "./ui/sections/ProjectSection";
 
@@ -9,6 +10,7 @@ export default function Home() {
         <HeroSession />
         <AboutSection />
         <ProjectSection />
+        <Certification />
       </div>
     </main>
   );
