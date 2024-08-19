@@ -18,8 +18,8 @@ export default function AboutSection() {
                       <Image src="/images/profile.png" className="absolute transform -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2 block lg:hidden" height={100} width={100} alt="Profile" />
                     </Link>
                   </div>
-                  <p className="text-lg mb-4 text-justify">Highly motivated Senior Software Engineer seeking a Backend or Full-Stack development role with expertise in cloud computing (including containerization with Docker and Kubernetes) and experience in various programming languages (Python, Golang).
-  Proven ability to deliver robust software solutions through full-stack development (Python, PostgreSQL) and expertise in CI/CD pipelines for various frameworks. Additionally, I possess experience with Golang and Next.js, having built personal projects utilizing microservices architecture.
+                  <p className="text-lg mb-4 text-justify">
+                    A highly motivated Senior Software Engineer with deep expertise in backend and full-stack development, specializing in cloud computing and containerization using Docker and Kubernetes. Proficient in a range of programming languages, including Python and Golang, with a proven track record of delivering robust software solutions. Experienced in full-stack development with Python and PostgreSQL, and adept at implementing CI/CD pipelines across various frameworks. Additionally, I bring hands-on experience with Golang and Next.js, having developed personal projects using microservices architecture.
                   </p>
                 </div>
                 <SubMenu />

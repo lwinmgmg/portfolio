@@ -8,12 +8,25 @@ type ExperienceType = {
     title: string,
     location: string,
     startDate: Date,
-    endDate: Date,
+    endDate?: Date,
     website: string,
     description: string[]
 }
 
 const experiences: ExperienceType[] = [
+    {
+        name:"Software Engineer (Freelance)",
+        title:"Thamadaw",
+        location:"Yangon, Myanmar",
+        startDate:new Date("2024/05/01"),
+        website:"https://www.frontiir.com/",
+        description: [
+            "Implemented a comprehensive medical record backend system to streamline patient data management and improve healthcare efficiency including CI/CD.",
+            "Developing REST APIs for seamless mobile integration with the medical record system.",
+            "Currently developing and enhancing cross-platform mobile applications using Flutter for both Android and iOS, ensuring optimal performance and user experience.",
+            "Currently integrating third-party applications such as payment systems, Google login, and Zoom meetings into cross-platform mobile apps using Flutter."
+        ]
+    },
     {
         name:"Software Engineer",
         title:"Frontiir Co., Ltd",
