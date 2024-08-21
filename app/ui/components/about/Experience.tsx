@@ -16,7 +16,7 @@ type ExperienceType = {
 const experiences: ExperienceType[] = [
     {
         name:"Software Engineer (Freelance)",
-        title:"Thamadaw",
+        title:"Thamardaw",
         location:"Yangon, Myanmar",
         startDate:new Date("2024/05/01"),
         website:"https://www.frontiir.com/",
