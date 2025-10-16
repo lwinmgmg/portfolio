@@ -15,11 +15,45 @@ type ExperienceType = {
 
 const experiences: ExperienceType[] = [
     {
-        name:"Software Engineer (Freelance)",
+        name:"Lead Software Developer (Remote)",
+        title:"CMG Billing Ltd",
+        location:"United Kingdom",
+        startDate:new Date("2025/10/01"),
+        endDate: undefined,
+        website:"https://www.clinicsmedicalgroup.com/",
+        description: [
+            "Developing and maintaining GDPR-compliant telehealth software systems and backend microservices",
+            "Working remotely full-time; income derived solely from UK employer",
+            "Managing CI/CD pipelines, code deployments, and infrastructure security across AWS environments"
+        ]
+    },
+    {
+        name:"Full Stack Developer",
+        title:"Future Makers",
+        location:"Bangkok, Thailand",
+        startDate:new Date("2024/09/16"),
+        endDate: new Date("2025/09/30"),
+        website:"https://www.linkedin.com/company/future-makers-living",
+        description: [
+            "Developed and successfully delivered the Purchase Order feature, enhancing operational efficiency and order management.",
+            "Diagnosed and optimized GitHub Actions CI/CD pipelines, significantly improving build and deployment performance.",
+            "Implemented zero-downtime deployment strategies to ensure seamless production releases.",
+            "Designed and implemented the Promotion feature for orders, enabling dynamic discount and campaign management.",
+            "Led the MongoDB version migration, ensuring data integrity and system stability during the transition.",
+            "Architected and developed a multi-channel chat system from scratch, integrating major platforms such as Facebook, LINE, Shopee, and others — allowing users to manage and respond to all customer conversations from a unified interface.",
+            "Upgraded TikTok Shop API integration to the latest version for enhanced partner compatibility.",
+            "Integrated Noc Noc order system with the internal ERP from scratch, streamlining cross-platform order synchronization and automation.",
+            "Set up Grafana and Prometheus for real-time Docker container monitoring, enabling resource tracking, alerting, and visualization across services.",
+            "Implemented and migrated background job processing from NestJS Bull (Redis) to RabbitMQ, improving message reliability, scalability, and system throughput."
+        ]
+    },
+    {
+        name:"Freelance Software Developer",
         title:"Thamardaw",
-        location:"Yangon, Myanmar",
+        location:" Multiple Clients (Asia & UK)",
         startDate:new Date("2024/05/01"),
-        website:"https://www.frontiir.com/",
+        endDate: new Date("2024/09/01"),
+        website:"https://www.linkedin.com/in/lwinmgmg/",
         description: [
             "Implemented a comprehensive medical record backend system to streamline patient data management and improve healthcare efficiency including CI/CD.",
             "Developing REST APIs for seamless mobile integration with the medical record system.",
