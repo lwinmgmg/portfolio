@@ -2,8 +2,8 @@
 
 import { useActionState } from "react";
 
-import { createProjectAction } from "@/app/admin/actions";
-import type { CreateProjectState } from "@/app/admin/create-project-state";
+import { createProjectAction } from "@/app/admin/(panel)/actions";
+import type { CreateProjectState } from "@/app/admin/(panel)/create-project-state";
 
 const initialState: CreateProjectState = { status: "idle", message: null };
 

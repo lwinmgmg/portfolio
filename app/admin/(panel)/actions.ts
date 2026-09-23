@@ -1,15 +1,18 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
-import type { CreateProjectState } from "@/app/admin/create-project-state";
+import type { CreateProjectState } from "@/app/admin/(panel)/create-project-state";
 import { isDatabaseConfigured } from "@/server/db/client";
+import { ADMIN_LOGIN_PATH } from "@/server/domain/auth";
+import { logout, withAdmin } from "@/server/services/auth-service";
 import {
   createProject,
   InvalidProjectError,
 } from "@/server/services/project-service";
 
-export async function createProjectAction(
+async function saveProject(
   _previous: CreateProjectState,
   formData: FormData,
 ): Promise<CreateProjectState> {
@@ -35,4 +38,18 @@ export async function createProjectAction(
 
   revalidatePath("/admin");
   return { status: "saved", message: "Project saved." };
+}
+
+const saveProjectAsAdmin = withAdmin(saveProject);
+
+export async function createProjectAction(
+  previous: CreateProjectState,
+  formData: FormData,
+): Promise<CreateProjectState> {
+  return saveProjectAsAdmin(previous, formData);
+}
+
+export async function logoutAction(): Promise<void> {
+  await logout();
+  redirect(ADMIN_LOGIN_PATH);
 }

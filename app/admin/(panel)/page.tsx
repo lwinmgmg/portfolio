@@ -1,10 +1,12 @@
 import { connection } from "next/server";
 
-import { CreateProjectForm } from "@/app/admin/create-project-form";
+import { CreateProjectForm } from "@/app/admin/(panel)/create-project-form";
 import { isDatabaseConfigured } from "@/server/db/client";
+import { requireAdmin } from "@/server/services/auth-service";
 import { listProjects } from "@/server/services/project-service";
 
 export default async function AdminPage() {
+  await requireAdmin();
   await connection();
 
   if (!isDatabaseConfigured()) {
