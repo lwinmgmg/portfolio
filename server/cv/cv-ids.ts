@@ -14,6 +14,16 @@ import type {
 // A name with no letters or digits still needs a stable, non-empty id.
 const FALLBACK_SLUG = "item";
 
+export class DuplicateCvEntityKeyError extends Error {
+  readonly entityKey: string;
+
+  constructor(entityKey: string) {
+    super(`Duplicate CV entity key "${entityKey}".`);
+    this.name = "DuplicateCvEntityKeyError";
+    this.entityKey = entityKey;
+  }
+}
+
 function slugPart(value: string): string {
   return value
     .normalize("NFKD")
@@ -151,13 +161,17 @@ function assignAll<T, R extends { id: string }>(
 
 function ensureAll<T extends { id: string }>(
   items: readonly T[],
+  kind: string,
   slugOf: (item: T) => string,
   copy: (item: T, id: string) => T,
 ): T[] {
   const used = new Set<string>();
   for (const item of items) {
     const id = keptId(item.id);
-    if (id !== null) used.add(id);
+    if (id !== null) {
+      if (used.has(id)) throw new DuplicateCvEntityKeyError(`${kind}:${id}`);
+      used.add(id);
+    }
   }
   return items.map((item) => {
     const id = keptId(item.id);
@@ -194,16 +208,22 @@ export function assignIds(extraction: CvExtraction): CvData {
 export function ensureIds(data: CvData): CvData {
   return {
     profile: copyProfile(data.profile),
-    experience: ensureAll(data.experience, experienceSlug, toExperience),
-    projects: ensureAll(data.projects, (item) => slug([item.name]), toProject),
+    experience: ensureAll(data.experience, "experience", experienceSlug, toExperience),
+    projects: ensureAll(data.projects, "project", (item) => slug([item.name]), toProject),
     education: ensureAll(
       data.education,
+      "education",
       (item) => slug([item.institution, item.degree]),
       toEducation,
     ),
-    skills: ensureAll(data.skills, (item) => slug([item.category]), toSkillGroup),
-    certifications: ensureAll(data.certifications, (item) => slug([item.name]), toCertification),
-    languages: ensureAll(data.languages, (item) => slug([item.name]), toLanguage),
-    otherSections: ensureAll(data.otherSections, (item) => slug([item.title]), toOther),
+    skills: ensureAll(data.skills, "skills", (item) => slug([item.category]), toSkillGroup),
+    certifications: ensureAll(
+      data.certifications,
+      "certification",
+      (item) => slug([item.name]),
+      toCertification,
+    ),
+    languages: ensureAll(data.languages, "language", (item) => slug([item.name]), toLanguage),
+    otherSections: ensureAll(data.otherSections, "other", (item) => slug([item.title]), toOther),
   };
 }

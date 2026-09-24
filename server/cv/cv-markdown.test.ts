@@ -180,3 +180,17 @@ test("rejects an unknown entity key", () => {
   expect(caught.message).toBe('Unknown CV entity "experience:missing".');
   expect(() => renderCvEntity(sampleCv, "notes")).toThrow();
 });
+
+test("rejects duplicate entity keys instead of hiding the later item", () => {
+  const data = {
+    ...sampleCv,
+    projects: [
+      sampleCv.projects[0],
+      { ...sampleCv.projects[0], name: "Second project", summary: "Unique second summary" },
+    ],
+  };
+
+  expect(() => listEntityKeys(data)).toThrow();
+  expect(() => renderCvEntity(data, "project:portfolio")).toThrow();
+  expect(() => renderCvMarkdown(data)).toThrow();
+});

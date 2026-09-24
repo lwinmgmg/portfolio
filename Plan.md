@@ -267,7 +267,7 @@ evals/cv-retrieval.golden.json
    - certification: `name`
    - language: `name`
    - other: `title`
-   Deduplicate with `-2`, `-3`. Also export `ensureIds(data: CvData)`, which fills only missing or empty ids (used after admin edits). Tests: determinism, dedupe, unicode/punctuation stripping.
+   Deduplicate with `-2`, `-3`. Also export `ensureIds(data: CvData)`, which fills only missing or empty ids and rejects duplicate existing ids (used after admin edits). Tests: determinism, dedupe, unicode/punctuation stripping.
 3. `server/cv/cv-markdown.ts`: `renderCvMarkdown(data): string`. Deterministic canonical markdown: `# fullName`, a headline line, then `## Section` headings and `### item` headings. Also export `renderCvEntity(data, entityKey): string` for a single entity (used by chunkers). Entity keys:
    - `profile`
    - `experience:<id>`
@@ -302,7 +302,7 @@ evals/cv-retrieval.golden.json
      deleteDraft(id: string): Promise<boolean>;
    }
    ```
-5. `server/repositories/cv-version-repository.ts`: collection `cv_versions`. Indexes: `{ createdAt: -1 }` and a **unique partial index** on `{ status: 1 }` with `partialFilterExpression: { status: "published" }`. `publish` sets the old published version to `archived` and then the target to `published` + `publishedAt`, both inside the given transaction (archive first, so the unique index holds).
+5. `server/repositories/cv-version-repository.ts`: collection `cv_versions`. Indexes: `{ createdAt: -1 }` and a **unique partial index** on `{ status: 1 }` with `partialFilterExpression: { status: "published" }`. `publish` requires a completed draft inside the transaction, sets the old published version to `archived`, then conditionally promotes the draft to `published` + `publishedAt` (archive first, so the unique index holds).
 
 **Done when**
 - Schema, id and markdown tests pass. The repository compiles (no DB tests required).

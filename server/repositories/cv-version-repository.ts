@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { WithId } from "mongodb";
+import type { Filter, WithId } from "mongodb";
 
 import type { TransactionContext } from "@/server/db/transaction";
 import {
@@ -188,6 +188,20 @@ export class MongoCvVersionRepository
 
     const existing = await this.collection().findOne({ _id: objectId }, { session: tx.session });
     if (!existing) throw new CvVersionNotFoundError(id);
+    if (
+      existing.status !== "draft" ||
+      existing.extraction.status !== "succeeded" ||
+      existing.data == null
+    ) {
+      throw new Error(`CV version "${id}" must be a complete draft to publish.`);
+    }
+
+    const eligibleDraft: Filter<CvVersionDocument> = {
+      _id: objectId,
+      status: "draft",
+      "extraction.status": "succeeded",
+      data: { $ne: null, $exists: true },
+    };
 
     const now = new Date();
     // Archive first. The partial unique index allows only one published version.
@@ -197,11 +211,13 @@ export class MongoCvVersionRepository
       { session: tx.session },
     );
     const document = await this.collection().findOneAndUpdate(
-      { _id: objectId },
+      eligibleDraft,
       { $set: { status: "published", publishedAt: now, updatedAt: now } },
       { returnDocument: "after", session: tx.session },
     );
-    if (!document) throw new CvVersionNotFoundError(id);
+    if (!document) {
+      throw new Error(`CV version "${id}" is no longer a complete draft to publish.`);
+    }
     return this.toEntity(document);
   }
 

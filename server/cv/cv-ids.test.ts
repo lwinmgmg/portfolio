@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { assignIds, ensureIds } from "@/server/cv/cv-ids";
+import { assignIds, DuplicateCvEntityKeyError, ensureIds } from "@/server/cv/cv-ids";
 import type { CvData, CvExtraction } from "@/server/domain/cv";
 
 function emptyExtraction(): CvExtraction {
@@ -153,7 +153,7 @@ test("fills blank ids without changing or colliding with existing ones", () => {
       { ...assigned.experience[1], id: "" },
       { ...assigned.experience[0], id: "   " },
       { ...assigned.experience[0], id: "same" },
-      { ...assigned.experience[0], id: "same" },
+      { ...assigned.experience[0], id: "another" },
     ],
   };
 
@@ -164,10 +164,33 @@ test("fills blank ids without changing or colliding with existing ones", () => {
     "acme-engineer-2020",
     "acme-engineer-2020-2",
     "same",
-    "same",
+    "another",
   ]);
   expect(edited.experience[1].id).toBe("");
   expect(edited.experience[2].id).toBe("   ");
+});
+
+test("rejects duplicate existing ids within a section", () => {
+  const assigned = assignIds({
+    ...emptyExtraction(),
+    projects: [project("First"), project("Second")],
+  });
+  const edited: CvData = {
+    ...assigned,
+    projects: assigned.projects.map((item) => ({ ...item, id: "shared" })),
+  };
+
+  let caught: unknown;
+  try {
+    ensureIds(edited);
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof DuplicateCvEntityKeyError)) {
+    throw new Error("Expected DuplicateCvEntityKeyError");
+  }
+  expect(caught.entityKey).toBe("project:shared");
+  expect(edited.projects.map((item) => item.id)).toEqual(["shared", "shared"]);
 });
 
 test("does not mutate the input collections", () => {

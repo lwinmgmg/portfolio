@@ -1,3 +1,4 @@
+import { DuplicateCvEntityKeyError } from "@/server/cv/cv-ids";
 import type {
   CvCertification,
   CvData,
@@ -195,9 +196,10 @@ function renderFound<T extends { id: string }>(
   entityKey: string,
   render: (item: T) => string,
 ): string {
-  const item = items.find((candidate) => candidate.id === id);
-  if (!item) throw new UnknownCvEntityError(entityKey);
-  return render(item);
+  const matches = items.filter((candidate) => candidate.id === id);
+  if (matches.length === 0) throw new UnknownCvEntityError(entityKey);
+  if (matches.length > 1) throw new DuplicateCvEntityKeyError(entityKey);
+  return render(matches[0]);
 }
 
 function renderKeyed(data: CvData, kind: EntityKind, id: string, entityKey: string): string {
@@ -220,7 +222,7 @@ function renderKeyed(data: CvData, kind: EntityKind, id: string, entityKey: stri
 }
 
 export function listEntityKeys(data: CvData): string[] {
-  return [
+  const keys = [
     "profile",
     ...data.experience.map((item) => `experience:${item.id}`),
     ...data.projects.map((item) => `project:${item.id}`),
@@ -230,6 +232,12 @@ export function listEntityKeys(data: CvData): string[] {
     ...data.languages.map((item) => `language:${item.id}`),
     ...data.otherSections.map((item) => `other:${item.id}`),
   ];
+  const seen = new Set<string>();
+  for (const key of keys) {
+    if (seen.has(key)) throw new DuplicateCvEntityKeyError(key);
+    seen.add(key);
+  }
+  return keys;
 }
 
 export function renderCvEntity(data: CvData, entityKey: string): string {
