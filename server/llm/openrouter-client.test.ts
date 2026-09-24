@@ -9,7 +9,7 @@ import {
   OpenRouterClient,
   type OpenRouterFetch,
 } from "@/server/llm/openrouter-client";
-import type { PdfToMarkdown } from "@/server/llm/pdf-to-markdown";
+import { PdfConversionError, type PdfToMarkdown } from "@/server/llm/pdf-to-markdown";
 
 const API_KEY = "test-key";
 const BASE_URL = "https://openrouter.test/api/v1";
@@ -300,6 +300,79 @@ test("sends locally converted PDF Markdown as text without an OpenRouter parser"
         { type: "text", text: 'PDF "cv.pdf" converted to Markdown:\n\n# Jane Doe\n\nSoftware engineer' },
       ],
     }],
+  });
+});
+
+test("does not call OpenRouter when local PDF conversion fails", async () => {
+  const dataUrl = `data:application/pdf;base64,${Buffer.from("%PDF-1.4").toString("base64")}`;
+  const cases: Array<{ dataUrl: string; convert: PdfToMarkdown; message: string }> = [
+    {
+      dataUrl: "https://example.com/cv.pdf",
+      convert: async () => "# unused",
+      message: "Local PDF conversion requires a PDF data URL.",
+    },
+    {
+      dataUrl,
+      convert: async () => "  ",
+      message: "The PDF has no extractable text.",
+    },
+  ];
+
+  for (const item of cases) {
+    const { fetch, requests } = createFetch([jsonResult(200, completion("nope"))]);
+    const { client } = createClient(fetch, { pdfToMarkdown: item.convert });
+    let caught: unknown;
+    try {
+      await client.complete(
+        chatRequest({
+          pdfEngine: "pdf-to-md",
+          messages: [{
+            role: "user",
+            content: [{ type: "file", filename: "cv.pdf", dataUrl: item.dataUrl }],
+          }],
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    if (!(caught instanceof PdfConversionError)) throw new Error("expected PdfConversionError");
+    expect(caught.message).toBe(item.message);
+    expect(requests.length).toBe(0);
+  }
+});
+
+test("streams locally converted PDF Markdown", async () => {
+  const dataUrl = `data:application/pdf;base64,${Buffer.from("%PDF-1.4").toString("base64")}`;
+  const { fetch, requests } = createFetch([
+    sseResult([event({ choices: [{ delta: { content: "ok" } }] }), "data: [DONE]\n\n"]),
+  ]);
+  const { client } = createClient(fetch, {
+    pdfToMarkdown: async () => "# CV",
+  });
+
+  const { events, error } = await collectStream(
+    client,
+    chatRequest({
+      pdfEngine: "pdf-to-md",
+      messages: [{
+        role: "user",
+        content: [{ type: "file", filename: "cv.pdf", dataUrl }],
+      }],
+    }),
+  );
+
+  expect(error).toBeNull();
+  expect(events).toEqual([
+    { type: "delta", text: "ok" },
+    { type: "done", usage: null },
+  ]);
+  expect(requireRequest(requests).body).toEqual({
+    model: "requested/model",
+    messages: [{
+      role: "user",
+      content: [{ type: "text", text: 'PDF "cv.pdf" converted to Markdown:\n\n# CV' }],
+    }],
+    stream: true,
   });
 });
 

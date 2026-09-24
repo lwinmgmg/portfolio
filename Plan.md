@@ -178,6 +178,8 @@ evals/cv-retrieval.golden.json
 
 ## Phase 1.2: OpenRouter client
 
+**Status:** Done
+
 **Files:** `server/domain/llm.ts`, `server/llm/sse.ts`, `server/llm/openrouter-client.ts`, `server/llm/llm-runtime.ts`, tests.
 
 **Steps**
