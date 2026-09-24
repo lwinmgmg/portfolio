@@ -2,14 +2,14 @@ import { z } from "zod";
 
 const DEFAULT_APP_NAME = "portfolio";
 const DEFAULT_EXTRACT_MODEL = "deepseek/deepseek-v4.1-flash";
-const DEFAULT_PDF_ENGINE = "native";
-const DEFAULT_UTILITY_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
+const DEFAULT_PDF_ENGINE = "pdf-to-md";
+const DEFAULT_UTILITY_MODEL = "nvidia/nemotron-3.5-lightning";
 const DEFAULT_ANSWER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const DEFAULT_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b:free";
 const DEFAULT_RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2:free";
 const DEFAULT_CHAT_DAILY_MESSAGE_LIMIT = 500;
 
-const PdfEngineSchema = z.enum(["native", "cloudflare-ai", "mistral-ocr"]);
+const PdfEngineSchema = z.enum(["pdf-to-md", "native", "cloudflare-ai", "mistral-ocr"]);
 
 // Blank strings are unset, so defaults apply. A present invalid value fails.
 function blankToUndefined(value: unknown): unknown {

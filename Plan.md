@@ -36,7 +36,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | Client data | Fetchers in `client/api/*`, TanStack Query options in `client/query/*`. | `client/api/projects.ts` |
 | Tests | `bun test`, colocated `*.test.ts`, in-memory fakes that implement domain interfaces. If you need a matcher not declared in `server/auth/bun-test.d.ts`, add its declaration there. | `server/services/public-session-service.test.ts` |
 | Types | `strict` TS, no `any`, no non-null assertions to silence errors. | — |
-| Libraries | No LangChain / LlamaIndex / Vercel AI SDK / OpenAI SDK. The OpenRouter client is hand-written on `fetch`. Only new runtime dependency allowed: `@vercel/blob`. Ask before adding anything else. | — |
+| Libraries | No LangChain / LlamaIndex / Vercel AI SDK / OpenAI SDK. The OpenRouter client is hand-written on `fetch`. Approved runtime dependencies: `@vercel/blob` and `@opendocsg/pdf2md` for local PDF-to-Markdown conversion. Ask before adding anything else. | — |
 
 ### 0.2 Standard "Done when" (applies to every sub-phase in addition to its own list)
 
@@ -57,7 +57,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | File storage | Vercel Blob, **private** store. Browser → Blob client upload (bypasses the 4.5 MB function body limit). |
 | LLM gateway | OpenRouter only (chat, embeddings, rerank), through one hand-written client |
 | CV source of truth | Structured `CvData` JSON, reviewed and published by the admin. The original PDF is kept for download only. |
-| CV extraction | LLM with PDF input + JSON-schema structured output, validated by zod, then admin review |
+| CV extraction | Convert the PDF to Markdown locally, then send the text to an LLM with JSON-schema structured output, validate with zod, and require admin review |
 | Public CV page | Server-rendered from the published `CvData` |
 | Chat corpus | Published CV only, behind a `CorpusSource` interface |
 | Language | English only |
@@ -71,9 +71,9 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `OPENROUTER_API_KEY` | yes | — | LLM client |
 | `OPENROUTER_APP_URL` | no | — | `HTTP-Referer` header |
 | `OPENROUTER_APP_NAME` | no | `portfolio` | `X-Title` header |
-| `LLM_EXTRACT_MODEL` | yes | `deepseek/deepseek-v4.1-flash` | CV extraction |
-| `LLM_PDF_ENGINE` | no | `native` | OpenRouter `file-parser` plugin (`native` \| `cloudflare-ai` \| `mistral-ocr`) |
-| `LLM_UTILITY_MODEL` | yes | `nvidia/nemotron-3-ultra-550b-a55b:free` | query rewrite, chunk context |
+| `LLM_EXTRACT_MODEL` | yes | `deepseek/deepseek-v4.1-flash` | CV extraction from Markdown |
+| `LLM_PDF_ENGINE` | no | `pdf-to-md` | Local conversion with `@opendocsg/pdf2md`; optional OpenRouter `file-parser` modes: `native` \| `cloudflare-ai` \| `mistral-ocr` |
+| `LLM_UTILITY_MODEL` | yes | `nvidia/nemotron-3.5-lightning` | query rewrite, chunk context |
 | `LLM_ANSWER_MODEL` | yes | `nvidia/nemotron-3-ultra-550b-a55b:free` | chat answers |
 | `EMBEDDING_MODEL` | yes | `nvidia/nemotron-3-embed-1b:free` | embeddings |
 | `RERANK_MODEL` | yes | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranking |
@@ -81,7 +81,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `BLOB_READ_WRITE_TOKEN` | yes | — | `handleUpload` client tokens (pull with `vercel env pull`) |
 
 Verify each default model slug exists on `openrouter.ai/models` and supports the needed parameters
-(`structured_outputs` for extract/utility models; file input for the extract model). If a slug is
+(`structured_outputs` for extract/utility models; native file input only when using the `native` PDF mode). If a slug is
 wrong, report it; do not silently pick another model.
 
 ---
@@ -99,6 +99,8 @@ server/
   llm/
     llm-env.ts                env reader (+ test)
     openrouter-client.ts      implements ChatClient, EmbeddingClient, RerankClient (+ test)
+    pdf-to-markdown.ts        local PDF-to-Markdown adapter (+ test)
+    pdf-chat-request.ts       converts PDF file parts to Markdown text in local mode
     sse.ts                    SSE line parser (+ test)
     llm-runtime.ts            server-only wiring
   storage/
@@ -165,7 +167,7 @@ evals/cv-retrieval.golden.json
 **Status:** Done
 
 **Steps**
-1. `bun add @vercel/blob`.
+1. `bun add @vercel/blob @opendocsg/pdf2md`.
 2. Add the env variables from §1.1 to `.env.example`.
 3. Create `server/llm/llm-env.ts`: `readLlmEnv(): LlmEnv | null`, where `LlmEnv` holds all LLM-related values from §1.1. Return `null` when `OPENROUTER_API_KEY` is missing. Apply defaults. Follow the style of `server/auth/admin-env.ts`.
 4. Add `server/llm/llm-env.test.ts` (missing key → null, defaults applied, trimming).
@@ -193,7 +195,7 @@ evals/cv-retrieval.golden.json
      maxTokens?: number;
      temperature?: number;
      jsonSchema?: JsonSchemaFormat;   // -> response_format json_schema, strict: true
-     pdfEngine?: "native" | "cloudflare-ai" | "mistral-ocr";
+     pdfEngine?: "pdf-to-md" | "native" | "cloudflare-ai" | "mistral-ocr";
      signal?: AbortSignal;
    };
    type Usage = { promptTokens: number; completionTokens: number; cost: number | null };
@@ -215,7 +217,7 @@ evals/cv-retrieval.golden.json
 2. `server/llm/sse.ts`: `parseSse(stream: ReadableStream<Uint8Array>): AsyncIterable<string>`. It yields each `data:` payload. It must handle: chunks split mid-line, `\r\n`, comment lines starting with `:` (OpenRouter sends `: OPENROUTER PROCESSING`), multi-line data, and the `[DONE]` sentinel (stop iterating).
 3. `server/llm/openrouter-client.ts`: `class OpenRouterClient implements ChatClient, EmbeddingClient, RerankClient`.
    - Constructor: `{ apiKey, appUrl, appName, fetch = globalThis.fetch, baseUrl = "https://openrouter.ai/api/v1", timeoutMs = 60_000, maxRetries = 2, sleep }` (inject `sleep` for tests).
-   - `complete` → `POST /chat/completions`. Map `ContentPart` to OpenRouter parts (`{type:"text",text, cache_control?:{type:"ephemeral"}}`, `{type:"file", file:{filename, file_data}}`). When `jsonSchema` is set, send `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }` and `provider: { require_parameters: true }`. When `pdfEngine` is set, send `plugins: [{ id: "file-parser", pdf: { engine } }]`.
+   - `complete` → `POST /chat/completions`. Map `ContentPart` to OpenRouter parts (`{type:"text",text, cache_control?:{type:"ephemeral"}}`, `{type:"file", file:{filename, file_data}}`). For `pdfEngine: "pdf-to-md"`, convert PDF file parts locally with `@opendocsg/pdf2md`, send Markdown as text, and omit the PDF parser plugin. Reject PDFs with no extractable text. For other PDF engines, send `plugins: [{ id: "file-parser", pdf: { engine } }]`. When `jsonSchema` is set, send `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }` and `provider: { require_parameters: true }`.
    - `stream` → same body with `stream: true`. Parse with `parseSse`. Yield `delta` for `choices[0].delta.content`. Yield `done` with usage from the final chunk if present. Throw `LlmProviderError` if a streamed chunk contains `error`.
    - `embed` → `POST /embeddings` `{ model, input: texts }`. Return vectors ordered by `data[i].index`.
    - `rerank` → `POST /rerank` `{ model, query, documents, top_n }`. Return `{ index, score: relevance_score }` sorted by score desc.
@@ -223,7 +225,7 @@ evals/cv-retrieval.golden.json
    - Errors: non-2xx → `LlmProviderError` with status; `retryable` = 408/429/5xx/network errors. Retry retryable errors with exponential backoff (500 ms, 1500 ms) up to `maxRetries`. Never retry `stream` after the first byte was yielded.
    - Timeout with `AbortSignal.timeout(timeoutMs)`, combined with `request.signal` via `AbortSignal.any`.
 4. `server/llm/llm-runtime.ts` (`server-only`): builds a singleton `OpenRouterClient` from `readLlmEnv()`. Export `getLlm(): { client: OpenRouterClient; env: LlmEnv }`. Throw `LlmConfigError` when env is missing.
-5. Tests with a fake `fetch`: request body shape for each method, JSON-schema + plugin mapping, SSE parsing (split chunks, comments, `[DONE]`), error mapping, retry on 429, no retry on 400.
+5. Tests with a fake `fetch`: request body shape for each method, local PDF-to-Markdown text and JSON-schema + plugin mapping, SSE parsing (split chunks, comments, `[DONE]`), error mapping, retry on 429, no retry on 400. Exercise the converter with a small text PDF.
 
 **Done when**
 - All client behavior above is covered by tests using a fake `fetch`.
@@ -334,7 +336,7 @@ evals/cv-retrieval.golden.json
 **Steps**
 1. `CvExtractor` interface (in `server/domain/cv.ts`): `extract(pdf: Uint8Array, filename: string): Promise<{ data: CvData; model: string }>`.
 2. `LlmCvExtractor` (injected `ChatClient`, model, pdfEngine):
-   - Message: system prompt from `extraction-prompt.ts` + a user message with a `file` part (`data:application/pdf;base64,...`) and a text instruction.
+   - Message: system prompt from `extraction-prompt.ts` + a user message with a `file` part (`data:application/pdf;base64,...`) and a text instruction. With the default `pdf-to-md` mode, the client converts the PDF to Markdown before the API request, sends a text part, and does not send the PDF or an OpenRouter parser plugin. Other modes preserve the remote PDF path.
    - `jsonSchema = { name: "cv_extraction", schema: cvExtractionJsonSchema() }`, `temperature: 0`, `maxTokens: 8000`.
    - Parse JSON, then `CvExtractionSchema.safeParse`. On failure, make **one** repair call: send the previous output + the zod issues and ask for corrected JSON. On a second failure, throw `CvExtractionError` with the issues.
    - Return `assignIds(parsed)`.
@@ -350,6 +352,7 @@ evals/cv-retrieval.golden.json
    - Only allowed for `draft` versions.
    - A `running` extraction older than 5 minutes counts as stale; allow re-running it.
 5. `registerCvUploadAction` schedules `runExtraction` with `after()` once the draft exists. Add `rerunExtractionAction(versionId)`. Set `export const maxDuration = 60` on the `/admin/cv` route segment (check the maxDuration doc for where it applies to server actions and `after`).
+   Budget local PDF conversion and the LLM request together within this duration; reduce retries or request timeout if needed.
 6. Admin UI: while any version is `pending` or `running`, a small client component calls `router.refresh()` every 3 s. Failed extractions show the error and a "Retry extraction" button.
 7. Tests: extractor with a fake `ChatClient` covering success, repair success, repair failure, and non-JSON output. `CvService.runExtraction` state transitions with in-memory fakes.
 
@@ -834,5 +837,6 @@ QUERY (per chat turn)
 ## 4. Known risks
 
 - **Structured-output support varies by provider.** `require_parameters: true` may leave no provider for a model; the error must say so clearly (1.2).
+- **Scanned PDFs.** The local `pdf-to-md` mode extracts embedded text and rejects image-only PDFs. Use an OCR mode when needed.
 - **Function duration on Vercel.** Extraction and index builds run in `after()`; if the plan limit is lower than needed, report it rather than splitting jobs.
 - **Public session gate.** The home page redirects cookie-less clients to session issuance; crawlers that drop cookies may not index the CV page. Out of scope; do not change it without asking.
