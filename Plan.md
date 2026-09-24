@@ -234,6 +234,8 @@ evals/cv-retrieval.golden.json
 
 ## Phase 1.3: CV data model and repository
 
+**Status:** Done
+
 **Files:** `server/cv/cv-schema.ts`, `server/cv/cv-ids.ts`, `server/cv/cv-markdown.ts`, `server/domain/cv.ts`, `server/repositories/cv-version-repository.ts`, tests.
 
 **Steps**
