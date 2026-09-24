@@ -14,7 +14,7 @@ export const AdminEnvSchema = z.object({
 export type AdminEnv = z.infer<typeof AdminEnvSchema>;
 
 export function parseAdminEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): AdminEnv | null {
   const parsed = AdminEnvSchema.safeParse({
     ADMIN_USERNAME: env.ADMIN_USERNAME,
