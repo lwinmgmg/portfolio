@@ -65,6 +65,35 @@ function makeDocument(
 const session = {} as TransactionContext["session"];
 const tx = { session } as TransactionContext;
 
+test("ensureReady creates a unique index for each PDF pathname", async () => {
+  const indexes: unknown[][] = [];
+  activeCollection = {
+    createIndex: async (...args: unknown[]) => {
+      indexes.push(args);
+    },
+  };
+
+  await new MongoCvVersionRepository().ensureReady();
+
+  expect(indexes[1]).toEqual([{ "pdf.pathname": 1 }, { unique: true }]);
+});
+
+test("findByPdfPathname looks up the stored path", async () => {
+  const document = makeDocument(new TestObjectId());
+  let filter: unknown;
+  activeCollection = {
+    findOne: async (value: unknown) => {
+      filter = value;
+      return document;
+    },
+  };
+
+  const found = await new MongoCvVersionRepository().findByPdfPathname("cv/test.pdf");
+
+  expect(filter).toEqual({ "pdf.pathname": "cv/test.pdf" });
+  expect(found?.pdf.pathname).toBe("cv/test.pdf");
+});
+
 for (const [name, changes] of [
   ["a published version", { status: "published" }],
   ["an archived version", { status: "archived" }],

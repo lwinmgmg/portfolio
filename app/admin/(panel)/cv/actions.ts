@@ -25,7 +25,10 @@ export async function registerCvUploadAction(input: {
   } catch (error) {
     if (error instanceof InvalidCvError) {
       if (error.cause) console.error(error.cause);
-      return { status: "error", message: error.message };
+      return {
+        status: error.cause ? "error" : "invalid",
+        message: error.message,
+      };
     }
     console.error(error);
     return { status: "error", message: "Could not save the CV." };

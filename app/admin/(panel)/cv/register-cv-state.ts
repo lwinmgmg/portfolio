@@ -1,4 +1,4 @@
 export type RegisterCvUploadState = {
-  status: "idle" | "saved" | "error";
+  status: "idle" | "saved" | "invalid" | "error";
   message: string | null;
 };

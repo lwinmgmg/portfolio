@@ -142,6 +142,7 @@ export interface CvVersionRepository {
   ensureReady(): Promise<void>;
   create(input: { pdf: CvPdf }, tx: TransactionContext): Promise<CvVersion>;
   findById(id: string): Promise<CvVersion | null>;
+  findByPdfPathname(pathname: string): Promise<CvVersion | null>;
   findPublished(): Promise<CvVersion | null>;
   list(limit: number): Promise<CvVersion[]>;
   markExtraction(id: string, patch: Partial<CvVersion["extraction"]>): Promise<void>;

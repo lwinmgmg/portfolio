@@ -84,6 +84,7 @@ export class MongoCvVersionRepository
   protected override createIndexes(): Promise<unknown> {
     return Promise.all([
       this.collection().createIndex({ createdAt: -1 }),
+      this.collection().createIndex({ "pdf.pathname": 1 }, { unique: true }),
       this.collection().createIndex(
         { status: 1 },
         {
@@ -130,6 +131,11 @@ export class MongoCvVersionRepository
     const objectId = this.parseId(id);
     if (!objectId) return null;
     return this.findByObjectId(objectId);
+  }
+
+  async findByPdfPathname(pathname: string): Promise<CvVersion | null> {
+    const document = await this.collection().findOne({ "pdf.pathname": pathname });
+    return document ? this.toEntity(document) : null;
   }
 
   async findPublished(): Promise<CvVersion | null> {

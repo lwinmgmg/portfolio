@@ -48,6 +48,11 @@ class MemoryCvVersions implements CvVersionRepository {
     return Promise.resolve(version);
   }
 
+  findByPdfPathname(pathname: string): Promise<CvVersion | null> {
+    this.events.push("find");
+    return Promise.resolve(this.rows.find((row) => row.pdf.pathname === pathname) ?? null);
+  }
+
   findById(): Promise<CvVersion | null> {
     return Promise.reject(new Error("findById was not expected"));
   }
@@ -151,8 +156,120 @@ test("registerUpload creates a pending draft for a private PDF", async () => {
     contentType: "application/pdf",
     uploadedAt: "2026-09-25T12:00:00.000Z",
   });
-  expect(versions.events).toEqual(["ready", "transaction", "create"]);
+  expect(versions.events).toEqual(["ready", "find", "transaction", "create"]);
   expect(versions.rows).toEqual([version]);
+});
+
+test("registerUpload returns the saved draft on retry without checking the blob again", async () => {
+  const { service, versions, blobs } = setup(pdfHead);
+  const first = await service.registerUpload({
+    pathname: "cv/resume.pdf",
+    filename: "resume.pdf",
+  });
+  blobs.headError = new Error("store temporarily unavailable");
+
+  const retry = await service.registerUpload({
+    pathname: "cv/resume.pdf",
+    filename: "resume.pdf",
+  });
+
+  expect(retry).toBe(first);
+  expect(versions.rows.length).toBe(1);
+  expect(versions.events).toEqual([
+    "ready", "find", "transaction", "create",
+    "ready", "find",
+  ]);
+});
+
+test("registerUpload reads the saved draft after a duplicate-path write error", async () => {
+  const { versions, blobs } = setup(pdfHead);
+  const duplicatePath = Object.assign(new Error("duplicate key"), {
+    code: 11000,
+    keyPattern: { "pdf.pathname": 1 },
+  });
+  const transaction = async <T>(work: (tx: TransactionContext) => Promise<T>): Promise<T> => {
+    await work({ session });
+    throw duplicatePath;
+  };
+  const service = new CvService(versions, blobs, transaction, () => now);
+
+  const version = await service.registerUpload({
+    pathname: "cv/resume.pdf",
+    filename: "resume.pdf",
+  });
+
+  expect(version).toBe(versions.rows[0]);
+  expect(versions.events).toEqual(["ready", "find", "create", "find"]);
+});
+
+test("registerUpload rethrows a duplicate-path error when no draft was saved", async () => {
+  const { versions, blobs } = setup(pdfHead);
+  const duplicatePath = Object.assign(new Error("duplicate key"), {
+    code: 11000,
+    keyPattern: { "pdf.pathname": 1 },
+  });
+  const transaction = async <T>(): Promise<T> => {
+    throw duplicatePath;
+  };
+  const service = new CvService(versions, blobs, transaction, () => now);
+
+  let caught: unknown;
+  try {
+    await service.registerUpload({
+      pathname: "cv/resume.pdf",
+      filename: "resume.pdf",
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBe(duplicatePath);
+  expect(versions.events).toEqual(["ready", "find", "find"]);
+});
+
+test("registerUpload reads the saved draft after an uncertain commit", async () => {
+  const { versions, blobs } = setup(pdfHead);
+  const uncertainCommit = Object.assign(new Error("commit response lost"), {
+    hasErrorLabel: (label: string) => label === "UnknownTransactionCommitResult",
+  });
+  const transaction = async <T>(work: (tx: TransactionContext) => Promise<T>): Promise<T> => {
+    await work({ session });
+    throw uncertainCommit;
+  };
+  const service = new CvService(versions, blobs, transaction, () => now);
+
+  const version = await service.registerUpload({
+    pathname: "cv/resume.pdf",
+    filename: "resume.pdf",
+  });
+
+  expect(version).toBe(versions.rows[0]);
+  expect(versions.events).toEqual(["ready", "find", "create", "find"]);
+});
+
+test("registerUpload preserves unrelated write errors", async () => {
+  const { versions, blobs } = setup(pdfHead);
+  const unrelated = Object.assign(new Error("another unique index failed"), {
+    code: 11000,
+    keyPattern: { status: 1 },
+  });
+  const transaction = async <T>(work: (tx: TransactionContext) => Promise<T>): Promise<T> => {
+    await work({ session });
+    throw unrelated;
+  };
+  const service = new CvService(versions, blobs, transaction, () => now);
+
+  let caught: unknown;
+  try {
+    await service.registerUpload({
+      pathname: "cv/resume.pdf",
+      filename: "resume.pdf",
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBe(unrelated);
+  expect(versions.events).toEqual(["ready", "find", "create"]);
 });
 
 test("registerUpload accepts a 10 MB PDF and a content type with parameters", async () => {
@@ -231,7 +348,8 @@ test("registerUpload rejects a missing, oversized, or non-PDF blob before writin
     const error = await rejection(() => service.registerUpload(item.input));
     expect(error.message).toBe(item.message);
     expect(versions.rows.length).toBe(0);
-    expect(versions.events).toEqual([]);
+    expect(versions.events.includes("create")).toBe(false);
+    expect(versions.events.includes("transaction")).toBe(false);
   }
 });
 
@@ -245,7 +363,7 @@ test("registerUpload turns a blob lookup failure into InvalidCvError", async () 
 
   expect(error.message).toBe("The uploaded PDF could not be verified.");
   expect(error.cause).toBe(blobs.headError);
-  expect(versions.events).toEqual([]);
+  expect(versions.events).toEqual(["ready", "find"]);
 });
 
 test("cvUploadConstraints allows only a cv PDF and a 10 MB private upload", () => {

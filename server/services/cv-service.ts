@@ -66,6 +66,12 @@ export class CvService {
       throw new InvalidCvError("The file name must end with .pdf.");
     }
 
+    // A retry may follow a committed write whose response never reached the client.
+    // Build the unique pathname index before the first lookup or transaction.
+    await this.versions.ensureReady();
+    const registered = await this.versions.findByPdfPathname(input.pathname);
+    if (registered) return registered;
+
     const head = await this.readPdfHead(input.pathname);
     if (!Number.isFinite(head.size) || head.size < 0 || head.size > CV_PDF_MAX_BYTES) {
       throw new InvalidCvError("The PDF must be 10 MB or smaller.");
@@ -82,9 +88,21 @@ export class CvService {
       uploadedAt: this.now().toISOString(),
     };
 
-    // Index builds are not allowed inside a transaction.
-    await this.versions.ensureReady();
-    return this.transaction((tx) => this.versions.create({ pdf }, tx));
+    try {
+      return await this.transaction((tx) => this.versions.create({ pdf }, tx));
+    } catch (error) {
+      if (!mayHaveCommittedCvPath(error)) throw error;
+
+      // A concurrent request may have won the unique index, or the commit may
+      // have succeeded before the driver reported an uncertain result.
+      try {
+        const registeredAfterError = await this.versions.findByPdfPathname(input.pathname);
+        if (registeredAfterError) return registeredAfterError;
+      } catch {
+        // Preserve the original write error if the recovery read also fails.
+      }
+      throw error;
+    }
   }
 
   private async readPdfHead(pathname: string) {
@@ -97,6 +115,28 @@ export class CvService {
       throw new InvalidCvError("The uploaded PDF could not be verified.", { cause: error });
     }
   }
+}
+
+function mayHaveCommittedCvPath(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+
+  const candidate = error as {
+    code?: unknown;
+    keyPattern?: unknown;
+    hasErrorLabel?: unknown;
+  };
+  if (
+    candidate.code === 11000 &&
+    typeof candidate.keyPattern === "object" &&
+    candidate.keyPattern !== null &&
+    "pdf.pathname" in candidate.keyPattern
+  ) {
+    return true;
+  }
+  return (
+    typeof candidate.hasErrorLabel === "function" &&
+    candidate.hasErrorLabel("UnknownTransactionCommitResult") === true
+  );
 }
 
 function isStoredCvPdfPath(pathname: string): boolean {
