@@ -309,6 +309,8 @@ evals/cv-retrieval.golden.json
 
 ## Phase 1.4: PDF upload and storage
 
+**Status:** Done
+
 **Files:** `server/domain/blob-store.ts`, `server/storage/vercel-blob-store.ts`, `app/api/admin/cv/upload/route.ts`, `server/services/cv-service.ts` (start), `server/services/cv-runtime.ts`, `app/admin/(panel)/cv/*`.
 
 **Steps**
