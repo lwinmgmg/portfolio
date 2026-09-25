@@ -337,6 +337,8 @@ evals/cv-retrieval.golden.json
 
 ## Phase 1.5: LLM extraction
 
+**Status:** Done
+
 **Files:** `server/cv/extraction-prompt.ts`, `server/cv/cv-extractor.ts`, `cv-service.ts` (extend), admin action + status UI, tests.
 
 **Steps**

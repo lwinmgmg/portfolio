@@ -4,7 +4,12 @@ import {
   CV_PDF_MAX_BYTES,
   type BlobStore,
 } from "@/server/domain/blob-store";
-import type { CvPdf, CvVersion, CvVersionRepository } from "@/server/domain/cv";
+import type {
+  CvExtractor,
+  CvPdf,
+  CvVersion,
+  CvVersionRepository,
+} from "@/server/domain/cv";
 
 export class InvalidCvError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -29,6 +34,19 @@ export type CvUploadConstraints = {
 };
 
 const PDF_EXTENSION = ".pdf";
+const STALE_EXTRACTION_MS = 5 * 60 * 1000;
+const EXTRACTION_ERROR_LIMIT = 500;
+
+export function isExtractionInProgress(version: CvVersion, now = new Date()): boolean {
+  if (version.extraction.status === "pending") return true;
+  return version.extraction.status === "running" && !isStaleRunning(version, now);
+}
+
+export function canRetryExtraction(version: CvVersion, now = new Date()): boolean {
+  if (version.status !== "draft") return false;
+  if (version.extraction.status === "failed") return true;
+  return version.extraction.status === "running" && isStaleRunning(version, now);
+}
 
 export function cvUploadConstraints(pathname: string): CvUploadConstraints {
   if (!isStoredCvPdfPath(pathname)) {
@@ -46,6 +64,7 @@ export class CvService {
   constructor(
     private readonly versions: CvVersionRepository,
     private readonly blobs: BlobStore,
+    private readonly extractor: CvExtractor,
     private readonly transaction: TransactionRunner,
     private readonly now: () => Date = () => new Date(),
   ) {}
@@ -105,6 +124,67 @@ export class CvService {
     }
   }
 
+  async runExtraction(versionId: string): Promise<void> {
+    const version = await this.requireExtractableDraft(versionId);
+    try {
+      await this.extractDraft(version);
+    } catch (error) {
+      const message = extractionErrorMessage(error);
+      try {
+        await this.versions.markExtraction(version.id, {
+          status: "failed",
+          error: message,
+          finishedAt: this.now().toISOString(),
+        });
+      } catch (markError) {
+        console.error(markError);
+      }
+      if (error instanceof InvalidCvError) throw error;
+      throw new InvalidCvError(message, { cause: error });
+    }
+  }
+
+  private async requireExtractableDraft(versionId: string): Promise<CvVersion> {
+    const version = await this.versions.findById(versionId);
+    if (!version) throw new InvalidCvError(`CV version "${versionId}" was not found.`);
+    if (version.status !== "draft") {
+      throw new InvalidCvError("Extraction is only available for a draft.");
+    }
+    if (version.extraction.status === "succeeded") {
+      throw new InvalidCvError("Extraction has already succeeded.");
+    }
+    if (version.extraction.status === "running" && !isStaleRunning(version, this.now())) {
+      throw new InvalidCvError("Extraction is already running.");
+    }
+    return version;
+  }
+
+  private async extractDraft(version: CvVersion): Promise<void> {
+    await this.versions.markExtraction(version.id, {
+      status: "running",
+      error: null,
+      startedAt: this.now().toISOString(),
+      finishedAt: null,
+    });
+
+    const pdf = await this.blobs.readBytes(version.pdf.pathname);
+    if (!pdf) throw new InvalidCvError("The uploaded PDF was not found.");
+
+    const extracted = await this.extractor.extract(pdf, version.pdf.filename);
+    const model = extracted.model.trim();
+    if (model.length === 0) throw new InvalidCvError("Extraction did not report a model.");
+
+    const saved = await this.versions.saveData(version.id, extracted.data);
+    if (!saved) throw new InvalidCvError("The CV draft could not be saved.");
+
+    await this.versions.markExtraction(version.id, {
+      status: "succeeded",
+      model,
+      error: null,
+      finishedAt: this.now().toISOString(),
+    });
+  }
+
   private async readPdfHead(pathname: string) {
     try {
       const head = await this.blobs.head(pathname);
@@ -159,4 +239,19 @@ function isPdfFileName(filename: string): boolean {
 function isPdfContentType(contentType: string): boolean {
   const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
   return mediaType === CV_PDF_CONTENT_TYPE;
+}
+
+function isStaleRunning(version: CvVersion, now: Date): boolean {
+  if (version.extraction.status !== "running") return false;
+  const startedAt = version.extraction.startedAt;
+  if (startedAt === null) return true;
+  const started = Date.parse(startedAt);
+  if (Number.isNaN(started)) return true;
+  return now.getTime() - started >= STALE_EXTRACTION_MS;
+}
+
+function extractionErrorMessage(error: unknown): string {
+  const message =
+    error instanceof Error && error.message.length > 0 ? error.message : "Extraction failed.";
+  return Array.from(message).slice(0, EXTRACTION_ERROR_LIMIT).join("");
 }

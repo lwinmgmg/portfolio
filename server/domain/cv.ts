@@ -150,3 +150,7 @@ export interface CvVersionRepository {
   publish(id: string, tx: TransactionContext): Promise<CvVersion>;
   deleteDraft(id: string): Promise<boolean>;
 }
+
+export interface CvExtractor {
+  extract(pdf: Uint8Array, filename: string): Promise<{ data: CvData; model: string }>;
+}
