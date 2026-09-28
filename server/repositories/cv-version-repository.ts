@@ -1,15 +1,19 @@
 import "server-only";
 
-import type { Filter, WithId } from "mongodb";
+import type { Filter, ObjectId, WithId } from "mongodb";
 
 import type { TransactionContext } from "@/server/db/transaction";
+import { CV_PDF_CONTENT_TYPE } from "@/server/domain/blob-store";
 import {
   CvVersionNotFoundError,
+  CvVersionStateError,
   type CvData,
+  type CvExtractionResult,
   type CvPdf,
   type CvVersion,
   type CvVersionRepository,
 } from "@/server/domain/cv";
+import { migrateLegacyUploadKeys } from "@/server/repositories/cv-version-migration";
 import { MongoRepository } from "@/server/repositories/mongo-repository";
 
 type CvVersionDocument = {
@@ -32,9 +36,14 @@ type CvVersionDocument = {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
-  // Idempotency key for the original upload. Copies share pdf.pathname and use another key.
+  // Idempotency key of an original upload. A copy shares pdf.pathname and has no key.
   uploadPathname?: string;
+  // Set on a copy made by "Duplicate as draft".
+  sourceVersionId?: ObjectId;
 };
+
+// Only a settled extraction may be overwritten by an admin edit.
+const EDITABLE_EXTRACTION_STATUSES: CvVersion["extraction"]["status"][] = ["succeeded", "failed"];
 
 function parseInstant(value: string): Date {
   const date = new Date(value);
@@ -46,6 +55,10 @@ function parseInstant(value: string): Date {
 
 function toIso(value: Date | null): string | null {
   return value === null ? null : value.toISOString();
+}
+
+function toDate(value: string | null): Date | null {
+  return value === null ? null : parseInstant(value);
 }
 
 // `create` and `publish` run inside a caller-supplied transaction, so they do not build indexes.
@@ -84,8 +97,7 @@ export class MongoCvVersionRepository
   }
 
   protected override async createIndexes(): Promise<unknown> {
-    await this.dropUniquePdfPathnameIndex();
-    await this.backfillUploadPathnames();
+    await migrateLegacyUploadKeys(this.collection());
     return Promise.all([
       this.collection().createIndex({ createdAt: -1 }),
       this.collection().createIndex({ "pdf.pathname": 1 }),
@@ -115,13 +127,7 @@ export class MongoCvVersionRepository
     return this.insert(
       {
         status: "draft",
-        pdf: {
-          pathname: input.pdf.pathname,
-          filename: input.pdf.filename,
-          size: input.pdf.size,
-          contentType: "application/pdf",
-          uploadedAt: parseInstant(input.pdf.uploadedAt),
-        },
+        pdf: toPdfDocument(input.pdf),
         extraction: {
           status: "pending",
           model: null,
@@ -140,12 +146,14 @@ export class MongoCvVersionRepository
   }
 
   async findById(id: string): Promise<CvVersion | null> {
+    await this.ensureReady();
     const objectId = this.parseId(id);
     if (!objectId) return null;
     return this.findByObjectId(objectId);
   }
 
-  async findByPdfPathname(pathname: string): Promise<CvVersion | null> {
+  async findByUploadPathname(pathname: string): Promise<CvVersion | null> {
+    await this.ensureReady();
     const document = await this.collection().findOne({ uploadPathname: pathname });
     return document ? this.toEntity(document) : null;
   }
@@ -156,6 +164,7 @@ export class MongoCvVersionRepository
   }
 
   async findPublished(): Promise<CvVersion | null> {
+    await this.ensureReady();
     const document = await this.collection().findOne({ status: "published" });
     return document ? this.toEntity(document) : null;
   }
@@ -170,10 +179,17 @@ export class MongoCvVersionRepository
     return documents.map((document) => this.toEntity(document));
   }
 
-  async markExtraction(id: string, patch: Partial<CvVersion["extraction"]>): Promise<void> {
+  async markExtraction(
+    id: string,
+    patch: Partial<CvVersion["extraction"]>,
+    run?: { startedAt: string },
+  ): Promise<void> {
     await this.ensureReady();
     const objectId = this.parseId(id);
     if (!objectId) return;
+    const filter: Filter<CvVersionDocument> = run
+      ? { _id: objectId, ...currentRun(run.startedAt) }
+      : { _id: objectId };
 
     const fields: Record<string, Date | string | null> = {
       updatedAt: new Date(),
@@ -190,15 +206,49 @@ export class MongoCvVersionRepository
         patch.finishedAt === null ? null : parseInstant(patch.finishedAt);
     }
 
-    await this.collection().updateOne({ _id: objectId }, { $set: fields });
+    await this.collection().updateOne(filter, { $set: fields });
   }
 
-  async saveData(id: string, data: CvData): Promise<CvVersion | null> {
+  async completeExtraction(
+    id: string,
+    startedAt: string,
+    result: CvExtractionResult,
+  ): Promise<CvVersion | null> {
     await this.ensureReady();
     const objectId = this.parseId(id);
     if (!objectId) return null;
     const document = await this.collection().findOneAndUpdate(
-      { _id: objectId, status: "draft" },
+      { _id: objectId, status: "draft", ...currentRun(startedAt) },
+      {
+        $set: {
+          data: result.data,
+          "extraction.status": "succeeded",
+          "extraction.model": result.model,
+          "extraction.error": null,
+          "extraction.finishedAt": parseInstant(result.finishedAt),
+          updatedAt: new Date(),
+        },
+      },
+      { returnDocument: "after" },
+    );
+    return document ? this.toEntity(document) : null;
+  }
+
+  async saveData(
+    id: string,
+    data: CvData,
+    expectedUpdatedAt: string,
+  ): Promise<CvVersion | null> {
+    await this.ensureReady();
+    const objectId = this.parseId(id);
+    if (!objectId) return null;
+    const document = await this.collection().findOneAndUpdate(
+      {
+        _id: objectId,
+        status: "draft",
+        "extraction.status": { $in: EDITABLE_EXTRACTION_STATUSES },
+        updatedAt: parseInstant(expectedUpdatedAt),
+      },
       { $set: { data, updatedAt: new Date() } },
       { returnDocument: "after" },
     );
@@ -216,7 +266,7 @@ export class MongoCvVersionRepository
       existing.extraction.status !== "succeeded" ||
       existing.data == null
     ) {
-      throw new Error(`CV version "${id}" must be a complete draft to publish.`);
+      throw new CvVersionStateError(NOT_PUBLISHABLE);
     }
 
     const eligibleDraft: Filter<CvVersionDocument> = {
@@ -239,7 +289,7 @@ export class MongoCvVersionRepository
       { returnDocument: "after", session: tx.session },
     );
     if (!document) {
-      throw new Error(`CV version "${id}" is no longer a complete draft to publish.`);
+      throw new CvVersionStateError("The draft changed while it was being published. Reload and try again.");
     }
     return this.toEntity(document);
   }
@@ -252,53 +302,45 @@ export class MongoCvVersionRepository
     return result.deletedCount === 1;
   }
 
-  async createCopy(input: {
-    pdf: CvPdf;
-    data: CvData;
-    model: string | null;
-    finishedAt: string;
-  }): Promise<CvVersion> {
+  async createCopy(source: CvVersion, data: CvData): Promise<CvVersion> {
     await this.ensureReady();
-    const finishedAt = parseInstant(input.finishedAt);
+    const sourceId = this.parseId(source.id);
+    if (!sourceId) throw new CvVersionNotFoundError(source.id);
+    const now = new Date();
+    // The copy keeps the extraction that produced its data. It has no upload key.
     const document: CvVersionDocument = {
       status: "draft",
-      pdf: {
-        pathname: input.pdf.pathname,
-        filename: input.pdf.filename,
-        size: input.pdf.size,
-        contentType: "application/pdf",
-        uploadedAt: parseInstant(input.pdf.uploadedAt),
-      },
+      pdf: toPdfDocument(source.pdf),
       extraction: {
         status: "succeeded",
-        model: input.model,
+        model: source.extraction.model,
         error: null,
-        startedAt: finishedAt,
-        finishedAt,
+        startedAt: toDate(source.extraction.startedAt),
+        finishedAt: toDate(source.extraction.finishedAt),
       },
-      data: input.data,
-      createdAt: finishedAt,
-      updatedAt: finishedAt,
+      data,
+      createdAt: now,
+      updatedAt: now,
       publishedAt: null,
-      uploadPathname: `copy:${crypto.randomUUID()}`,
+      sourceVersionId: sourceId,
     };
     const result = await this.collection().insertOne(document);
     return this.toEntity({ ...document, _id: result.insertedId });
   }
+}
 
-  private async dropUniquePdfPathnameIndex(): Promise<void> {
-    const indexes = await this.collection().indexes();
-    for (const index of indexes) {
-      const keys = Object.keys(index.key);
-      if (index.unique === true && index.name && keys.length === 1 && keys[0] === "pdf.pathname") {
-        await this.collection().dropIndex(index.name);
-      }
-    }
-  }
+const NOT_PUBLISHABLE = "Only a draft with extracted CV data can be published.";
 
-  private backfillUploadPathnames(): Promise<unknown> {
-    return this.collection().updateMany({ uploadPathname: { $exists: false } }, [
-      { $set: { uploadPathname: "$pdf.pathname" } },
-    ]);
-  }
+function currentRun(startedAt: string): Filter<CvVersionDocument> {
+  return { "extraction.status": "running", "extraction.startedAt": parseInstant(startedAt) };
+}
+
+function toPdfDocument(pdf: CvPdf): CvVersionDocument["pdf"] {
+  return {
+    pathname: pdf.pathname,
+    filename: pdf.filename,
+    size: pdf.size,
+    contentType: CV_PDF_CONTENT_TYPE,
+    uploadedAt: parseInstant(pdf.uploadedAt),
+  };
 }

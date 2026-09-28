@@ -12,7 +12,7 @@ import { idleCvEditorState, type CvEditorState } from "@/app/admin/(panel)/cv/ed
 import { CvSections } from "@/app/admin/(panel)/cv/[versionId]/cv-sections";
 import { CvDataSchema } from "@/server/cv/cv-schema";
 import { cvFieldIssues } from "@/server/cv/cv-issues";
-import type { CvData, CvVersion } from "@/server/domain/cv";
+import type { CvData, CvFieldIssue, CvVersion } from "@/server/domain/cv";
 
 const primaryButton =
   "w-fit bg-gray-800 px-3 py-2 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
@@ -23,21 +23,30 @@ const dangerButton =
 const tabClass =
   "border border-gray-300 px-3 py-1 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
 
+type EditorTab = "form" | "json";
+
+// Decided on the server from the service rules, so the UI and the service cannot drift.
+export type CvEditorActions = {
+  edit: boolean;
+  publish: boolean;
+  duplicate: boolean;
+  delete: boolean;
+};
+
+const noIssues: readonly CvFieldIssue[] = [];
+
 export function CvVersionEditor({
   version,
   locked,
+  actions,
 }: {
   version: CvVersion;
   locked: boolean;
+  actions: CvEditorActions;
 }) {
-  const editable = version.status === "draft" && version.data !== null && !locked;
-  const publishable =
-    version.status === "draft" &&
-    version.extraction.status === "succeeded" &&
-    version.data !== null &&
-    !locked;
-  const duplicable = version.status !== "draft" && version.data !== null;
-  const deletable = version.status === "draft";
+  // Edits belong to the version they started from. A save changes updatedAt and clears them.
+  const [editedAt, setEditedAt] = useState<string | null>(null);
+  const dirty = editedAt === version.updatedAt;
 
   return (
     <div className="space-y-4">
@@ -46,24 +55,29 @@ export function CvVersionEditor({
           versionId={version.id}
           initial={version.data}
           updatedAt={version.updatedAt}
-          readOnly={!editable}
+          readOnly={!actions.edit}
+          onEdit={() => setEditedAt(version.updatedAt)}
         />
       ) : (
         <p>This draft has no extracted CV data yet.</p>
       )}
-      {version.status === "draft" && !publishable && !locked ? (
+      {version.status === "draft" && !actions.publish && !locked ? (
         <p>Publish is available after extraction succeeds.</p>
       ) : null}
       {locked ? <p>Extraction is still running. Editing stays closed until it finishes.</p> : null}
       <div className="flex flex-wrap items-start gap-3">
-        {publishable ? (
+        {actions.publish ? (
           <div className="space-y-2">
-            <p className="text-sm">Save the draft before publishing. Publish uses the saved CV.</p>
-            <PublishForm versionId={version.id} />
+            <p className="text-sm">
+              {dirty
+                ? "Save your changes before publishing."
+                : "Publish uses the saved CV."}
+            </p>
+            <PublishForm versionId={version.id} disabled={dirty} />
           </div>
         ) : null}
-        {duplicable ? <DuplicateForm versionId={version.id} /> : null}
-        {deletable ? <DeleteForm versionId={version.id} /> : null}
+        {actions.duplicate ? <DuplicateForm versionId={version.id} /> : null}
+        {actions.delete ? <DeleteForm versionId={version.id} /> : null}
       </div>
     </div>
   );
@@ -74,26 +88,36 @@ function CvDataForm({
   initial,
   updatedAt,
   readOnly,
+  onEdit,
 }: {
   versionId: string;
   initial: CvData;
   updatedAt: string;
   readOnly: boolean;
+  onEdit: () => void;
 }) {
   const [state, action, pending] = useActionState(saveCvDraftAction, idleCvEditorState);
+  // Kept here so the chosen tab survives the remount after a save.
+  const [tab, setTab] = useState<EditorTab>("form");
 
   if (readOnly) {
-    return <EditorBody versionId={versionId} initial={initial} issues={state.issues} readOnly />;
+    return (
+      <EditorBody initial={initial} issues={noIssues} readOnly tab={tab} onTabChange={setTab} />
+    );
   }
 
   return (
     <form action={action} className="space-y-4">
+      <input type="hidden" name="versionId" value={versionId} />
+      <input type="hidden" name="updatedAt" value={updatedAt} />
       <EditorBody
         key={updatedAt}
-        versionId={versionId}
         initial={initial}
         issues={state.issues}
         readOnly={false}
+        tab={tab}
+        onTabChange={setTab}
+        onEdit={onEdit}
       />
       <button type="submit" disabled={pending} className={primaryButton}>
         {pending ? "Saving…" : "Save draft"}
@@ -104,29 +128,41 @@ function CvDataForm({
 }
 
 function EditorBody({
-  versionId,
   initial,
   issues,
   readOnly,
+  tab,
+  onTabChange,
+  onEdit,
 }: {
-  versionId: string;
   initial: CvData;
-  issues: CvEditorState["issues"];
+  issues: readonly CvFieldIssue[];
   readOnly: boolean;
+  tab: EditorTab;
+  onTabChange: (tab: EditorTab) => void;
+  onEdit?: () => void;
 }) {
   const [data, setData] = useState(initial);
-  const [tab, setTab] = useState<"form" | "json">("form");
   const [jsonText, setJsonText] = useState(() => JSON.stringify(initial, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
-  const [jsonIssues, setJsonIssues] = useState<CvEditorState["issues"]>([]);
+  const [jsonIssues, setJsonIssues] = useState<readonly CvFieldIssue[]>(noIssues);
   const visibleIssues = jsonError ? jsonIssues : issues;
+
+  function clearJsonError() {
+    setJsonError(null);
+    setJsonIssues(noIssues);
+  }
+
+  function changeData(next: CvData) {
+    setData(next);
+    onEdit?.();
+  }
 
   function showJson() {
     if (tab === "json") return;
     setJsonText(JSON.stringify(data, null, 2));
-    setJsonError(null);
-    setJsonIssues([]);
-    setTab("json");
+    clearJsonError();
+    onTabChange("json");
   }
 
   function showForm() {
@@ -145,14 +181,12 @@ function EditorBody({
       return;
     }
     setData(result.data);
-    setJsonError(null);
-    setJsonIssues([]);
-    setTab("form");
+    clearJsonError();
+    onTabChange("form");
   }
 
   return (
     <div className="space-y-3">
-      <input type="hidden" name="versionId" value={versionId} />
       <input type="hidden" name="data" value={tab === "json" ? jsonText : JSON.stringify(data)} />
       <div role="tablist" aria-label="CV editor" className="flex gap-2">
         <button
@@ -177,7 +211,7 @@ function EditorBody({
       {jsonError ? <p className="text-sm text-red-700">{jsonError}</p> : null}
       <IssueList issues={visibleIssues} />
       {tab === "form" ? (
-        <CvSections data={data} issues={visibleIssues} readOnly={readOnly} onChange={setData} />
+        <CvSections data={data} issues={visibleIssues} readOnly={readOnly} onChange={changeData} />
       ) : (
         <label className="flex flex-col gap-1 text-sm">
           CV JSON
@@ -188,8 +222,8 @@ function EditorBody({
             spellCheck={false}
             onChange={(event) => {
               setJsonText(event.target.value);
-              setJsonError(null);
-              setJsonIssues([]);
+              clearJsonError();
+              onEdit?.();
             }}
             className="w-full border border-gray-300 bg-white px-2 py-1 font-mono text-sm text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 read-only:bg-gray-100"
           />
@@ -199,7 +233,7 @@ function EditorBody({
   );
 }
 
-function IssueList({ issues }: { issues: CvEditorState["issues"] }) {
+function IssueList({ issues }: { issues: readonly CvFieldIssue[] }) {
   if (issues.length === 0) return null;
   return (
     <ul className="space-y-1 text-sm text-red-700" role="alert">
@@ -225,7 +259,7 @@ function EditorMessage({ state }: { state: CvEditorState }) {
   );
 }
 
-function PublishForm({ versionId }: { versionId: string }) {
+function PublishForm({ versionId, disabled }: { versionId: string; disabled: boolean }) {
   const [state, action, pending] = useActionState(publishCvAction, idleCvEditorState);
   return (
     <form
@@ -238,7 +272,7 @@ function PublishForm({ versionId }: { versionId: string }) {
       }}
     >
       <input type="hidden" name="versionId" value={versionId} />
-      <button type="submit" disabled={pending} className={primaryButton}>
+      <button type="submit" disabled={disabled || pending} className={primaryButton}>
         {pending ? "Publishing…" : "Publish"}
       </button>
       <EditorMessage state={state} />

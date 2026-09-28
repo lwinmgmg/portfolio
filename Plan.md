@@ -376,7 +376,7 @@ evals/cv-retrieval.golden.json
 
 **Steps**
 1. `CvService`:
-   - `saveDraft(id, input: unknown)`: `CvDataSchema.parse` → `ensureIds` → `saveData`. Rejects non-drafts.
+   - `saveDraft(id, input: unknown, expectedUpdatedAt)`: `CvDataSchema.parse` → `ensureIds` → `saveData`. Rejects non-drafts and drafts whose extraction is pending or running (even a stale run). `expectedUpdatedAt` is the version the editor loaded; a newer write rejects the save instead of being overwritten.
    - `publish(id)`: must be a draft with `extraction.status = "succeeded"` and data present. Run `ensureReady()` first, then `publish` inside `runTransaction`.
    - `duplicateAsDraft(id)`: copies the pdf + data of any version into a new draft with `extraction.status = "succeeded"`.
    - `deleteDraft(id)`: deletes the record; delete the blob only if no other version references the same pathname.

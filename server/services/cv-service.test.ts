@@ -8,16 +8,20 @@ import {
   type BlobHead,
   type BlobStore,
 } from "@/server/domain/blob-store";
-import type {
-  CvData,
-  CvExtractor,
-  CvPdf,
-  CvPublishedListener,
-  CvVersion,
-  CvVersionRepository,
+import {
+  CvVersionNotFoundError,
+  CvVersionStateError,
+  type CvData,
+  type CvExtractor,
+  type CvPdf,
+  type CvPublishedListener,
+  type CvVersion,
+  type CvVersionRepository,
 } from "@/server/domain/cv";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
 import {
+  canEditCv,
+  canPublishCv,
   canRetryExtraction,
   CvService,
   cvUploadConstraints,
@@ -32,6 +36,7 @@ class MemoryCvVersions implements CvVersionRepository {
   patches: Array<Partial<CvVersion["extraction"]>> = [];
   limit: number | null = null;
   private readonly uploadIds = new Set<string>();
+  private clock = Date.parse("2026-09-26T00:00:00.000Z");
 
   ensureReady(): Promise<void> {
     this.events.push("ready");
@@ -62,7 +67,7 @@ class MemoryCvVersions implements CvVersionRepository {
     return Promise.resolve(version);
   }
 
-  findByPdfPathname(pathname: string): Promise<CvVersion | null> {
+  findByUploadPathname(pathname: string): Promise<CvVersion | null> {
     this.events.push("find");
     return Promise.resolve(
       this.rows.find((row) => row.pdf.pathname === pathname && this.uploadIds.has(row.id)) ?? null,
@@ -74,31 +79,30 @@ class MemoryCvVersions implements CvVersionRepository {
     return Promise.resolve(this.rows.filter((row) => row.pdf.pathname === pathname).length);
   }
 
-  createCopy(input: {
-    pdf: CvPdf;
-    data: CvData;
-    model: string | null;
-    finishedAt: string;
-  }): Promise<CvVersion> {
+  createCopy(source: CvVersion, data: CvData): Promise<CvVersion> {
     this.events.push("copy");
     const version: CvVersion = {
       id: `copy-${this.rows.length + 1}`,
       status: "draft",
-      pdf: input.pdf,
-      extraction: {
-        status: "succeeded",
-        model: input.model,
-        error: null,
-        startedAt: input.finishedAt,
-        finishedAt: input.finishedAt,
-      },
-      data: input.data,
-      createdAt: input.finishedAt,
-      updatedAt: input.finishedAt,
+      pdf: source.pdf,
+      extraction: { ...source.extraction, status: "succeeded", error: null },
+      data,
+      createdAt: this.tick(),
+      updatedAt: this.tick(),
       publishedAt: null,
     };
     this.rows.push(version);
     return Promise.resolve(version);
+  }
+
+  // Each write gets a later timestamp, like Mongo's updatedAt.
+  private tick(): string {
+    this.clock += 1000;
+    return new Date(this.clock).toISOString();
+  }
+
+  private isCurrentRun(row: CvVersion, startedAt: string): boolean {
+    return row.extraction.status === "running" && row.extraction.startedAt === startedAt;
   }
 
   findById(id: string): Promise<CvVersion | null> {
@@ -115,19 +119,52 @@ class MemoryCvVersions implements CvVersionRepository {
     return Promise.resolve(this.rows.slice(0, limit));
   }
 
-  markExtraction(id: string, patch: Partial<CvVersion["extraction"]>): Promise<void> {
+  markExtraction(
+    id: string,
+    patch: Partial<CvVersion["extraction"]>,
+    run?: { startedAt: string },
+  ): Promise<void> {
     this.events.push("mark");
     this.patches.push(patch);
     const row = this.rows.find((item) => item.id === id);
-    if (row) row.extraction = { ...row.extraction, ...patch };
+    if (row && (!run || this.isCurrentRun(row, run.startedAt))) {
+      row.extraction = { ...row.extraction, ...patch };
+      row.updatedAt = this.tick();
+    }
     return Promise.resolve();
   }
 
-  saveData(id: string, data: CvData): Promise<CvVersion | null> {
+  completeExtraction(
+    id: string,
+    startedAt: string,
+    result: { data: CvData; model: string; finishedAt: string },
+  ): Promise<CvVersion | null> {
+    this.events.push("complete");
+    const row = this.rows.find((item) => item.id === id);
+    if (!row || row.status !== "draft" || !this.isCurrentRun(row, startedAt)) {
+      return Promise.resolve(null);
+    }
+    row.data = result.data;
+    row.extraction = {
+      ...row.extraction,
+      status: "succeeded",
+      model: result.model,
+      error: null,
+      finishedAt: result.finishedAt,
+    };
+    row.updatedAt = this.tick();
+    return Promise.resolve(row);
+  }
+
+  saveData(id: string, data: CvData, expectedUpdatedAt: string): Promise<CvVersion | null> {
     this.events.push("save");
     const row = this.rows.find((item) => item.id === id);
-    if (!row || row.status !== "draft") return Promise.resolve(null);
+    const settled = row?.extraction.status === "succeeded" || row?.extraction.status === "failed";
+    if (!row || row.status !== "draft" || !settled || row.updatedAt !== expectedUpdatedAt) {
+      return Promise.resolve(null);
+    }
     row.data = data;
+    row.updatedAt = this.tick();
     return Promise.resolve(row);
   }
 
@@ -136,7 +173,7 @@ class MemoryCvVersions implements CvVersionRepository {
     this.events.push("publish");
     const row = this.rows.find((item) => item.id === id);
     if (!row || row.status !== "draft" || row.extraction.status !== "succeeded" || row.data === null) {
-      return Promise.reject(new Error(`CV version "${id}" must be a complete draft to publish.`));
+      return Promise.reject(new CvVersionStateError("Only a draft with extracted CV data can be published."));
     }
     for (const item of this.rows) {
       if (item.status === "published") item.status = "archived";
@@ -230,6 +267,19 @@ async function rejection(work: () => Promise<unknown>): Promise<InvalidCvError> 
     throw error;
   }
   throw new Error("Expected InvalidCvError.");
+}
+
+async function rejectionOf<T extends Error>(
+  type: new (...args: never[]) => T,
+  work: () => Promise<unknown>,
+): Promise<T> {
+  try {
+    await work();
+  } catch (error) {
+    if (error instanceof type) return error;
+    throw error;
+  }
+  throw new Error(`Expected ${type.name}.`);
 }
 
 test("registerUpload creates a pending draft for a private PDF", async () => {
@@ -555,7 +605,7 @@ test("runExtraction stores extracted CV data for a pending draft", async () => {
 
   expect(Array.from(extract.pdf ?? [])).toEqual(Array.from(pdfBytes));
   expect(extract.filename).toBe("resume.pdf");
-  expect(versions.events).toEqual(["find-id", "mark", "save", "mark"]);
+  expect(versions.events).toEqual(["find-id", "mark", "complete"]);
   expect(versions.patches[0]).toEqual({
     status: "running",
     error: null,
@@ -615,7 +665,27 @@ test("runExtraction marks a missing PDF as failed", async () => {
   expect(error.message).toBe("The uploaded PDF was not found.");
   expect(versions.rows[0]?.extraction.status).toBe("failed");
   expect(versions.rows[0]?.extraction.error).toBe("The uploaded PDF was not found.");
-  expect(versions.events.includes("save")).toBe(false);
+  expect(versions.events.includes("complete")).toBe(false);
+});
+
+test("runExtraction does not overwrite a newer run that started meanwhile", async () => {
+  const { service, versions, blobs, extract } = setup();
+  versions.rows.push(draft());
+  blobs.bytes.set("cv/resume.pdf", pdfBytes);
+  const newerRun = "2026-09-25T12:03:00.000Z";
+  extract.extract = () => {
+    // A retry takes over while this run waits on the model.
+    const row = versions.rows[0];
+    if (row) row.extraction = { ...row.extraction, startedAt: newerRun };
+    return Promise.resolve({ data: sampleCv, model: "extract-model" });
+  };
+
+  const error = await rejectionOf(CvVersionStateError, () => service.runExtraction("cv-1"));
+
+  expect(error.message).toBe("The CV draft changed while extraction was running.");
+  expect(versions.rows[0]?.data).toBeNull();
+  expect(versions.rows[0]?.extraction.status).toBe("running");
+  expect(versions.rows[0]?.extraction.startedAt).toBe(newerRun);
 });
 
 test("runExtraction rejects a fresh running draft before reading the PDF", async () => {
@@ -624,7 +694,7 @@ test("runExtraction rejects a fresh running draft before reading the PDF", async
   blobs.bytes.set("cv/resume.pdf", pdfBytes);
   extract.result = { data: sampleCv, model: "extract-model" };
 
-  const error = await rejection(() => service.runExtraction("cv-1"));
+  const error = await rejectionOf(CvVersionStateError, () => service.runExtraction("cv-1"));
 
   expect(error.message).toBe("Extraction is already running.");
   expect(versions.patches.length).toBe(0);
@@ -656,7 +726,7 @@ test("runExtraction keeps a draft that has been running for just under five minu
     }),
   );
 
-  const error = await rejection(() => service.runExtraction("cv-1"));
+  const error = await rejectionOf(CvVersionStateError, () => service.runExtraction("cv-1"));
 
   expect(error.message).toBe("Extraction is already running.");
   expect(versions.patches.length).toBe(0);
@@ -676,20 +746,23 @@ test("runExtraction allows a running draft with no start time", async () => {
 test("runExtraction rejects succeeded, published, and missing versions before writing", async () => {
   const succeeded = setup();
   succeeded.versions.rows.push(draft({ status: "succeeded", model: "extract-model" }));
-  expect((await rejection(() => succeeded.service.runExtraction("cv-1"))).message).toBe(
-    "Extraction has already succeeded.",
+  const succeededError = await rejectionOf(CvVersionStateError, () =>
+    succeeded.service.runExtraction("cv-1"),
   );
+  expect(succeededError.message).toBe("Extraction has already succeeded.");
 
   const published = setup();
   published.versions.rows.push(draft({ status: "pending" }, "published"));
-  expect((await rejection(() => published.service.runExtraction("cv-1"))).message).toBe(
-    "Extraction is only available for a draft.",
+  const publishedError = await rejectionOf(CvVersionStateError, () =>
+    published.service.runExtraction("cv-1"),
   );
+  expect(publishedError.message).toBe("Extraction is only available for a draft.");
 
   const missing = setup();
-  expect((await rejection(() => missing.service.runExtraction("missing"))).message).toBe(
-    'CV version "missing" was not found.',
+  const missingError = await rejectionOf(CvVersionNotFoundError, () =>
+    missing.service.runExtraction("missing"),
   );
+  expect(missingError.message).toBe('CV version "missing" was not found.');
 
   expect(succeeded.versions.patches.length).toBe(0);
   expect(published.versions.patches.length).toBe(0);
@@ -706,7 +779,7 @@ test("runExtraction rejects a blank model after reading the PDF", async () => {
 
   expect(error.message).toBe("Extraction did not report a model.");
   expect(versions.rows[0]?.extraction.status).toBe("failed");
-  expect(versions.events.includes("save")).toBe(false);
+  expect(versions.events.includes("complete")).toBe(false);
 });
 
 test("in-progress and retry helpers follow the five-minute running window", () => {
@@ -728,6 +801,9 @@ test("in-progress and retry helpers follow the five-minute running window", () =
   expect(canRetryExtraction(published, now)).toBe(false);
 });
 
+// The updatedAt the editor loaded for a readyDraft.
+const loaded = now.toISOString();
+
 function readyDraft(id: string, status: CvVersion["status"] = "draft"): CvVersion {
   return {
     ...draft({ status: "succeeded", model: "extract-model", finishedAt: now.toISOString() }, status),
@@ -743,11 +819,54 @@ test("saveDraft stores validated CV data and drops blank list lines", async () =
   input.profile.headline = "Staff Engineer";
   input.experience[0]?.highlights.push("  ");
 
-  const saved = await service.saveDraft("cv-1", input);
+  const saved = await service.saveDraft("cv-1", input, loaded);
 
   expect(saved.data?.profile.headline).toBe("Staff Engineer");
   expect(saved.data?.experience[0]?.highlights).toEqual(sampleCv.experience[0]?.highlights);
   expect(versions.events).toEqual(["find-id", "save"]);
+});
+
+test("saveDraft rejects an edit made from an outdated copy of the draft", async () => {
+  const { service, versions } = setup();
+  versions.rows.push(readyDraft("cv-1"));
+  const first = structuredClone(sampleCv);
+  first.profile.headline = "First tab";
+  await service.saveDraft("cv-1", first, loaded);
+
+  const second = structuredClone(sampleCv);
+  second.profile.headline = "Second tab";
+  const error = await rejectionOf(CvVersionStateError, () =>
+    service.saveDraft("cv-1", second, loaded),
+  );
+
+  expect(error.message).toBe(
+    "This draft changed after you opened it. Reload the page to see the latest version.",
+  );
+  expect(versions.rows[0]?.data?.profile.headline).toBe("First tab");
+});
+
+test("saveDraft refuses an edit while a retried extraction is running", async () => {
+  const { service, versions, blobs, extract } = setup();
+  versions.rows.push(draft({ status: "failed", error: "model down" }));
+  const row = versions.rows[0];
+  if (!row) throw new Error("fixture");
+  row.data = sampleCv;
+  blobs.bytes.set("cv/resume.pdf", pdfBytes);
+  const edited = structuredClone(sampleCv);
+  edited.profile.headline = "Edited by the admin";
+  extract.extract = async () => {
+    // The admin saves from a page loaded before the retry. The run owns the draft now,
+    // so the save is refused instead of being overwritten when the run completes.
+    await expect(service.saveDraft("cv-1", edited, row.updatedAt)).rejects.toBeInstanceOf(
+      CvVersionStateError,
+    );
+    return { data: sampleCv, model: "extract-model" };
+  };
+
+  await service.runExtraction("cv-1");
+
+  expect(row.extraction.status).toBe("succeeded");
+  expect(versions.events.filter((event) => event === "save")).toEqual([]);
 });
 
 test("saveDraft fills a blank id and rejects a duplicate id before writing", async () => {
@@ -757,7 +876,7 @@ test("saveDraft fills a blank id and rejects a duplicate id before writing", asy
   const experience = blank.experience[0];
   if (!experience) throw new Error("fixture");
   experience.id = " ";
-  const saved = await filled.service.saveDraft("cv-1", blank);
+  const saved = await filled.service.saveDraft("cv-1", blank, loaded);
   expect(saved.data?.experience[0]?.id).not.toBe(" ");
   expect((saved.data?.experience[0]?.id.length ?? 0) > 0).toBe(true);
 
@@ -767,37 +886,61 @@ test("saveDraft fills a blank id and rejects a duplicate id before writing", asy
   const first = input.experience[0];
   if (!first) throw new Error("fixture");
   input.experience.push({ ...first });
-  const error = await rejection(() => duplicated.service.saveDraft("cv-1", input));
+  const error = await rejection(() => duplicated.service.saveDraft("cv-1", input, loaded));
   expect(error.message.startsWith("Duplicate CV entity key")).toBe(true);
   expect(error.issues.length).toBe(1);
   expect(duplicated.versions.events.includes("save")).toBe(false);
 });
 
-test("saveDraft rejects invalid data, a published version, and a running extraction", async () => {
+test("saveDraft rejects invalid data, a published version, and any running extraction", async () => {
   const invalid = setup();
   invalid.versions.rows.push(readyDraft("cv-1"));
-  const invalidError = await rejection(() => invalid.service.saveDraft("cv-1", { profile: {} }));
+  const invalidError = await rejection(() =>
+    invalid.service.saveDraft("cv-1", { profile: {} }, loaded),
+  );
   expect(invalidError.message).toBe("The CV data is invalid.");
   expect(invalidError.issues.length > 0).toBe(true);
   expect(invalid.versions.events).toEqual(["find-id"]);
 
   const published = setup();
   published.versions.rows.push(readyDraft("cv-1", "published"));
-  expect((await rejection(() => published.service.saveDraft("cv-1", sampleCv))).message).toBe(
-    "Only a draft can be edited.",
+  const publishedError = await rejectionOf(CvVersionStateError, () =>
+    published.service.saveDraft("cv-1", sampleCv, loaded),
   );
+  expect(publishedError.message).toBe("Only a draft can be edited.");
 
-  const running = setup();
-  running.versions.rows.push(
-    readyDraft("cv-1"),
-  );
-  const row = running.versions.rows[0];
-  if (!row) throw new Error("fixture");
-  row.extraction = { ...row.extraction, status: "running", startedAt: now.toISOString() };
-  expect((await rejection(() => running.service.saveDraft("cv-1", sampleCv))).message).toBe(
-    "Wait for extraction to finish before editing.",
-  );
-  expect(running.versions.events.includes("save")).toBe(false);
+  // A stale run may still finish, so it blocks edits the same way a fresh one does.
+  for (const startedAt of [now, new Date(now.getTime() - fiveMinutes)]) {
+    const running = setup();
+    running.versions.rows.push(readyDraft("cv-1"));
+    const row = running.versions.rows[0];
+    if (!row) throw new Error("fixture");
+    row.extraction = { ...row.extraction, status: "running", startedAt: startedAt.toISOString() };
+    const runningError = await rejectionOf(CvVersionStateError, () =>
+      running.service.saveDraft("cv-1", sampleCv, loaded),
+    );
+    expect(runningError.message).toBe("Wait for extraction to finish before editing.");
+    expect(running.versions.events.includes("save")).toBe(false);
+  }
+});
+
+test("canEditCv and canPublishCv follow the draft and extraction state", () => {
+  const ready = readyDraft("cv-1");
+  const failedWithData = { ...draft({ status: "failed", error: "model down" }), data: sampleCv };
+  const staleRunning = {
+    ...draft({ status: "running", startedAt: new Date(now.getTime() - fiveMinutes).toISOString() }),
+    data: sampleCv,
+  };
+
+  expect(canEditCv(ready)).toBe(true);
+  expect(canEditCv(failedWithData)).toBe(true);
+  expect(canEditCv(staleRunning)).toBe(false);
+  expect(canEditCv(readyDraft("cv-1", "published"))).toBe(false);
+  expect(canEditCv(draft({ status: "failed" }))).toBe(false);
+
+  expect(canPublishCv(ready)).toBe(true);
+  expect(canPublishCv(failedWithData)).toBe(false);
+  expect(canPublishCv(readyDraft("cv-1", "archived"))).toBe(false);
 });
 
 test("publish promotes one draft and archives the previous published version", async () => {
@@ -854,14 +997,16 @@ test("publish rejects a draft that is not ready and a missing version before wri
   const unfinishedDraft = draft();
   unfinishedDraft.data = sampleCv;
   unfinished.versions.rows.push(unfinishedDraft);
-  expect((await rejection(() => unfinished.service.publish("cv-1"))).message).toBe(
-    "Only a draft with extracted CV data can be published.",
+  const unfinishedError = await rejectionOf(CvVersionStateError, () =>
+    unfinished.service.publish("cv-1"),
   );
+  expect(unfinishedError.message).toBe("Only a draft with extracted CV data can be published.");
 
   const missing = setup();
-  expect((await rejection(() => missing.service.publish("missing"))).message).toBe(
-    'CV version "missing" was not found.',
+  const missingError = await rejectionOf(CvVersionNotFoundError, () =>
+    missing.service.publish("missing"),
   );
+  expect(missingError.message).toBe('CV version "missing" was not found.');
   expect(unfinished.versions.events.includes("transaction")).toBe(false);
   expect(missing.versions.events).toEqual(["find-id"]);
 });
@@ -878,6 +1023,7 @@ test("duplicateAsDraft copies the PDF and data into a new succeeded draft", asyn
   expect(copy.data).toEqual(sampleCv);
   expect(copy.extraction.status).toBe("succeeded");
   expect(copy.extraction.model).toBe("extract-model");
+  expect(copy.extraction.finishedAt).toBe(versions.rows[0]?.extraction.finishedAt ?? "missing");
   expect(versions.rows[0]?.status).toBe("published");
   expect(versions.rows.filter((row) => row.pdf.pathname === "cv/resume.pdf").length).toBe(2);
 });
@@ -886,7 +1032,7 @@ test("duplicateAsDraft rejects a version that has no CV data", async () => {
   const { service, versions } = setup();
   versions.rows.push(draft({ status: "failed", error: "model down" }));
 
-  const error = await rejection(() => service.duplicateAsDraft("cv-1"));
+  const error = await rejectionOf(CvVersionStateError, () => service.duplicateAsDraft("cv-1"));
 
   expect(error.message).toBe("A version needs CV data before it can be duplicated.");
   expect(versions.events.includes("copy")).toBe(false);
@@ -930,7 +1076,7 @@ test("deleteDraft rejects a published version before deleting the PDF", async ()
   const { service, versions, blobs } = setup();
   versions.rows.push(readyDraft("cv-1", "published"));
 
-  const error = await rejection(() => service.deleteDraft("cv-1"));
+  const error = await rejectionOf(CvVersionStateError, () => service.deleteDraft("cv-1"));
 
   expect(error.message).toBe("Only a draft can be deleted.");
   expect(versions.rows.length).toBe(1);

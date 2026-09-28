@@ -23,6 +23,14 @@ export function moveItem<T>(items: readonly T[], index: number, direction: -1 | 
   return next;
 }
 
+export function replaceAt<T>(items: readonly T[], index: number, patch: Partial<T>): T[] {
+  return items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item));
+}
+
+export function removeAt<T>(items: readonly T[], index: number): T[] {
+  return items.filter((_, itemIndex) => itemIndex !== index);
+}
+
 export function emptyTextToNull(value: string): string | null {
   return value.length === 0 ? null : value;
 }

@@ -133,7 +133,10 @@ export type CvFieldIssue = {
   message: string;
 };
 
-export class CvVersionNotFoundError extends Error {
+// Base for CV errors whose message is safe to show to the admin.
+export abstract class CvError extends Error {}
+
+export class CvVersionNotFoundError extends CvError {
   readonly id: string;
 
   constructor(id: string) {
@@ -143,25 +146,47 @@ export class CvVersionNotFoundError extends Error {
   }
 }
 
+// The version exists, but its status or a concurrent change does not allow the action.
+export class CvVersionStateError extends CvError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CvVersionStateError";
+  }
+}
+
+export type CvExtractionResult = {
+  data: CvData;
+  model: string;
+  finishedAt: string;
+};
+
 export interface CvVersionRepository {
   ensureReady(): Promise<void>;
   create(input: { pdf: CvPdf }, tx: TransactionContext): Promise<CvVersion>;
   findById(id: string): Promise<CvVersion | null>;
-  // The upload registered at this pathname. A duplicate shares the blob path and is not returned.
-  findByPdfPathname(pathname: string): Promise<CvVersion | null>;
+  // The original upload at this pathname. A duplicate shares the blob path and is not returned.
+  findByUploadPathname(pathname: string): Promise<CvVersion | null>;
   countByPdfPathname(pathname: string): Promise<number>;
   findPublished(): Promise<CvVersion | null>;
   list(limit: number): Promise<CvVersion[]>;
-  markExtraction(id: string, patch: Partial<CvVersion["extraction"]>): Promise<void>;
-  saveData(id: string, data: CvData): Promise<CvVersion | null>;
+  // With `run`, the patch applies only while that run (identified by its start time) is current.
+  markExtraction(
+    id: string,
+    patch: Partial<CvVersion["extraction"]>,
+    run?: { startedAt: string },
+  ): Promise<void>;
+  // Stores the result only while the run that started at `startedAt` is current.
+  completeExtraction(
+    id: string,
+    startedAt: string,
+    result: CvExtractionResult,
+  ): Promise<CvVersion | null>;
+  // Admin edit. `expectedUpdatedAt` is the version token the editor loaded; a newer write wins.
+  saveData(id: string, data: CvData, expectedUpdatedAt: string): Promise<CvVersion | null>;
+  // Throws CvVersionNotFoundError or CvVersionStateError when the draft cannot be published.
   publish(id: string, tx: TransactionContext): Promise<CvVersion>;
   deleteDraft(id: string): Promise<boolean>;
-  createCopy(input: {
-    pdf: CvPdf;
-    data: CvData;
-    model: string | null;
-    finishedAt: string;
-  }): Promise<CvVersion>;
+  createCopy(source: CvVersion, data: CvData): Promise<CvVersion>;
 }
 
 export interface CvPublishedListener {

@@ -95,7 +95,10 @@ test("ensureReady lets duplicated drafts share a PDF path and keeps uploads uniq
   await new MongoCvVersionRepository().ensureReady();
 
   expect(dropped).toEqual(["pdf.pathname_1"]);
-  expect(updates[0]?.[0]).toEqual({ uploadPathname: { $exists: false } });
+  expect(updates[0]?.[0]).toEqual({
+    uploadPathname: { $exists: false },
+    sourceVersionId: { $exists: false },
+  });
   expect(indexes).toEqual([
     [{ createdAt: -1 }],
     [{ "pdf.pathname": 1 }],
@@ -107,33 +110,17 @@ test("ensureReady lets duplicated drafts share a PDF path and keeps uploads uniq
   ]);
 });
 
-test("ensureReady keeps a PDF path index that is already shared", async () => {
-  const dropped: string[] = [];
-  activeCollection = {
-    indexes: async () => [{ name: "pdf.pathname_1", key: { "pdf.pathname": 1 }, unique: false }],
-    dropIndex: async (name: string) => {
-      dropped.push(name);
-    },
-    updateMany: async () => undefined,
-    createIndex: async () => undefined,
-  };
-
-  await new MongoCvVersionRepository().ensureReady();
-
-  expect(dropped).toEqual([]);
-});
-
-test("findByPdfPathname looks up the original upload key", async () => {
+test("findByUploadPathname looks up the original upload key", async () => {
   const document = makeDocument(new TestObjectId());
   let filter: unknown;
-  activeCollection = {
+  activeCollection = readyCollection({
     findOne: async (value: unknown) => {
       filter = value;
       return document;
     },
-  };
+  });
 
-  const found = await new MongoCvVersionRepository().findByPdfPathname("cv/test.pdf");
+  const found = await new MongoCvVersionRepository().findByUploadPathname("cv/test.pdf");
 
   expect(filter).toEqual({ uploadPathname: "cv/test.pdf" });
   expect(found?.pdf.pathname).toBe("cv/test.pdf");
@@ -165,7 +152,7 @@ test("create stores the upload pathname used to recognize a retried registration
   expect((captured.document?.extraction as { status?: string } | undefined)?.status).toBe("pending");
 });
 
-test("createCopy inserts a succeeded draft that shares the PDF and has its own upload key", async () => {
+test("createCopy inserts a succeeded draft that shares the PDF and has no upload key", async () => {
   const captured: { document?: Record<string, unknown> } = {};
   activeCollection = readyCollection({
     insertOne: async (document: Record<string, unknown>) => {
@@ -173,29 +160,91 @@ test("createCopy inserts a succeeded draft that shares the PDF and has its own u
       return { insertedId: new TestObjectId("507f1f77bcf86cd799439012") };
     },
   });
-
-  const version = await new MongoCvVersionRepository().createCopy({
+  const source = {
+    id: "507f1f77bcf86cd799439011",
+    status: "published" as const,
     pdf: {
       pathname: "cv/test.pdf",
       filename: "test.pdf",
       size: 100,
-      contentType: "application/pdf",
+      contentType: "application/pdf" as const,
       uploadedAt: "2026-09-24T00:00:00.000Z",
     },
+    extraction: {
+      status: "succeeded" as const,
+      model: "extract-model",
+      error: null,
+      startedAt: "2026-09-24T00:01:00.000Z",
+      finishedAt: "2026-09-24T00:02:00.000Z",
+    },
     data: sampleCv,
-    model: "extract-model",
-    finishedAt: "2026-09-25T12:00:00.000Z",
-  });
+    createdAt: "2026-09-24T00:00:00.000Z",
+    updatedAt: "2026-09-24T00:02:00.000Z",
+    publishedAt: "2026-09-24T00:03:00.000Z",
+  };
+
+  const version = await new MongoCvVersionRepository().createCopy(source, sampleCv);
 
   expect(version.id).toBe("507f1f77bcf86cd799439012");
   expect(version.status).toBe("draft");
   expect(version.data).toEqual(sampleCv);
-  expect(version.extraction.status).toBe("succeeded");
-  expect(version.extraction.model).toBe("extract-model");
-  expect(version.pdf.pathname).toBe("cv/test.pdf");
-  expect(typeof captured.document?.uploadPathname).toBe("string");
-  expect(String(captured.document?.uploadPathname).startsWith("copy:")).toBe(true);
-  expect(captured.document?.uploadPathname).not.toBe("cv/test.pdf");
+  expect(version.extraction).toEqual(source.extraction);
+  expect(version.pdf).toEqual(source.pdf);
+  expect(version.publishedAt).toBeNull();
+  expect("uploadPathname" in (captured.document ?? {})).toBe(false);
+  expect((captured.document?.sourceVersionId as TestObjectId).toHexString()).toBe(source.id);
+});
+
+test("saveData writes only a settled draft at the version the editor loaded", async () => {
+  const id = new TestObjectId();
+  const calls: unknown[][] = [];
+  activeCollection = readyCollection({
+    findOneAndUpdate: async (...args: unknown[]) => {
+      calls.push(args);
+      return makeDocument(id);
+    },
+  });
+
+  await new MongoCvVersionRepository().saveData(id.toHexString(), sampleCv, "2026-09-24T00:00:00.000Z");
+
+  expect(calls[0]?.[0]).toEqual({
+    _id: id,
+    status: "draft",
+    "extraction.status": { $in: ["succeeded", "failed"] },
+    updatedAt: new Date("2026-09-24T00:00:00.000Z"),
+  });
+});
+
+test("completeExtraction and a guarded markExtraction write only to the current run", async () => {
+  const id = new TestObjectId();
+  const filters: unknown[] = [];
+  activeCollection = readyCollection({
+    findOneAndUpdate: async (filter: unknown) => {
+      filters.push(filter);
+      return makeDocument(id);
+    },
+    updateOne: async (filter: unknown) => {
+      filters.push(filter);
+    },
+  });
+  const repository = new MongoCvVersionRepository();
+  const startedAt = "2026-09-24T00:01:00.000Z";
+  const run = { "extraction.status": "running", "extraction.startedAt": new Date(startedAt) };
+
+  const saved = await repository.completeExtraction(id.toHexString(), startedAt, {
+    data: sampleCv,
+    model: "extract-model",
+    finishedAt: "2026-09-24T00:02:00.000Z",
+  });
+  await repository.markExtraction(id.toHexString(), { status: "failed" }, { startedAt });
+  await repository.markExtraction(id.toHexString(), { status: "running" });
+
+  expect(saved?.id).toBe(id.toHexString());
+  expect(filters).toEqual([
+    { _id: id, status: "draft", ...run },
+    { _id: id, ...run },
+    { _id: id },
+  ]);
 });
 
 test("countByPdfPathname counts every version that stores the blob path", async () => {
@@ -231,7 +280,8 @@ for (const [name, changes] of [
     };
 
     await expect(new MongoCvVersionRepository().publish(id.toHexString(), tx)).rejects.toMatchObject({
-      message: `CV version "${id.toHexString()}" must be a complete draft to publish.`,
+      name: "CvVersionStateError",
+      message: "Only a draft with extracted CV data can be published.",
     });
     expect(archived).toBe(false);
   });
@@ -284,6 +334,7 @@ test("publish fails if the draft is no longer eligible when promoted", async () 
   };
 
   await expect(new MongoCvVersionRepository().publish(id.toHexString(), tx)).rejects.toMatchObject({
-    message: `CV version "${id.toHexString()}" is no longer a complete draft to publish.`,
+    name: "CvVersionStateError",
+    message: "The draft changed while it was being published. Reload and try again.",
   });
 });

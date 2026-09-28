@@ -6,7 +6,12 @@ import { RetryExtractionForm } from "@/app/admin/(panel)/cv/retry-extraction-for
 import { CvVersionEditor } from "@/app/admin/(panel)/cv/[versionId]/cv-editor";
 import { isDatabaseConfigured } from "@/server/db/client";
 import { requireAdmin } from "@/server/services/auth-service";
-import { canRetryExtraction, isExtractionInProgress } from "@/server/services/cv-service";
+import {
+  canEditCv,
+  canPublishCv,
+  canRetryExtraction,
+  isExtractionInProgress,
+} from "@/server/services/cv-service";
 import { getCvVersion } from "@/server/services/cv-runtime";
 
 export default async function CvVersionPage({
@@ -77,7 +82,16 @@ export default async function CvVersionPage({
             className="h-[70vh] min-h-80 w-full border border-gray-300 bg-white"
           />
         </aside>
-        <CvVersionEditor version={version} locked={locked} />
+        <CvVersionEditor
+          version={version}
+          locked={locked}
+          actions={{
+            edit: canEditCv(version),
+            publish: canPublishCv(version),
+            duplicate: version.status !== "draft" && version.data !== null,
+            delete: version.status === "draft",
+          }}
+        />
       </div>
     </div>
   );

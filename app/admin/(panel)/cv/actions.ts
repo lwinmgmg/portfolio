@@ -10,6 +10,7 @@ import type { RerunExtractionState } from "@/app/admin/(panel)/cv/rerun-extracti
 import { isDatabaseConfigured } from "@/server/db/client";
 import { requireAdmin, withAdmin } from "@/server/services/auth-service";
 import {
+  CvError,
   deleteCvDraft,
   duplicateCvAsDraft,
   InvalidCvError,
@@ -90,7 +91,7 @@ async function rerunExtraction(
     await runExtraction(versionId);
   } catch (error) {
     revalidatePath("/admin/cv");
-    if (error instanceof InvalidCvError) {
+    if (error instanceof CvError) {
       if (error.cause) console.error(error.cause);
       return { status: "error", message: error.message };
     }
@@ -104,115 +105,104 @@ async function rerunExtraction(
 
 export const rerunExtractionAction = withAdmin(rerunExtraction);
 
-async function saveCvDraftForm(
-  _previous: CvEditorState,
-  formData: FormData,
-): Promise<CvEditorState> {
-  const versionId = readVersionId(formData);
-  if (!versionId) return editorErrorMessage("Choose a CV version.");
-  if (!isDatabaseConfigured()) return editorErrorMessage("Database is not configured.");
+// A successful run returns the next state or a redirect target.
+type EditorOutcome = CvEditorState | { redirectTo: string };
 
-  const raw = formData.get("data");
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    return editorErrorMessage("CV data must be valid JSON.");
-  }
-  let input: unknown;
-  try {
-    input = JSON.parse(raw);
-  } catch {
-    return editorErrorMessage("CV data must be valid JSON.");
-  }
+// Shared shell for the editor actions: reads the version id, checks the database, and turns
+// CV errors into editor state. `redirect` stays outside the try so its signal is not caught.
+function versionAction(
+  failureMessage: string,
+  run: (versionId: string, formData: FormData) => Promise<EditorOutcome>,
+) {
+  return withAdmin(async (_previous: CvEditorState, formData: FormData) => {
+    const versionId = readField(formData, "versionId");
+    if (!versionId) return editorError("Choose a CV version.");
+    if (!isDatabaseConfigured()) return editorError("Database is not configured.");
 
-  try {
-    await saveCvDraft(versionId, input);
-  } catch (error) {
-    return editorFailure(error, "Could not save the CV draft.");
-  }
-
-  revalidatePath("/admin/cv");
-  revalidatePath(`/admin/cv/${versionId}`);
-  return { status: "saved", message: "Draft saved.", issues: [] };
+    let outcome: EditorOutcome;
+    try {
+      outcome = await run(versionId, formData);
+    } catch (error) {
+      return editorFailure(error, failureMessage);
+    }
+    if ("redirectTo" in outcome) redirect(outcome.redirectTo);
+    return outcome;
+  });
 }
 
-async function publishCvForm(
-  _previous: CvEditorState,
-  formData: FormData,
-): Promise<CvEditorState> {
-  const versionId = readVersionId(formData);
-  if (!versionId) return editorErrorMessage("Choose a CV version.");
-  if (!isDatabaseConfigured()) return editorErrorMessage("Database is not configured.");
+export const saveCvDraftAction = versionAction(
+  "Could not save the CV draft.",
+  async (versionId, formData) => {
+    const expectedUpdatedAt = readField(formData, "updatedAt");
+    if (!expectedUpdatedAt) return editorError("Reload the page and try again.");
+    const input = parseJsonField(formData, "data");
+    if (input === undefined) return editorError("CV data must be valid JSON.");
 
-  try {
-    await publishCv(versionId);
-  } catch (error) {
-    return editorFailure(error, "Could not publish the CV.");
-  }
+    await saveCvDraft(versionId, input, expectedUpdatedAt);
+    revalidatePath("/admin/cv");
+    revalidatePath(`/admin/cv/${versionId}`);
+    return editorSaved("Draft saved.");
+  },
+);
 
+export const publishCvAction = versionAction("Could not publish the CV.", async (versionId) => {
+  await publishCv(versionId);
   revalidatePath("/");
   revalidatePath("/admin/cv");
   revalidatePath(`/admin/cv/${versionId}`);
-  return { status: "saved", message: "CV published.", issues: [] };
-}
+  return editorSaved("CV published.");
+});
 
-async function duplicateCvForm(
-  _previous: CvEditorState,
-  formData: FormData,
-): Promise<CvEditorState> {
-  const versionId = readVersionId(formData);
-  if (!versionId) return editorErrorMessage("Choose a CV version.");
-  if (!isDatabaseConfigured()) return editorErrorMessage("Database is not configured.");
-
-  let copyId: string;
-  try {
+export const duplicateCvAction = versionAction(
+  "Could not duplicate the CV.",
+  async (versionId) => {
     const copy = await duplicateCvAsDraft(versionId);
-    copyId = copy.id;
-  } catch (error) {
-    return editorFailure(error, "Could not duplicate the CV.");
-  }
+    revalidatePath("/admin/cv");
+    return { redirectTo: `/admin/cv/${copy.id}` };
+  },
+);
 
-  revalidatePath("/admin/cv");
-  redirect(`/admin/cv/${copyId}`);
-}
-
-async function deleteCvDraftForm(
-  _previous: CvEditorState,
-  formData: FormData,
-): Promise<CvEditorState> {
-  const versionId = readVersionId(formData);
-  if (!versionId) return editorErrorMessage("Choose a CV version.");
-  if (!isDatabaseConfigured()) return editorErrorMessage("Database is not configured.");
-
-  try {
+export const deleteCvDraftAction = versionAction(
+  "Could not delete the CV draft.",
+  async (versionId) => {
     await deleteCvDraft(versionId);
-  } catch (error) {
-    return editorFailure(error, "Could not delete the CV draft.");
-  }
+    revalidatePath("/admin/cv");
+    return { redirectTo: "/admin/cv" };
+  },
+);
 
-  revalidatePath("/admin/cv");
-  redirect("/admin/cv");
-}
-
-export const saveCvDraftAction = withAdmin(saveCvDraftForm);
-export const publishCvAction = withAdmin(publishCvForm);
-export const duplicateCvAction = withAdmin(duplicateCvForm);
-export const deleteCvDraftAction = withAdmin(deleteCvDraftForm);
-
-function readVersionId(formData: FormData): string | null {
-  const versionId = formData.get("versionId");
-  if (typeof versionId !== "string") return null;
-  const trimmed = versionId.trim();
+function readField(formData: FormData, name: string): string | null {
+  const value = formData.get(name);
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function editorErrorMessage(message: string): CvEditorState {
+// Returns undefined when the field is missing or is not JSON.
+function parseJsonField(formData: FormData, name: string): unknown {
+  const raw = readField(formData, name);
+  if (raw === null) return undefined;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function editorSaved(message: string): CvEditorState {
+  return { status: "saved", message, issues: [] };
+}
+
+function editorError(message: string): CvEditorState {
   return { status: "error", message, issues: [] };
 }
 
 function editorFailure(error: unknown, fallback: string): CvEditorState {
-  if (error instanceof InvalidCvError) {
+  if (error instanceof CvError) {
     if (error.cause) console.error(error.cause);
-    return { status: "error", message: error.message, issues: error.issues };
+    const issues = error instanceof InvalidCvError ? error.issues : [];
+    return { status: "error", message: error.message, issues };
   }
   console.error(error);
-  return editorErrorMessage(fallback);
+  return editorError(fallback);
 }

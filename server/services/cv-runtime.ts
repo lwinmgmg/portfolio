@@ -58,8 +58,8 @@ export const getCvVersion = cache(async (id: string) => {
   return cvService.get(id);
 });
 
-export function saveCvDraft(id: string, input: unknown) {
-  return cvService.saveDraft(id, input);
+export function saveCvDraft(id: string, input: unknown, expectedUpdatedAt: string) {
+  return cvService.saveDraft(id, input, expectedUpdatedAt);
 }
 
 export function publishCv(id: string) {
@@ -78,4 +78,5 @@ export function openCvPdf(id: string) {
   return cvService.openPdf(id);
 }
 
+export { CvError } from "@/server/domain/cv";
 export { InvalidCvError } from "@/server/services/cv-service";

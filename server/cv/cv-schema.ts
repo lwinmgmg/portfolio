@@ -8,6 +8,12 @@ const YEAR_MONTH = /^\d{4}(-(0[1-9]|1[0-2]))?$/;
 const yearMonthSchema = z.string().regex(YEAR_MONTH);
 const nullableYearMonth = yearMonthSchema.nullable();
 
+// One entry per bullet. Surrounding whitespace and blank entries carry no content.
+// `overwrite` keeps the type, so the JSON schema and the domain type are unchanged.
+const lines = z
+  .array(z.string())
+  .overwrite((items) => items.map((item) => item.trim()).filter((item) => item.length > 0));
+
 const linkSchema = z.strictObject({
   label: z.string(),
   url: z.string(),
@@ -32,8 +38,8 @@ const experienceFields = {
   endDate: nullableYearMonth,
   current: z.boolean(),
   summary: z.string().nullable(),
-  highlights: z.array(z.string()),
-  technologies: z.array(z.string()),
+  highlights: lines,
+  technologies: lines,
 };
 
 const projectFields = {
@@ -43,8 +49,8 @@ const projectFields = {
   startDate: nullableYearMonth,
   endDate: nullableYearMonth,
   summary: z.string(),
-  highlights: z.array(z.string()),
-  technologies: z.array(z.string()),
+  highlights: lines,
+  technologies: lines,
 };
 
 const educationFields = {
@@ -53,12 +59,12 @@ const educationFields = {
   field: z.string().nullable(),
   startDate: nullableYearMonth,
   endDate: nullableYearMonth,
-  details: z.array(z.string()),
+  details: lines,
 };
 
 const skillFields = {
   category: z.string(),
-  items: z.array(z.string()),
+  items: lines,
 };
 
 const certificationFields = {
@@ -75,7 +81,7 @@ const languageFields = {
 
 const otherFields = {
   title: z.string(),
-  items: z.array(z.string()),
+  items: lines,
 };
 
 export const CvExtractionSchema = z.strictObject({

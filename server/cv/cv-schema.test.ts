@@ -93,3 +93,19 @@ test("emits a strict JSON schema whose objects require every property", () => {
   expect(objectCount).toBe(10);
   expect(JSON.stringify(schema).includes('"id"')).toBe(false);
 });
+
+test("trims list entries and drops blank ones without changing the JSON schema", () => {
+  const input = structuredClone(sampleCv);
+  const experience = input.experience[0];
+  if (!experience) throw new Error("fixture");
+  experience.technologies = ["  TypeScript ", "", "   ", "Go"];
+
+  const parsed = CvDataSchema.parse(input);
+
+  expect(parsed.experience[0]?.technologies).toEqual(["TypeScript", "Go"]);
+  const highlights = ["properties", "experience", "items", "properties", "highlights"].reduce<unknown>(
+    (node, key) => (isRecord(node) ? node[key] : undefined),
+    cvExtractionJsonSchema(),
+  );
+  expect(highlights).toEqual({ type: "array", items: { type: "string" } });
+});
