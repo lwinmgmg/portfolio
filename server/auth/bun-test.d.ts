@@ -9,6 +9,7 @@ declare module "bun:test" {
     toContain(expected: unknown): void;
     toBeLessThan(expected: number): void;
     toBeLessThanOrEqual(expected: number): void;
+    toBeCloseTo(expected: number, numDigits?: number): void;
     not: {
       toBe(expected: T): void;
       toContain(expected: unknown): void;

@@ -17,9 +17,13 @@ export type RagIndexState = "building" | "ready" | "failed";
 
 export type RagIndexStats = {
   chunks: number;
+  // Estimated tokens of the embedded `indexText`s.
   tokens: number;
   durationMs: number;
+  // Null when the provider reported no cost.
   costUsd: number | null;
+  // Chunks indexed without a context because contextualizing them failed. 0 without contextualization.
+  contextFailures: number;
 };
 
 export type RagSourceType = "cv";

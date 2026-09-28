@@ -500,7 +500,7 @@ QUERY (per chat turn)
    type RagIndex = { id: string; sourceType: "cv"; sourceId: string; config: IndexConfig;
                      state: RagIndexState; active: boolean; error: string | null;
                      stats: { chunks: number; tokens: number; durationMs: number;
-                              costUsd: number | null } | null;
+                              costUsd: number | null; contextFailures: number } | null;
                      createdAt: string; finishedAt: string | null };
    type Chunk = { id: string; indexId: string; ordinal: number; section: string;
                   title: string; entityKeys: string[]; text: string;
@@ -562,6 +562,8 @@ QUERY (per chat turn)
 
 ## Phase 2.3: Contextualization, embedding and index building
 
+**Status:** Done
+
 **Files:** `server/rag/contextualize/*`, `server/rag/indexing/index-builder.ts`, `server/services/rag-index-service.ts`, `server/rag/rag-composition.ts`, `server/rag/rag-runtime.ts`, admin page `/admin/rag`, tests.
 
 **Steps**
@@ -597,6 +599,10 @@ QUERY (per chat turn)
    - Form "Build index": chunker select + contextualize checkbox → action → `after(build)`; auto-refresh while building (reuse the 1.5 refresher).
    - Link to a chunk viewer `/admin/rag/[indexId]` listing each chunk: ordinal, section, entityKeys, context (highlighted), text, token count.
 9. Tests: contextualizer (prompt shape, concurrency limit, per-chunk failure → null), builder (happy path, failure cleanup, normalization), service (cannot delete the active index; listener builds and activates).
+
+**As built**
+- `IndexBuilder.start(config)` validates the config, loads the corpus, then creates the `building` index (it needs `sourceId`), and returns a job whose `run()` does steps 3–8. `build` = `start` + `run`. The admin action awaits `start` and runs the job in `after()`, so the new row is visible at once.
+- Failed contexts are stored as `stats.contextFailures`. Build cost is summed by a `UsageMeter` decorator around the chat and embedding clients.
 
 **Done when**
 - Publishing a CV automatically creates and activates a contextualized structured index.

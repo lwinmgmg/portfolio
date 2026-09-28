@@ -121,7 +121,7 @@ test("markReady and markFailed settle only a building index", async () => {
     },
   });
   const repository = new MongoRagIndexRepository();
-  const stats = { chunks: 12, tokens: 900, durationMs: 4000, costUsd: null };
+  const stats = { chunks: 12, tokens: 900, durationMs: 4000, costUsd: null, contextFailures: 0 };
   const finishedAt = "2026-09-28T00:01:00.000Z";
 
   expect(await repository.markReady(id.toHexString(), stats, finishedAt)).toBeNull();

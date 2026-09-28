@@ -9,6 +9,7 @@ import { runTransaction } from "@/server/db/transaction";
 import type { CvExtractor } from "@/server/domain/cv";
 import { readLlmEnv } from "@/server/llm/llm-env";
 import { getLlm } from "@/server/llm/llm-runtime";
+import { ragPublishListener } from "@/server/rag/rag-runtime";
 import { MongoCvVersionRepository } from "@/server/repositories/cv-version-repository";
 import { VercelBlobStore } from "@/server/storage/vercel-blob-store";
 import { CvService, type CvUploadInput } from "@/server/services/cv-service";
@@ -31,6 +32,8 @@ const cvService = new CvService(
   new VercelBlobStore(),
   cvExtractor,
   runTransaction,
+  () => new Date(),
+  [ragPublishListener],
 );
 
 export function isBlobConfigured(): boolean {

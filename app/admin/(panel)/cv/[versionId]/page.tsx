@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { CvExtractionRefresh } from "@/app/admin/(panel)/cv/extraction-refresh";
+import { AutoRefresh } from "@/app/admin/(panel)/_components/auto-refresh";
+import { formatWhen } from "@/app/admin/(panel)/_components/format-when";
 import { RetryExtractionForm } from "@/app/admin/(panel)/cv/retry-extraction-form";
 import { CvVersionEditor } from "@/app/admin/(panel)/cv/[versionId]/cv-editor";
 import { isDatabaseConfigured } from "@/server/db/client";
@@ -14,6 +15,10 @@ import {
   isExtractionInProgress,
 } from "@/server/services/cv-service";
 import { getCvVersion } from "@/server/services/cv-runtime";
+
+// Covers the editor's server actions, including the RAG index build that publishing
+// schedules with after().
+export const maxDuration = 60;
 
 export default async function CvVersionPage({
   params,
@@ -72,7 +77,7 @@ export default async function CvVersionPage({
             <RetryExtractionForm versionId={version.id} />
           </div>
         ) : null}
-        {locked ? <CvExtractionRefresh /> : null}
+        {locked ? <AutoRefresh message="Extraction is in progress." /> : null}
       </header>
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <aside className="space-y-2 lg:sticky lg:top-4">
@@ -116,17 +121,5 @@ function StatusBadge({ value }: { value: CvVersionStatus | ExtractionStatus }) {
     >
       {value}
     </span>
-  );
-}
-
-function formatWhen(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return (
-    new Intl.DateTimeFormat("en-GB", {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone: "UTC",
-    }).format(date) + " UTC"
   );
 }

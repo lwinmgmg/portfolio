@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { CvExtractionRefresh } from "@/app/admin/(panel)/cv/extraction-refresh";
+import { AutoRefresh } from "@/app/admin/(panel)/_components/auto-refresh";
+import { formatWhen } from "@/app/admin/(panel)/_components/format-when";
 import { RetryExtractionForm } from "@/app/admin/(panel)/cv/retry-extraction-form";
 import { UploadCvForm } from "@/app/admin/(panel)/cv/upload-cv-form";
 import { isDatabaseConfigured } from "@/server/db/client";
@@ -65,7 +66,7 @@ export default async function CvAdminPage() {
       </section>
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">CV versions</h2>
-        {extracting ? <CvExtractionRefresh /> : null}
+        {extracting ? <AutoRefresh message="Extraction is in progress." /> : null}
         {versions.length === 0 ? (
           <p>No CV uploads yet.</p>
         ) : (
@@ -139,17 +140,5 @@ function StatusBadge({ value }: { value: string }) {
     <span className="inline-block border border-gray-400 px-2 py-0.5 text-xs uppercase tracking-wide">
       {value}
     </span>
-  );
-}
-
-function formatWhen(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return (
-    new Intl.DateTimeFormat("en-GB", {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone: "UTC",
-    }).format(date) + " UTC"
   );
 }

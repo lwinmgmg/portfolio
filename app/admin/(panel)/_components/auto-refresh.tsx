@@ -5,7 +5,9 @@ import { useEffect } from "react";
 
 const REFRESH_MS = 3000;
 
-export function CvExtractionRefresh() {
+// Re-renders the page from the server every 3 seconds while background work runs.
+// Render it only while that work is in progress.
+export function AutoRefresh({ message }: { message: string }) {
   const router = useRouter();
 
   useEffect(() => {
@@ -17,7 +19,7 @@ export function CvExtractionRefresh() {
 
   return (
     <p role="status" aria-live="polite">
-      Extraction is in progress. This page refreshes every 3 seconds.
+      {message} This page refreshes every 3 seconds.
     </p>
   );
 }

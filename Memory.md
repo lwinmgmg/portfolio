@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.2 (corpus source and chunkers) on `master`.
+Last updated after Phase 2.3 (contextualization, embedding and index building) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.2. `CvCorpusSource`, structured and token-window chunkers. |
+| (next) | Phase 2.3. Contextualizers, index builder, `RagIndexService`, `/admin/rag`. |
+| `0d681f8` | Phase 2.2. `CvCorpusSource`, structured and token-window chunkers. |
 | `ec21fd3` | Phase 2.1. RAG domain types, retrieval config, RAG repositories. |
 | `312381e` | Phase 1.8. Public CV download. |
 | `8dd619d` | Phase 1.7a. Project detail pages; `details` on CV projects. |
@@ -44,7 +45,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a), 2.1 and 2.2 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.3 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.3 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.4 is next.
 
 ## Environment
 
@@ -166,6 +167,23 @@ Do not switch model slugs. Defaults:
 - `TokenWindowChunker({ windowTokens = 200, overlapTokens = 40 })`. Windows are `markdown.slice` of whole words (whitespace and newlines kept), as many as fit (at least one word). The next window starts at the earliest word keeping the shared tail ≤ `overlapTokens`, always after the previous start. `entityKeys` are the entities whose span overlaps the window (half-open), in document order. Spans come from `locateEntitySpans`, which searches each `renderCvEntity` output forward from the previous match and throws `ChunkingError` (a `RagError`) when one is missing. The fixture gives 2 windows with the defaults.
 - Options are validated in the constructors (`RangeError`). Test helpers `corpusDocumentFor`, `sampleCvWith`, `thrownBy` are in `server/rag/__fixtures__/sample-corpus.ts`.
 
+## Contextualization, embedding and index building (Phase 2.3)
+
+- `LlmContextualizer(chat, model, { concurrency = 4, timeoutMs = 20_000, onError })` (`server/rag/contextualize/`). The prompt is `buildContextMessages` in `context-prompt.ts`: one user message, part 1 `<document>…</document>` with `cacheControl: true`, part 2 the plan's instruction verbatim. `temperature: 0`, `maxTokens: 150`, and a per-chunk `AbortSignal.timeout`. A thrown or blank answer becomes `null` and calls `onError` (default `console.warn`). Concurrency uses `mapWithConcurrency` (`server/rag/map-with-concurrency.ts`), which keeps input order.
+- `NoopContextualizer` returns nulls. `composeIndexText(context, text)` is `context + "\n\n" + text`, or `text`.
+- `server/rag/embedding/`: `embedInBatches(client, model, texts, 64)` runs batches one after another and rejects wrong counts, mixed dimensions and non-finite numbers (`EmbeddingError`, a `RagError`). `l2Normalize` throws on a zero vector. Phase 2.4/2.7 should reuse both for query vectors.
+- `UsageMeter` (`server/llm/usage-meter.ts`) wraps `ChatClient`/`EmbeddingClient` as decorators and sums usage. `costUsd` is null when no call reported a cost. Calls that report no cost add nothing, so the total can be low.
+- `IndexConfigSchema`/`parseIndexConfig` (`server/rag/indexing/index-config.ts`) is strict. `contextModel` must be set exactly when `contextualize` is true. `defaultIndexConfig(env)` is structured + contextualized with `EMBEDDING_MODEL` / `LLM_UTILITY_MODEL`. `indexConfigFor(choice, env)` builds the admin's choice. `CHUNKER_KINDS`, `CHUNKER_LABELS` and `isChunkerKind` are in `chunker-kinds.ts`, which has no zod, so the client form can import it.
+- `IndexBuilder` (`server/rag/indexing/index-builder.ts`) has two steps. `start(config)` parses the config and loads the corpus (`IndexBuildError` when nothing is published; nothing is written). Then it creates the `building` row and returns `{ index, run }`. `run()` (once only) chunks, contextualizes via the injected factory `(meteredChat, model) => Contextualizer`, embeds `indexText`, normalizes, `insertMany`, then `markReady`. On any error it calls `deleteByIndex` and `markFailed(message ≤ 500 code points)`, then rethrows. Cleanup errors are only logged. If `markReady` returns null (the index was deleted during the build), its chunks are deleted and the build throws.
+- Stats: `chunks`; `tokens` = the sum of `estimateTokens(indexText)`; `durationMs` from before the corpus load to the end; `costUsd` from the meter; `contextFailures` = null contexts when contextualizing (added to `RagIndexStats`, 0 otherwise). `Chunk.tokenCount` stays the chunker's count of `text`.
+- `RagIndexService` (`server/services/rag-index-service.ts`, pure): `list`, `get`, `getWithChunks`, `startBuild`, `build`, `activate` (`ensureReady` then the transaction), `buildAndActivate`, `delete`, and `onCvPublished` → `buildAndActivate(defaultConfig)`. `delete` refuses the active index and a build still in progress. It then deletes the row (the repository also refuses an active index) and the chunks. A build still `building` after 5 minutes counts as stalled (`isIndexBuildStalled`) and can be deleted. There is no retry; build again instead.
+- `createRag(env, { llm, cvVersions, indexes, chunks, transaction, now? })` in `server/rag/rag-composition.ts` has no `server-only`, so scripts can use it. `server/rag/rag-runtime.ts` builds it lazily on first use, because `getLlm()` throws without a key. `isRagConfigured()` = database + valid LLM env.
+- Publish hook: `ragPublishListener` (rag-runtime) is registered in `cv-runtime.ts`. It schedules `onCvPublished` with `after()` and logs errors, or warns and skips when RAG is not configured. `/admin/cv/[versionId]` now sets `maxDuration = 60` because publishing runs there. A failed build leaves the previous active index in place.
+- `/admin/rag` (`maxDuration = 60`): shows setup text when RAG is not configured; otherwise the active-index summary, the build form (chunker select + contextualize checkbox, default on), and the index table. The table has created (links to the viewer), chunker, contextualize, embedding model, state/active badges plus the error, stall and context-failure notes, chunks, tokens, duration, cost, and Activate/Delete. `buildRagIndexAction` awaits `startRagIndexBuild` and then runs the job in `after()`. The page refreshes every 3 s while a build is in progress. `/admin/rag/[indexId]` lists every chunk: ordinal, title, section, entity keys, the context (amber callout), the text and the token count.
+- The CV refresher moved to `app/admin/(panel)/_components/auto-refresh.tsx` as `AutoRefresh({ message })`. `formatWhen` moved to `_components/format-when.ts`. Both CV pages use them.
+- Test fakes `MemoryRagIndexes`, `MemoryRagChunks` and `fakeTransaction` are in `server/rag/__fixtures__/memory-rag-repositories.ts`. `toBeCloseTo` was added to `bun-test.d.ts`.
+- Not verified live: no CV was published and no index was built against Atlas or OpenRouter in this session (that needs an admin session and paid calls). Curl confirmed only that `/admin/rag` redirects to login when signed out. No browser check at 375 px / 1440 px or in dark mode.
+
 ## Scaffold removal
 
 - The example "project" slice from `1676201` is gone: `server/domain/project.ts`, `project-repository.ts`, `project-service.ts`, `/api/public/projects[/id]`, `client/api/projects.ts`, `client/query/project-queries.ts`, `app/project-list.tsx`, the admin create-project form/state/action, and the `side-projects` anchor. The `projects` Mongo collection is no longer read or written (existing rows were left in the database).
@@ -180,3 +198,5 @@ Do not switch model slugs. Defaults:
 - Do not call `getLlm()` at module scope.
 - Do not change OpenRouter retry or timeout defaults to fit extraction. The 45 second deadline is local to `LlmCvExtractor`.
 - Do not add `serverExternalPackages` unless a build failure requires it.
+- Do not run the RAG index build inside the publish transaction or await it in the publish action. It runs in `after()` through `ragPublishListener`.
+- Do not create the RAG runtime (`getRag()`) at module scope.
