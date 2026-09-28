@@ -26,14 +26,14 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 
 | Concern | Convention | Reference in repo |
 |---|---|---|
-| Layers | `server/domain` = types + interfaces only (no I/O). `server/repositories` = Mongo classes extending `MongoRepository`. `server/services` = business logic with constructor-injected dependencies. | `server/domain/project.ts`, `server/repositories/project-repository.ts`, `server/services/project-service.ts` |
+| Layers | `server/domain` = types + interfaces only (no I/O). `server/repositories` = Mongo classes extending `MongoRepository`. `server/services` = business logic with constructor-injected dependencies. | `server/domain/cv.ts`, `server/repositories/cv-version-repository.ts`, `server/services/cv-service.ts` |
 | Feature modules | Pure logic lives in feature folders: `server/cv/`, `server/llm/`, `server/storage/`, `server/rag/`. | `server/auth/` |
 | `server-only` | Pure/testable modules must NOT import `server-only` or any `next/*` module. Only wiring (runtime) modules and repositories import `server-only`. | `server/services/public-session-service.ts` (pure) vs `server/services/public-session-runtime.ts` (wiring) |
-| Transactions | Writes that touch more than one document go through `runTransaction`. Call `ensureReady()` (index creation) **before** the transaction. | `ProjectService.create` |
+| Transactions | Writes that touch more than one document go through `runTransaction`. Call `ensureReady()` (index creation) **before** the transaction. | `PublicSessionService.issue` |
 | Validation | zod 4. Domain errors are named `Error` subclasses (e.g. `InvalidCvError`). | `server/auth/login-schema.ts` |
-| Admin mutations | `"use server"` actions wrapped with `withAdmin`, state types in a separate `*-state.ts`, forms use `useActionState`. | `app/admin/(panel)/actions.ts`, `create-project-form.tsx` |
-| Public JSON APIs | Route handlers under `app/api/public/**`, wrapped in `withPublicSession`, respond via `publicJson`. | `app/api/public/projects/route.ts` |
-| Client data | Fetchers in `client/api/*`, TanStack Query options in `client/query/*`. | `client/api/projects.ts` |
+| Admin mutations | `"use server"` actions wrapped with `withAdmin`, state types in a separate `*-state.ts`, forms use `useActionState`. | `app/admin/(panel)/cv/actions.ts`, `retry-extraction-form.tsx` |
+| Public JSON APIs | Route handlers under `app/api/public/**`, wrapped in `withPublicSession`, respond via `publicJson`. | `server/http/require-public-session.ts` |
+| Client data | Fetchers in `client/api/*` built on `getPublicJson`, TanStack Query options in `client/query/*`. | `client/api/public-http.ts` |
 | Tests | `bun test`, colocated `*.test.ts`, in-memory fakes that implement domain interfaces. If you need a matcher not declared in `server/auth/bun-test.d.ts`, add its declaration there. | `server/services/public-session-service.test.ts` |
 | Types | `strict` TS, no `any`, no non-null assertions to silence errors. | — |
 | Libraries | No LangChain / LlamaIndex / Vercel AI SDK / OpenAI SDK. The OpenRouter client is hand-written on `fetch`. Approved runtime dependencies: `@vercel/blob` and `@opendocsg/pdf2md` for local PDF-to-Markdown conversion. Ask before adding anything else. | — |

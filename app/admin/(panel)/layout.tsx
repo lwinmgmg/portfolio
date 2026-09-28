@@ -4,7 +4,6 @@ import { logoutAction } from "@/app/admin/(panel)/actions";
 import { requireAdmin } from "@/server/services/auth-service";
 
 const adminNav = [
-  { href: "/admin", label: "Projects" },
   { href: "/admin/cv", label: "CV" },
   { href: "/admin/rag", label: "RAG" },
 ] as const;

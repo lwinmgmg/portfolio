@@ -15,7 +15,6 @@ type ListSection = {
 
 export const CV_PROFILE_ID = "profile";
 export const CV_SUMMARY_SECTION: CvNavItem = { id: "summary", label: "Summary" };
-export const SIDE_PROJECTS_SECTION: CvNavItem = { id: "side-projects", label: "Side projects" };
 
 // Declaration order is page order.
 export const CV_LIST_SECTIONS = {

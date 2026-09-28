@@ -110,23 +110,30 @@ Do not switch model slugs. Defaults:
 ## Public CV page (Phase 1.7)
 
 - `/` (`app/(public)/page.tsx`) server-renders the published CV via `getPublishedCv()` in `cv-runtime` (`cache` + `connection()`), shared by the page and `generateMetadata`. It returns null when the database is not configured, so the page shows "CV coming soon" instead of failing. `CvService.getPublishedData()` returns the published version's data or null.
-- Session-state handling and `<ProjectList>` are unchanged in behavior. `ProjectList` no longer renders its own "Projects" `<h1>`; the page wraps it in the "Side projects" section. The CV name is the page's only `<h1>`.
+- The CV name is the page's only `<h1>`. The page renders the CV only; the scaffold "side projects" list was removed (see "Scaffold removal" below).
 - Components live in `app/(public)/_components/cv/`, one per section, composed in page order by `cv-document.tsx`. Pure helpers with tests: `cv-format.ts` (dates, safe links, truncation), `cv-sections.ts` (section registry, anchors), `cv-seo.ts` (title/description, Person JSON-LD). Shared class names are in `cv-styles.ts`.
-- Anchors are public URLs used by Phase 2 citations. Header is `id="profile"`, summary `summary`, sections `experience`, `projects`, `skills`, `education`, `certifications`, `languages`, `other`, `side-projects`. Items are `<section>-<itemId>`. Use `anchorForEntityKey(entityKey)` (e.g. `project:x` → `projects-x`); do not rebuild the mapping elsewhere. `CV_LIST_SECTIONS` declaration order is the nav order; keep `cv-document.tsx` in the same order.
+- Anchors are public URLs used by Phase 2 citations. Header is `id="profile"`, summary `summary`, sections `experience`, `projects`, `skills`, `education`, `certifications`, `languages`, `other`. Items are `<section>-<itemId>`. Use `anchorForEntityKey(entityKey)` (e.g. `project:x` → `projects-x`); do not rebuild the mapping elsewhere. `CV_LIST_SECTIONS` declaration order is the nav order; keep `cv-document.tsx` in the same order.
 - Only `http(s)` URLs (bare hosts get `https://`) and plain email addresses become hrefs. CV data comes from an LLM and admin edits; keep going through `safeWebUrl` / `mailtoHref`. External links use `target="_blank" rel="noopener noreferrer"`.
 - The phone number is intentionally not rendered (plan lists email and links only). Ask the owner before adding it.
 - JSON-LD `Person` (name, jobTitle, sameAs) is serialized with `<` escaped to `<`.
 - `globals.css` defines `--accent` / `--accent-foreground` for light and dark, exposed as Tailwind `accent` colors. Body uses `var(--font-sans)`. Smooth scroll only under `prefers-reduced-motion: no-preference`. The print sheet forces black on white; `print:hidden` hides the nav and Download button; `[data-cv-item]` avoids page breaks inside an entry.
 - Desktop (≥ lg) sticky nav with `IntersectionObserver` scroll-spy (`use-scroll-spy.ts`); hidden on mobile.
 - `app/(public)/error.tsx` catches database failures on the public page.
-- Root layout metadata defaults are "Portfolio" / "CV and side projects.".
+- Root layout metadata defaults are "Portfolio" / "CV.".
 - Verified with curl only (anchors, metadata, JSON-LD, nav). Not visually checked at 375 px / 1440 px or in dark mode.
 - The Download CV button links to `/cv/download`, which 404s until Phase 1.8.
+
+## Scaffold removal
+
+- The example "project" slice from `1676201` is gone: `server/domain/project.ts`, `project-repository.ts`, `project-service.ts`, `/api/public/projects[/id]`, `client/api/projects.ts`, `client/query/project-queries.ts`, `app/project-list.tsx`, the admin create-project form/state/action, and the `side-projects` anchor. The `projects` Mongo collection is no longer read or written (existing rows were left in the database).
+- `/admin` redirects to `/admin/cv`; the admin nav no longer has "Projects".
+- Kept as shared infrastructure: `MongoRepository`, `server/db/*`, the public-session flow (`withPublicSession`, `/api/public/session[/issue]`, the public layout's issue redirect), `client/api/public-http.ts` (`getPublicJson`) and the `client/query` provider. Phase 2 chat builds on these. The home page no longer reads `?session=` or session presence; re-add that when a public client component needs it.
+- Plan.md §0.1 reference column now points at CV and public-session code.
 
 ## Do not redo or undo
 
 - Do not revert `8328b11`, `1d6b269`, `52fd236`, `e4163e3`, `793184c`, or `5fae480`.
-- Do not put `maxDuration` on the admin layout. It would also cover project actions.
+- Do not put `maxDuration` on the admin layout. It would also cover every other admin action.
 - Do not call `getLlm()` at module scope.
 - Do not change OpenRouter retry or timeout defaults to fit extraction. The 45 second deadline is local to `LlmCvExtractor`.
 - Do not add `serverExternalPackages` unless a build failure requires it.
