@@ -449,6 +449,8 @@ Projects are part of the CV (`CvData.projects`); there is no separate project co
 
 ## Phase 1.8: CV download
 
+**Status:** Done
+
 **Files:** `app/cv/download/route.ts`, `cv-service.ts` (extend).
 
 **Steps**

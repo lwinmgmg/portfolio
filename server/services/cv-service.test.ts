@@ -1100,6 +1100,30 @@ test("openPdf returns the stored stream and nothing for a missing version", asyn
   expect(await service.openPdf("cv-1")).toBeNull();
 });
 
+test("openPublishedPdf streams the published PDF under the CV owner's name", async () => {
+  const { service, versions, blobs } = setup();
+  versions.rows.push(readyDraft("cv-1", "archived"), readyDraft("cv-2", "published"));
+  const body = { stream: new ReadableStream<Uint8Array>(), size: 4 };
+  blobs.bodies.set("cv/resume.pdf", body);
+
+  const opened = await service.openPublishedPdf();
+
+  expect(opened?.stream).toBe(body.stream);
+  expect(opened?.size).toBe(4);
+  expect(opened?.filename).toBe("Jane-Doe-CV.pdf");
+  expect(opened?.versionId).toBe("cv-2");
+});
+
+test("openPublishedPdf returns nothing without a published version or its blob", async () => {
+  const { service, versions, blobs } = setup();
+  versions.rows.push(readyDraft("cv-1"));
+  expect(await service.openPublishedPdf()).toBeNull();
+
+  versions.rows.push(readyDraft("cv-2", "published"));
+  blobs.bodies.set("cv/resume.pdf", null);
+  expect(await service.openPublishedPdf()).toBeNull();
+});
+
 test("getPublishedData returns the published CV and ignores drafts and archives", async () => {
   const { service, versions } = setup();
   versions.rows.push(readyDraft("cv-1", "archived"), readyDraft("cv-2"));

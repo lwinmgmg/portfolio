@@ -94,5 +94,11 @@ export function openCvPdf(id: string) {
   return cvService.openPdf(id);
 }
 
+// Public, so no session. Without a database nothing can be published.
+export function openPublishedCvPdf() {
+  if (!isDatabaseConfigured()) return Promise.resolve(null);
+  return cvService.openPublishedPdf();
+}
+
 export { CvError } from "@/server/domain/cv";
 export { InvalidCvError } from "@/server/services/cv-service";

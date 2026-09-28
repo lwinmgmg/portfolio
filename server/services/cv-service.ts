@@ -1,4 +1,5 @@
 import type { TransactionContext } from "@/server/db/transaction";
+import { cvDownloadFilename } from "@/server/cv/cv-download";
 import { DuplicateCvEntityKeyError, ensureIds } from "@/server/cv/cv-ids";
 import { cvFieldIssues } from "@/server/cv/cv-issues";
 import { CvDataSchema } from "@/server/cv/cv-schema";
@@ -19,6 +20,13 @@ import {
   type CvVersion,
   type CvVersionRepository,
 } from "@/server/domain/cv";
+
+export type PublishedCvPdf = {
+  stream: ReadableStream<Uint8Array>;
+  size: number;
+  filename: string;
+  versionId: string;
+};
 
 // Input that does not satisfy the CV rules. `issues` point at the offending fields.
 export class InvalidCvError extends CvError {
@@ -292,6 +300,21 @@ export class CvService {
     const body = await this.blobs.read(version.pdf.pathname);
     if (!body) return null;
     return { stream: body.stream, size: body.size, filename: version.pdf.filename };
+  }
+
+  // The public download. `versionId` identifies the file for HTTP caching; a new
+  // publish (including a republished copy) always has a new id.
+  async openPublishedPdf(): Promise<PublishedCvPdf | null> {
+    const published = await this.versions.findPublished();
+    if (!published) return null;
+    const body = await this.blobs.read(published.pdf.pathname);
+    if (!body) return null;
+    return {
+      stream: body.stream,
+      size: body.size,
+      filename: cvDownloadFilename(published.data?.profile.fullName),
+      versionId: published.id,
+    };
   }
 
   private async requireVersion(id: string): Promise<CvVersion> {

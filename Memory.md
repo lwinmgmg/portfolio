@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 1.7a (project detail pages) on `master`.
+Last updated after Phase 1.8 (CV download) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 1.7a. Project detail pages; `details` on CV projects. |
+| (next) | Phase 1.8. Public CV download. |
+| `8dd619d` | Phase 1.7a. Project detail pages; `details` on CV projects. |
 | `b7e2c3f` | Removed the scaffold project slice from `1676201`. |
 | `5fae480` | Phase 1.7. Public CV page. |
 | `3a602a4` | Owner commit: admin CV editor UI fixes and Memory update. |
@@ -41,11 +42,11 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.7 and 1.7a are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 1.8 (CV download) has not been started.
+Phases 1.1 through 1.8 (including 1.7a) are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2 has not been started.
 
 ## Environment
 
-`.env.local` has `MONGODB_URI`, `MONGODB_DB`, `JWT_SECRET`, and `ADMIN_USERNAME`. It does not have `BLOB_READ_WRITE_TOKEN` or `OPENROUTER_API_KEY`. Without the blob token the upload form stays hidden. Without a valid OpenRouter key, extraction cannot run. Do not run `vercel env pull` unless the owner asks. Restart the dev server after those values change.
+`.env.local` has `MONGODB_URI`, `MONGODB_DB`, `JWT_SECRET`, `ADMIN_USERNAME`, the LLM variables, and (by Phase 1.8) `BLOB_READ_WRITE_TOKEN` and `OPENROUTER_API_KEY`. Whether the OpenRouter key is valid was not checked. Without the blob token the upload form stays hidden and `/cv/download` returns 500. Without a valid OpenRouter key, extraction cannot run. Do not run `vercel env pull` unless the owner asks. Restart the dev server after those values change.
 
 During Phase 1.6 new MongoDB clients failed the Atlas TLS handshake. By Phase 1.7 the dev server reached Atlas and a published CV ("LWIN MAUNG MAUNG — Lead Software & AI Engineer") rendered on `/`. Its origin (owner upload vs. extraction) was not verified by an agent. Do not invent live results you did not observe.
 
@@ -123,7 +124,7 @@ Do not switch model slugs. Defaults:
 - `app/(public)/error.tsx` catches database failures on the public page.
 - Root layout metadata defaults are "Portfolio" / "CV.".
 - Verified with curl only (anchors, metadata, JSON-LD, nav). Not visually checked at 375 px / 1440 px or in dark mode.
-- The Download CV button links to `/cv/download`, which 404s until Phase 1.8.
+- The Download CV button links to `/cv/download` (Phase 1.8).
 
 ## Project detail pages (Phase 1.7a)
 
@@ -133,6 +134,14 @@ Do not switch model slugs. Defaults:
 - The card title links to the project page, and the external URL is a separate "Visit ↗" link.
 - Project ids are the page URLs. Extracted projects get name slugs. Projects added in the editor get `project-<uuid>`, so their URLs are uuid-style. Renaming a project does not change its id.
 - The published CV had no projects when this shipped. The page was verified by rendering the components with the fixture. Curl confirmed a 404 with `noindex` for an unknown id, and that the pre-1.7a published CV still renders. No browser check at 375 px, 1440 px or in dark mode.
+
+## CV download (Phase 1.8)
+
+- `GET /cv/download` (`app/cv/download/route.ts`) is public and not behind `withPublicSession`. It calls `openPublishedCvPdf()` in `cv-runtime`, which returns null without a database, and then `CvService.openPublishedPdf()`, which returns `{ stream, size, filename, versionId }` or null. Null means 404. A thrown error is logged and becomes a 500.
+- The filename is `cvDownloadFilename(fullName)` (`server/cv/cv-download.ts`): name words joined by `-`, then `-CV.pdf`, falling back to `CV.pdf`. Non-ASCII letters are kept. `attachmentDisposition` (`server/http/download-headers.ts`) sends an ASCII `filename` (accents stripped, other scripts dropped) plus an RFC 5987 `filename*`.
+- `ETag` is `"<versionId>"`. Every publish, including a republished copy, has a new id, so the tag changes. `Cache-Control: public, max-age=0, s-maxage=300, stale-while-revalidate=86400` is on both the 200 and the 304, so a new publish reaches visitors within 5 minutes.
+- `If-None-Match` uses weak comparison (`ifNoneMatchIncludes`, `*` matches). A 304 still opens the blob once and then cancels the stream. That keeps the service shape the plan asks for. If blob reads become a cost, add a metadata-only lookup before opening.
+- Verified with curl against the dev server and the live published CV: 200 with `%PDF-` body and `LWIN-MAUNG-MAUNG-CV.pdf`, 304 for strong and weak tags, 200 for a different tag. The 404 path was covered by unit tests only, because a CV is published. The browser save dialog was not checked.
 
 ## Scaffold removal
 
@@ -148,4 +157,3 @@ Do not switch model slugs. Defaults:
 - Do not call `getLlm()` at module scope.
 - Do not change OpenRouter retry or timeout defaults to fit extraction. The 45 second deadline is local to `LlmCvExtractor`.
 - Do not add `serverExternalPackages` unless a build failure requires it.
-- Phase 1.8 owns `GET /cv/download` and `CvService.openPublishedPdf()`. Leave it alone until the owner asks.
