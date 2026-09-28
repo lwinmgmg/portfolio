@@ -12,6 +12,7 @@ import {
 import { StructuredCvChunker } from "@/server/rag/chunking/structured-cv-chunker";
 import { TokenWindowChunker } from "@/server/rag/chunking/token-window-chunker";
 import { createRag } from "@/server/rag/rag-composition";
+import { createSearchIndexCache } from "@/server/rag/search/in-memory-retriever";
 
 const at = "2026-09-28T00:00:00.000Z";
 
@@ -64,6 +65,7 @@ test("the composed pipeline builds and activates the default index from the publ
       chunks,
       transaction: fakeTransaction,
       now: () => new Date(at),
+      searchCache: createSearchIndexCache(),
     },
   );
 
@@ -85,4 +87,8 @@ test("the composed pipeline builds and activates the default index from the publ
   expect(requests.every((request) => request.model === "utility-x")).toBe(true);
   expect(embeddedModels.every((model) => model === "embed-x")).toBe(true);
   expect(stored.every((chunk) => chunk.context === "Situating context.")).toBe(true);
+
+  const hits = await rag.retriever.searchVector(active?.id ?? "", [1, 1], 3);
+  expect(hits.length).toBe(Math.min(3, stored.length));
+  expect(hits[0].score).toBeCloseTo(1, 6);
 });

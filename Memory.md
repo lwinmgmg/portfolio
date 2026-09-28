@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.3 (contextualization, embedding and index building) on `master`.
+Last updated after Phase 2.4 (lexical and vector search, in-memory) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.3. Contextualizers, index builder, `RagIndexService`, `/admin/rag`. |
+| (next) | Phase 2.4. Text analyzer, BM25, vector index, `InMemoryRetriever`. |
+| `3d401b6` | Phase 2.3. Contextualizers, index builder, `RagIndexService`, `/admin/rag`. |
 | `0d681f8` | Phase 2.2. `CvCorpusSource`, structured and token-window chunkers. |
 | `ec21fd3` | Phase 2.1. RAG domain types, retrieval config, RAG repositories. |
 | `312381e` | Phase 1.8. Public CV download. |
@@ -45,7 +46,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.3 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.4 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.4 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.5 is next.
 
 ## Environment
 
@@ -183,6 +184,17 @@ Do not switch model slugs. Defaults:
 - The CV refresher moved to `app/admin/(panel)/_components/auto-refresh.tsx` as `AutoRefresh({ message })`. `formatWhen` moved to `_components/format-when.ts`. Both CV pages use them.
 - Test fakes `MemoryRagIndexes`, `MemoryRagChunks` and `fakeTransaction` are in `server/rag/__fixtures__/memory-rag-repositories.ts`. `toBeCloseTo` was added to `bun-test.d.ts`.
 - Not verified live: no CV was published and no index was built against Atlas or OpenRouter in this session (that needs an admin session and paid calls). Curl confirmed only that `/admin/rag` redirects to login when signed out. No browser check at 375 px / 1440 px or in dark mode.
+
+## Lexical and vector search (Phase 2.4)
+
+- Everything is pure and lives in `server/rag/search/`. `TextAnalyzer` and `Retriever` interfaces were added to `server/domain/rag.ts`. Phase 2.7 should depend on `Retriever`, not on the class.
+- `EnglishTextAnalyzer`: NFKC, lowercase, the plan's token regex. Dotted tokens are also emitted as their parts (a stopword part such as `i` is dropped), then stopwords are removed and `lightStem` runs. `ENGLISH_STOPWORDS` (~130 words) deliberately leaves out `go`, `c`, `r`, `net` and `js`. It includes `it`, so "IT" is not searchable lexically.
+- `lightStem` rules, in order, first match wins: `ies→y`, `es` only after `ss|x|ch|sh`, `s` (not after `s` or `u`), `ing`, `ed`. The part left after stripping must have at least 3 characters, or the next rule is tried. Tokens containing `.`, `+` or `#` are not stemmed. Known imperfect matches, which are accepted: `caches→cach` vs `cache`, `managed→manag` vs `manage`, `redis→redi` (query and document still agree).
+- `Bm25Index(docs, analyzer, { k1 = 1.2, b = 0.75 })`: postings per term, deduplicated query terms, only documents with a score above 0, and ties kept in document order. `VectorIndex(items)`: equal dimensions are checked (`VectorDimensionError`), and both the stored vectors and the query are `l2Normalize`d, so a zero query vector throws `EmbeddingError`. An empty index returns `[]`. Both use `topRankedHits` (`ranked-hits.ts`) for 1-based ranks, and `k` must be a positive integer (`RangeError`).
+- `InMemoryRetriever(chunks: Pick<RagChunkRepository, "listByIndex">, { analyzer, bm25, cache })` builds BM25 over `indexText` and the vector index over `embedding`. The cache is an `LruCache<string, Promise<LoadedSearchIndex>>` (capacity 3), so concurrent cold searches share one read. A rejected load is evicted. No chunks → `EmptySearchIndexError` (a `RagError`), not cached. `getChunks` returns copies without `embedding`, in the order of `ids`, and skips unknown ids.
+- `sharedSearchIndexCache()` keeps the cache on `globalThis.ragSearchIndexCache`, which survives hot reloads. `createRag` uses it unless `deps.searchCache` is given (tests pass `createSearchIndexCache()`), and exposes `rag.retriever`. Retrievers that share a cache must use the same analyzer and BM25 options, because the cache key is only the index id.
+- A ready index never changes, so there is no cache invalidation. A deleted index stays cached until it is evicted, which is harmless.
+- Not wired into any route yet (2.7 does that). Nothing was run against Atlas.
 
 ## Scaffold removal
 

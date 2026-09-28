@@ -101,6 +101,20 @@ export interface Contextualizer {
 // `rank` is 1-based.
 export type RankedHit = { chunkId: string; rank: number; score: number };
 
+// Turns text into the terms a lexical index matches. Documents and queries must share one analyzer.
+export interface TextAnalyzer {
+  analyze(text: string): string[];
+}
+
+// Searches the chunks of one stored index.
+export interface Retriever {
+  searchLexical(indexId: string, query: string, k: number): Promise<RankedHit[]>;
+  // `vector` is a query embedding from the index's embedding model. It need not be normalized.
+  searchVector(indexId: string, vector: readonly number[], k: number): Promise<RankedHit[]>;
+  // The chunks with these ids, in the order of `ids`. Unknown ids are skipped.
+  getChunks(indexId: string, ids: readonly string[]): Promise<Chunk[]>;
+}
+
 export type QueryRewriteMode = "none" | "standalone" | "multi";
 
 export type SearchMode = "vector" | "lexical" | "hybrid";

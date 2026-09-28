@@ -610,6 +610,8 @@ QUERY (per chat turn)
 
 ## Phase 2.4: Lexical and vector search (in-memory)
 
+**Status:** Done
+
 **Files:** `server/rag/search/*`, tests.
 
 **Steps**
@@ -634,6 +636,11 @@ QUERY (per chat turn)
    - `load(indexId)` → `RagChunkRepository.listByIndex`. Builds `Bm25Index` over `indexText` and `VectorIndex` over `embedding`.
    - Cache the loaded index per `indexId` on `globalThis` (pattern of `server/db/client.ts`); keep at most 3 indexes.
    - `searchLexical(indexId, query, k)`, `searchVector(indexId, vector, k)`, `getChunks(indexId, ids)`.
+
+**As built**
+- The `es` rule strips `es` only after `ss`, `x`, `ch` or `sh` ("processes" → "process"). Other `-es` words fall through to the `s` rule ("databases" → "database"), so they match their singular forms.
+- `VectorIndex` normalizes the stored vectors as well as the query, so scores are cosines even for vectors that were not normalized.
+- `InMemoryRetriever` caches the load promise, so concurrent searches share one read. A failed load or an index with no chunks (`EmptySearchIndexError`) is not cached. `createRag` exposes it as `rag.retriever`.
 
 **Done when**
 - All search tests pass with exact expected scores.

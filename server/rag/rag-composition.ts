@@ -7,6 +7,7 @@ import type {
   IndexConfig,
   RagChunkRepository,
   RagIndexRepository,
+  Retriever,
 } from "@/server/domain/rag";
 import type { LlmEnv } from "@/server/llm/llm-env";
 import { StructuredCvChunker } from "@/server/rag/chunking/structured-cv-chunker";
@@ -15,6 +16,11 @@ import { LlmContextualizer } from "@/server/rag/contextualize/llm-contextualizer
 import { CvCorpusSource } from "@/server/rag/corpus/cv-corpus-source";
 import { IndexBuilder } from "@/server/rag/indexing/index-builder";
 import { defaultIndexConfig } from "@/server/rag/indexing/index-config";
+import {
+  InMemoryRetriever,
+  sharedSearchIndexCache,
+  type SearchIndexCache,
+} from "@/server/rag/search/in-memory-retriever";
 import { RagIndexService, type TransactionRunner } from "@/server/services/rag-index-service";
 
 // Everything with I/O is passed in, so this module stays free of `server-only` and `next/*`
@@ -26,6 +32,8 @@ export type RagDependencies = {
   chunks: RagChunkRepository;
   transaction: TransactionRunner;
   now?: () => Date;
+  // Loaded search indexes. Defaults to the process-wide cache.
+  searchCache?: SearchIndexCache;
 };
 
 export type Rag = {
@@ -34,6 +42,7 @@ export type Rag = {
   defaultIndexConfig: IndexConfig;
   indexBuilder: IndexBuilder;
   indexService: RagIndexService;
+  retriever: Retriever;
 };
 
 // Composition root for the RAG components.
@@ -63,5 +72,8 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     config,
     now,
   );
-  return { corpus, chunkers, defaultIndexConfig: config, indexBuilder, indexService };
+  const retriever = new InMemoryRetriever(deps.chunks, {
+    cache: deps.searchCache ?? sharedSearchIndexCache(),
+  });
+  return { corpus, chunkers, defaultIndexConfig: config, indexBuilder, indexService, retriever };
 }
