@@ -44,7 +44,7 @@ export function CvSections({ data, issues, readOnly, onChange }: CvSectionsProps
 
   return (
     <CvFieldContext value={{ issues, readOnly }}>
-      <div className="space-y-3">
+      <div className="space-y-4">
         <ProfileSection profile={data.profile} onChange={setSection("profile")} />
 
         <Section title="Experience">
@@ -162,7 +162,7 @@ function ProfileSection({
 
   return (
     <Section title="Profile">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <TextField
           label="Full name"
           path="profile.fullName"
@@ -201,8 +201,8 @@ function ProfileSection({
         multiline
         onChange={(summary) => update({ summary })}
       />
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">Links</h3>
+      <div className="space-y-3 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+        <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Links</h3>
         {/* Links have no id in the CV schema (it is also the LLM extraction schema), so
             they are keyed by position. Moving a link moves focus with the position. */}
         <ItemList

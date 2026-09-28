@@ -22,7 +22,7 @@ const MONTH = "YYYY-MM";
 
 export function LinkFields({ item, path, update }: ItemEditorProps<CvLink>) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2">
       <TextField
         label="Label"
         path={`${path}.label`}
@@ -37,7 +37,7 @@ export function LinkFields({ item, path, update }: ItemEditorProps<CvLink>) {
 export function ExperienceFields({ item, path, update }: ItemEditorProps<CvExperience>) {
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <TextField
           label="Company"
           path={`${path}.company`}
@@ -108,7 +108,7 @@ export function ExperienceFields({ item, path, update }: ItemEditorProps<CvExper
 export function ProjectFields({ item, path, update }: ItemEditorProps<CvProject>) {
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <TextField
           label="Name"
           path={`${path}.name`}
@@ -168,7 +168,7 @@ export function ProjectFields({ item, path, update }: ItemEditorProps<CvProject>
 export function EducationFields({ item, path, update }: ItemEditorProps<CvEducation>) {
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <TextField
           label="Institution"
           path={`${path}.institution`}
@@ -233,7 +233,7 @@ export function SkillGroupFields({ item, path, update }: ItemEditorProps<CvSkill
 
 export function CertificationFields({ item, path, update }: ItemEditorProps<CvCertification>) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2">
       <TextField
         label="Name"
         path={`${path}.name`}
@@ -265,7 +265,7 @@ export function CertificationFields({ item, path, update }: ItemEditorProps<CvCe
 
 export function LanguageFields({ item, path, update }: ItemEditorProps<CvLanguage>) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2">
       <TextField
         label="Name"
         path={`${path}.name`}

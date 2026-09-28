@@ -12,9 +12,13 @@ import { cvFieldMessage } from "@/server/cv/cv-issues";
 import type { CvFieldIssue } from "@/server/domain/cv";
 
 const controlClass =
-  "w-full border border-gray-300 bg-white px-2 py-1 text-base text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 read-only:bg-gray-100";
+  "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 shadow-sm placeholder:text-zinc-400 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30 read-only:border-zinc-200 read-only:bg-zinc-50 read-only:text-zinc-700 read-only:shadow-none aria-invalid:border-red-600 aria-invalid:ring-red-600/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-blue-400 dark:focus:ring-blue-400/30 dark:read-only:border-zinc-800 dark:read-only:bg-zinc-900 dark:read-only:text-zinc-300";
+const labelClass = "text-sm font-medium text-zinc-800 dark:text-zinc-200";
+const hintClass = "text-xs text-zinc-500 dark:text-zinc-400";
 const secondaryButton =
-  "w-fit border border-gray-400 bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
+  "w-fit rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700";
+const dangerTextButton =
+  "w-fit rounded-md px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 dark:text-red-400 dark:hover:bg-red-950";
 
 type CvFieldSettings = {
   issues: readonly CvFieldIssue[];
@@ -33,11 +37,17 @@ export type ItemEditorProps<T> = {
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <details open className="border border-gray-300 bg-white">
-      <summary className="cursor-pointer px-3 py-2 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+    <details
+      open
+      className="group overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-zinc-50 px-4 py-3 text-base font-semibold hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-600 dark:bg-zinc-800/60 dark:hover:bg-zinc-800 [&::-webkit-details-marker]:hidden">
         {title}
+        <span aria-hidden className="text-zinc-400 transition-transform group-open:rotate-180">
+          ▾
+        </span>
       </summary>
-      <div className="space-y-3 border-t border-gray-200 p-3">{children}</div>
+      <div className="space-y-4 border-t border-zinc-200 p-4 dark:border-zinc-700">{children}</div>
     </details>
   );
 }
@@ -65,9 +75,16 @@ export function ItemList<T>({
   const { readOnly } = use(CvFieldContext);
   return (
     <>
-      {items.length === 0 ? <p className="text-sm">None yet.</p> : null}
+      {items.length === 0 ? (
+        <p className="rounded-md border border-dashed border-zinc-300 px-4 py-3 text-sm text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">
+          None yet.
+        </p>
+      ) : null}
       {items.map((item, index) => (
-        <article key={getKey(item, index)} className="space-y-3 border border-gray-200 p-3">
+        <article
+          key={getKey(item, index)}
+          className="space-y-4 rounded-md border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-700 dark:bg-zinc-950/40"
+        >
           <ItemActions
             index={index}
             total={items.length}
@@ -109,28 +126,36 @@ function ItemActions({
   onRemove: () => void;
 }) {
   const { readOnly } = use(CvFieldContext);
-  if (readOnly) return null;
+  const heading = (
+    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+      {label} {index + 1} of {total}
+    </p>
+  );
+  if (readOnly) return heading;
   return (
-    <div className="flex flex-wrap gap-2">
-      <button
-        type="button"
-        className={secondaryButton}
-        disabled={index === 0}
-        onClick={() => onMove(-1)}
-      >
-        Move up
-      </button>
-      <button
-        type="button"
-        className={secondaryButton}
-        disabled={index === total - 1}
-        onClick={() => onMove(1)}
-      >
-        Move down
-      </button>
-      <button type="button" className={secondaryButton} onClick={onRemove}>
-        Remove {label}
-      </button>
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-700">
+      {heading}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={secondaryButton}
+          disabled={index === 0}
+          onClick={() => onMove(-1)}
+        >
+          Move up
+        </button>
+        <button
+          type="button"
+          className={secondaryButton}
+          disabled={index === total - 1}
+          onClick={() => onMove(1)}
+        >
+          Move down
+        </button>
+        <button type="button" className={dangerTextButton} onClick={onRemove}>
+          Remove {label}
+        </button>
+      </div>
     </div>
   );
 }
@@ -140,6 +165,7 @@ type TextFieldProps = {
   path: string;
   multiline?: boolean;
   placeholder?: string;
+  hint?: string;
 };
 
 export function TextField({
@@ -148,11 +174,16 @@ export function TextField({
   value,
   multiline = false,
   placeholder,
+  hint,
+  optional = false,
   onChange,
-}: TextFieldProps & { value: string; onChange: (value: string) => void }) {
+}: TextFieldProps & { value: string; optional?: boolean; onChange: (value: string) => void }) {
   const { issues, readOnly } = use(CvFieldContext);
   const error = cvFieldMessage(issues, path);
-  const describedBy = error ? `${path}-error` : undefined;
+  // Hints are about how to type; a read-only view has no use for them.
+  const hintId = hint && !readOnly ? `${path}-hint` : undefined;
+  const errorId = error ? `${path}-error` : undefined;
+  const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
   const control = {
     value,
     readOnly,
@@ -162,15 +193,23 @@ export function TextField({
     className: controlClass,
   };
   return (
-    <label className="flex flex-col gap-1 text-sm">
-      {label}
+    <label className="flex flex-col gap-1.5">
+      <span className="flex items-baseline justify-between gap-2">
+        <span className={labelClass}>{label}</span>
+        {optional && !readOnly ? <span className={hintClass}>Optional</span> : null}
+      </span>
       {multiline ? (
         <textarea {...control} rows={4} onChange={(event) => onChange(event.target.value)} />
       ) : (
         <input {...control} onChange={(event) => onChange(event.target.value)} />
       )}
+      {hintId ? (
+        <span id={hintId} className={hintClass}>
+          {hint}
+        </span>
+      ) : null}
       {error ? (
-        <span id={`${path}-error`} className="text-red-700">
+        <span id={errorId} className="text-sm text-red-700 dark:text-red-400">
           {error}
         </span>
       ) : null}
@@ -187,6 +226,7 @@ export function OptionalTextField({
   return (
     <TextField
       {...props}
+      optional
       value={value ?? ""}
       onChange={(text) => onChange(emptyTextToNull(text))}
     />
@@ -207,7 +247,8 @@ export function LineField({
 }) {
   return (
     <TextField
-      label={`${label} (one item per line)`}
+      label={label}
+      hint="One item per line."
       path={path}
       value={value.join("\n")}
       multiline
@@ -227,14 +268,15 @@ export function CheckboxField({
 }) {
   const { readOnly } = use(CvFieldContext);
   return (
-    <label className="flex items-center gap-2 text-sm">
+    <label className="flex w-fit items-center gap-2">
       <input
         type="checkbox"
         checked={checked}
         disabled={readOnly}
         onChange={(event) => onChange(event.target.checked)}
+        className="size-4 rounded border-zinc-300 accent-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
       />
-      {label}
+      <span className={labelClass}>{label}</span>
     </label>
   );
 }

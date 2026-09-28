@@ -14,14 +14,16 @@ import { CvDataSchema } from "@/server/cv/cv-schema";
 import { cvFieldIssues } from "@/server/cv/cv-issues";
 import type { CvData, CvFieldIssue, CvVersion } from "@/server/domain/cv";
 
-const primaryButton =
-  "w-fit bg-gray-800 px-3 py-2 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
-const secondaryButton =
-  "w-fit border border-gray-400 bg-white px-3 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
-const dangerButton =
-  "w-fit border border-red-700 px-3 py-2 text-sm text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50";
-const tabClass =
-  "border border-gray-300 px-3 py-1 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
+const focusRing =
+  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600";
+const primaryButton = `w-fit rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
+const secondaryButton = `w-fit rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 ${focusRing}`;
+const dangerButton = `w-fit rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:bg-transparent dark:text-red-400 dark:hover:bg-red-950 ${focusRing}`;
+const tabClass = `rounded px-4 py-1.5 text-sm font-medium ${focusRing}`;
+const activeTab = "bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-white";
+const idleTab = "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100";
+const noteClass = "text-sm text-zinc-600 dark:text-zinc-400";
+const errorClass = "text-sm text-red-700 dark:text-red-400";
 
 type EditorTab = "form" | "json";
 
@@ -59,16 +61,22 @@ export function CvVersionEditor({
           onEdit={() => setEditedAt(version.updatedAt)}
         />
       ) : (
-        <p>This draft has no extracted CV data yet.</p>
+        <p className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-600 dark:border-zinc-600 dark:text-zinc-400">
+          This draft has no extracted CV data yet.
+        </p>
       )}
       {version.status === "draft" && !actions.publish && !locked ? (
-        <p>Publish is available after extraction succeeds.</p>
+        <p className={noteClass}>Publish is available after extraction succeeds.</p>
       ) : null}
-      {locked ? <p>Extraction is still running. Editing stays closed until it finishes.</p> : null}
+      {locked ? (
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          Extraction is still running. Editing stays closed until it finishes.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-start gap-3">
         {actions.publish ? (
           <div className="space-y-2">
-            <p className="text-sm">
+            <p className={noteClass}>
               {dirty
                 ? "Save your changes before publishing."
                 : "Publish uses the saved CV."}
@@ -119,10 +127,12 @@ function CvDataForm({
         onTabChange={setTab}
         onEdit={onEdit}
       />
-      <button type="submit" disabled={pending} className={primaryButton}>
-        {pending ? "Saving…" : "Save draft"}
-      </button>
-      <EditorMessage state={state} />
+      <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-white/90 px-1 py-3 backdrop-blur dark:border-zinc-700 dark:bg-zinc-950/90">
+        <button type="submit" disabled={pending} className={primaryButton}>
+          {pending ? "Saving…" : "Save draft"}
+        </button>
+        <EditorMessage state={state} />
+      </div>
     </form>
   );
 }
@@ -188,12 +198,16 @@ function EditorBody({
   return (
     <div className="space-y-3">
       <input type="hidden" name="data" value={tab === "json" ? jsonText : JSON.stringify(data)} />
-      <div role="tablist" aria-label="CV editor" className="flex gap-2">
+      <div
+        role="tablist"
+        aria-label="CV editor"
+        className="inline-flex gap-1 rounded-md bg-zinc-100 p-1 dark:bg-zinc-800"
+      >
         <button
           type="button"
           role="tab"
           aria-selected={tab === "form"}
-          className={`${tabClass} ${tab === "form" ? "bg-gray-800 text-white" : "bg-white"}`}
+          className={`${tabClass} ${tab === "form" ? activeTab : idleTab}`}
           onClick={showForm}
         >
           Form
@@ -202,19 +216,19 @@ function EditorBody({
           type="button"
           role="tab"
           aria-selected={tab === "json"}
-          className={`${tabClass} ${tab === "json" ? "bg-gray-800 text-white" : "bg-white"}`}
+          className={`${tabClass} ${tab === "json" ? activeTab : idleTab}`}
           onClick={showJson}
         >
           Raw JSON
         </button>
       </div>
-      {jsonError ? <p className="text-sm text-red-700">{jsonError}</p> : null}
+      {jsonError ? <p className={errorClass}>{jsonError}</p> : null}
       <IssueList issues={visibleIssues} />
       {tab === "form" ? (
         <CvSections data={data} issues={visibleIssues} readOnly={readOnly} onChange={changeData} />
       ) : (
-        <label className="flex flex-col gap-1 text-sm">
-          CV JSON
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">CV JSON</span>
           <textarea
             value={jsonText}
             readOnly={readOnly}
@@ -225,7 +239,7 @@ function EditorBody({
               clearJsonError();
               onEdit?.();
             }}
-            className="w-full border border-gray-300 bg-white px-2 py-1 font-mono text-sm text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 read-only:bg-gray-100"
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 shadow-sm focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30 read-only:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:read-only:bg-zinc-900"
           />
         </label>
       )}
@@ -236,7 +250,10 @@ function EditorBody({
 function IssueList({ issues }: { issues: readonly CvFieldIssue[] }) {
   if (issues.length === 0) return null;
   return (
-    <ul className="space-y-1 text-sm text-red-700" role="alert">
+    <ul
+      className="list-inside list-disc space-y-1 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+      role="alert"
+    >
       {issues.map((issue, index) => (
         <li key={`${issue.path}:${index}`}>
           {issue.path.length > 0 ? `${issue.path}: ${issue.message}` : issue.message}
@@ -252,7 +269,9 @@ function EditorMessage({ state }: { state: CvEditorState }) {
     <p
       role="status"
       aria-live="polite"
-      className={state.status === "error" ? "text-sm text-red-700" : "text-sm"}
+      className={
+        state.status === "error" ? errorClass : "text-sm text-emerald-700 dark:text-emerald-400"
+      }
     >
       {state.message}
     </p>
