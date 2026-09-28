@@ -6,8 +6,13 @@ declare module "bun:test" {
     toEqual(expected: unknown): void;
     toBeNull(): void;
     toThrow(): void;
+    toContain(expected: unknown): void;
+    toBeLessThan(expected: number): void;
+    toBeLessThanOrEqual(expected: number): void;
     not: {
       toBe(expected: T): void;
+      toContain(expected: unknown): void;
+      toHaveProperty(key: string): void;
     };
     rejects: {
       toBeInstanceOf(expected: unknown): Promise<void>;

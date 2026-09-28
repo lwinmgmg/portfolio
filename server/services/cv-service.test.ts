@@ -111,7 +111,8 @@ class MemoryCvVersions implements CvVersionRepository {
   }
 
   findPublished(): Promise<CvVersion | null> {
-    return Promise.reject(new Error("findPublished was not expected"));
+    this.events.push("find-published");
+    return Promise.resolve(this.rows.find((row) => row.status === "published") ?? null);
   }
 
   list(limit: number): Promise<CvVersion[]> {
@@ -1097,4 +1098,13 @@ test("openPdf returns the stored stream and nothing for a missing version", asyn
 
   blobs.bodies.set("cv/resume.pdf", null);
   expect(await service.openPdf("cv-1")).toBeNull();
+});
+
+test("getPublishedData returns the published CV and ignores drafts and archives", async () => {
+  const { service, versions } = setup();
+  versions.rows.push(readyDraft("cv-1", "archived"), readyDraft("cv-2"));
+  expect(await service.getPublishedData()).toBeNull();
+
+  versions.rows.push(readyDraft("cv-3", "published"));
+  expect(await service.getPublishedData()).toEqual(sampleCv);
 });

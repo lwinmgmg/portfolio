@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 1.6, commit `e4163e3` on `master`.
+Last updated after Phase 1.7, commit `5fae480` on `master`.
 
 ## How to work
 
@@ -25,6 +25,9 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
+| `5fae480` | Phase 1.7. Public CV page. |
+| `3a602a4` | Owner commit: admin CV editor UI fixes and Memory update. |
+| `793184c` | Concurrent-write hardening for draft editing and publishing. Do not revert. |
 | `e4163e3` | Phase 1.6. Admin review, edit, and publish. |
 | `52fd236` | Phase 1.5. LLM extraction for uploaded drafts. |
 | `1d6b269` | Upload callback and retry-safe draft registration. Do not revert. |
@@ -36,13 +39,13 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.6 are **Done** in `Plan.md`. Phase 1.7 (public CV page) has not been started.
+Phases 1.1 through 1.7 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 1.8 (CV download) has not been started.
 
 ## Environment
 
 `.env.local` has `MONGODB_URI`, `MONGODB_DB`, `JWT_SECRET`, and `ADMIN_USERNAME`. It does not have `BLOB_READ_WRITE_TOKEN` or `OPENROUTER_API_KEY`. Without the blob token the upload form stays hidden. Without a valid OpenRouter key, extraction cannot run. Do not run `vercel env pull` unless the owner asks. Restart the dev server after those values change.
 
-A live PDF extraction has never been completed here. Phase 1.6 was not published against Atlas: new MongoDB clients, including the dev server, failed the TLS handshake. No verification rows were left behind. Do not invent a successful live extraction or publish.
+During Phase 1.6 new MongoDB clients failed the Atlas TLS handshake. By Phase 1.7 the dev server reached Atlas and a published CV ("LWIN MAUNG MAUNG — Lead Software & AI Engineer") rendered on `/`. Its origin (owner upload vs. extraction) was not verified by an agent. Do not invent live results you did not observe.
 
 ## Architecture that must stay
 
@@ -104,11 +107,27 @@ Do not switch model slugs. Defaults:
 - `deleteDraft` deletes the draft row, then deletes the blob only when `countByPdfPathname` is zero. If blob deletion throws, the error is logged and the draft stays deleted. The delete button asks for confirmation.
 - Filename links on `/admin/cv` open the editor. The version page also shows retry and the 3-second refresh while extraction is still in progress.
 
+## Public CV page (Phase 1.7)
+
+- `/` (`app/(public)/page.tsx`) server-renders the published CV via `getPublishedCv()` in `cv-runtime` (`cache` + `connection()`), shared by the page and `generateMetadata`. It returns null when the database is not configured, so the page shows "CV coming soon" instead of failing. `CvService.getPublishedData()` returns the published version's data or null.
+- Session-state handling and `<ProjectList>` are unchanged in behavior. `ProjectList` no longer renders its own "Projects" `<h1>`; the page wraps it in the "Side projects" section. The CV name is the page's only `<h1>`.
+- Components live in `app/(public)/_components/cv/`, one per section, composed in page order by `cv-document.tsx`. Pure helpers with tests: `cv-format.ts` (dates, safe links, truncation), `cv-sections.ts` (section registry, anchors), `cv-seo.ts` (title/description, Person JSON-LD). Shared class names are in `cv-styles.ts`.
+- Anchors are public URLs used by Phase 2 citations. Header is `id="profile"`, summary `summary`, sections `experience`, `projects`, `skills`, `education`, `certifications`, `languages`, `other`, `side-projects`. Items are `<section>-<itemId>`. Use `anchorForEntityKey(entityKey)` (e.g. `project:x` → `projects-x`); do not rebuild the mapping elsewhere. `CV_LIST_SECTIONS` declaration order is the nav order; keep `cv-document.tsx` in the same order.
+- Only `http(s)` URLs (bare hosts get `https://`) and plain email addresses become hrefs. CV data comes from an LLM and admin edits; keep going through `safeWebUrl` / `mailtoHref`. External links use `target="_blank" rel="noopener noreferrer"`.
+- The phone number is intentionally not rendered (plan lists email and links only). Ask the owner before adding it.
+- JSON-LD `Person` (name, jobTitle, sameAs) is serialized with `<` escaped to `<`.
+- `globals.css` defines `--accent` / `--accent-foreground` for light and dark, exposed as Tailwind `accent` colors. Body uses `var(--font-sans)`. Smooth scroll only under `prefers-reduced-motion: no-preference`. The print sheet forces black on white; `print:hidden` hides the nav and Download button; `[data-cv-item]` avoids page breaks inside an entry.
+- Desktop (≥ lg) sticky nav with `IntersectionObserver` scroll-spy (`use-scroll-spy.ts`); hidden on mobile.
+- `app/(public)/error.tsx` catches database failures on the public page.
+- Root layout metadata defaults are "Portfolio" / "CV and side projects.".
+- Verified with curl only (anchors, metadata, JSON-LD, nav). Not visually checked at 375 px / 1440 px or in dark mode.
+- The Download CV button links to `/cv/download`, which 404s until Phase 1.8.
+
 ## Do not redo or undo
 
-- Do not revert `8328b11`, `1d6b269`, `52fd236`, or `e4163e3`.
+- Do not revert `8328b11`, `1d6b269`, `52fd236`, `e4163e3`, `793184c`, or `5fae480`.
 - Do not put `maxDuration` on the admin layout. It would also cover project actions.
 - Do not call `getLlm()` at module scope.
 - Do not change OpenRouter retry or timeout defaults to fit extraction. The 45 second deadline is local to `LlmCvExtractor`.
 - Do not add `serverExternalPackages` unless a build failure requires it.
-- Phase 1.7 will render the public CV and must read the Next.js metadata and JSON-LD guides before it starts. Phase 1.8 owns `GET /cv/download`. Leave both alone until the owner asks.
+- Phase 1.8 owns `GET /cv/download` and `CvService.openPublishedPdf()`. Leave it alone until the owner asks.

@@ -103,6 +103,12 @@ export class CvService {
     return this.versions.findById(id);
   }
 
+  // The CV shown to visitors. Publishing requires data, so null means nothing is published.
+  async getPublishedData(): Promise<CvData | null> {
+    const published = await this.versions.findPublished();
+    return published?.data ?? null;
+  }
+
   list(limit: number): Promise<CvVersion[]> {
     if (!Number.isInteger(limit) || limit < 1) {
       throw new InvalidCvError("The version list limit must be a positive integer.");

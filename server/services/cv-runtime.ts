@@ -4,6 +4,7 @@ import { cache } from "react";
 import { connection } from "next/server";
 
 import { LlmCvExtractor } from "@/server/cv/cv-extractor";
+import { isDatabaseConfigured } from "@/server/db/client";
 import { runTransaction } from "@/server/db/transaction";
 import type { CvExtractor } from "@/server/domain/cv";
 import { readLlmEnv } from "@/server/llm/llm-env";
@@ -52,6 +53,14 @@ export function registerCvUpload(input: CvUploadInput) {
 export function runExtraction(versionId: string): Promise<void> {
   return cvService.runExtraction(versionId);
 }
+
+// Shared by the home page and its metadata. Without a database there is nothing
+// to show, and the page renders its "coming soon" state instead of failing.
+export const getPublishedCv = cache(async () => {
+  await connection();
+  if (!isDatabaseConfigured()) return null;
+  return cvService.getPublishedData();
+});
 
 export const getCvVersion = cache(async (id: string) => {
   await connection();

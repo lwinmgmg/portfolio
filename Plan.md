@@ -396,6 +396,8 @@ evals/cv-retrieval.golden.json
 
 ## Phase 1.7: Public CV page
 
+**Status:** Done
+
 **Files:** `app/(public)/page.tsx`, `app/(public)/_components/cv/*`, `app/layout.tsx` (metadata only).
 
 **Steps**

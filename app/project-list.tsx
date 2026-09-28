@@ -27,25 +27,26 @@ export function ProjectList({
   if (projects.data.length === 0) return <p>No projects yet.</p>;
 
   return (
-    <section className="space-y-4">
-      <h1 className="text-lg font-semibold">Projects</h1>
-      <ul className="space-y-3">
-        {projects.data.map((project) => (
-          <li
-            key={project.id}
-            className="border border-zinc-300 p-3 dark:border-zinc-700"
-          >
-            <p className="font-medium">{project.title}</p>
-            <p className="mt-1 text-sm">{project.summary}</p>
-            {project.url ? (
-              <a className="mt-2 inline-block text-sm underline" href={project.url}>
-                {project.url}
-              </a>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </section>
+    // The page supplies the "Side projects" heading around this list.
+    <ul className="space-y-3">
+      {projects.data.map((project) => (
+        <li
+          key={project.id}
+          className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+        >
+          <p className="font-medium">{project.title}</p>
+          <p className="mt-1 text-sm">{project.summary}</p>
+          {project.url ? (
+            <a
+              className="mt-2 inline-block rounded-sm text-sm underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              href={project.url}
+            >
+              {project.url}
+            </a>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
