@@ -49,6 +49,7 @@ const projectFields = {
   startDate: nullableYearMonth,
   endDate: nullableYearMonth,
   summary: z.string(),
+  details: z.string().nullable(),
   highlights: lines,
   technologies: lines,
 };

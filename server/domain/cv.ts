@@ -41,6 +41,8 @@ export type CvProject = {
   startDate: string | null;
   endDate: string | null;
   summary: string;
+  // Long-form write-up for the project's own page. Paragraphs are separated by blank lines.
+  details: string | null;
   highlights: string[];
   technologies: string[];
 };

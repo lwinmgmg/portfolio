@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 1.7, commit `5fae480` on `master`.
+Last updated after Phase 1.7a (project detail pages) on `master`.
 
 ## How to work
 
@@ -25,6 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
+| (next) | Phase 1.7a. Project detail pages; `details` on CV projects. |
+| `b7e2c3f` | Removed the scaffold project slice from `1676201`. |
 | `5fae480` | Phase 1.7. Public CV page. |
 | `3a602a4` | Owner commit: admin CV editor UI fixes and Memory update. |
 | `793184c` | Concurrent-write hardening for draft editing and publishing. Do not revert. |
@@ -39,7 +41,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.7 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 1.8 (CV download) has not been started.
+Phases 1.1 through 1.7 and 1.7a are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 1.8 (CV download) has not been started.
 
 ## Environment
 
@@ -122,6 +124,15 @@ Do not switch model slugs. Defaults:
 - Root layout metadata defaults are "Portfolio" / "CV.".
 - Verified with curl only (anchors, metadata, JSON-LD, nav). Not visually checked at 375 px / 1440 px or in dark mode.
 - The Download CV button links to `/cv/download`, which 404s until Phase 1.8.
+
+## Project detail pages (Phase 1.7a)
+
+- Projects are CV data only. `CvProject.details: string | null` holds the long write-up (blank line = new paragraph). It is in both zod schemas, the extraction prompt, `toProject`, and `renderCvMarkdown`, so the Phase 2 corpus sees it.
+- Older stored versions have no `details`. `upgradeStoredCvData` (`server/cv/cv-legacy.ts`) fills `null` inside `MongoCvVersionRepository.toEntity`, and the document type is `StoredCvData`. Keep this while old versions exist. A later added CV field follows the same pattern. No Mongo write migration was done.
+- `/projects/[projectId]` (`app/(public)/projects/[projectId]/page.tsx`) uses `getPublishedProject(id)` from `cv-runtime` and calls `notFound()` otherwise. Build internal links with `cvProjectPath(id)` from `cv-sections.ts`. The back link targets `/#projects-<id>`. Metadata comes from `projectPageMeta` in `cv-seo.ts`.
+- The card title links to the project page, and the external URL is a separate "Visit ↗" link.
+- Project ids are the page URLs. Extracted projects get name slugs. Projects added in the editor get `project-<uuid>`, so their URLs are uuid-style. Renaming a project does not change its id.
+- The published CV had no projects when this shipped. The page was verified by rendering the components with the fixture. Curl confirmed a 404 with `noindex` for an unknown id, and that the pre-1.7a published CV still renders. No browser check at 375 px, 1440 px or in dark mode.
 
 ## Scaffold removal
 

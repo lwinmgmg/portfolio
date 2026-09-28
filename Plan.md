@@ -250,7 +250,7 @@ evals/cv-retrieval.golden.json
                      startDate: YearMonth|null, endDate: YearMonth|null, current: boolean,
                      summary|null, highlights: string[], technologies: string[] }
    projects[]:     { id, name, role|null, url|null, startDate|null, endDate|null,
-                     summary, highlights: string[], technologies: string[] }
+                     summary, details|null (added in 1.7a), highlights: string[], technologies: string[] }
    education[]:    { id, institution, degree|null, field|null, startDate|null, endDate|null,
                      details: string[] }
    skills[]:       { id, category, items: string[] }
@@ -426,6 +426,26 @@ evals/cv-retrieval.golden.json
 **Done when**
 - The home page shows the published CV and passes a manual check at 375 px and 1440 px, in light and dark mode.
 - Anchor ids exist for every item.
+
+## Phase 1.7a: Project detail pages
+
+**Status:** Done
+
+Projects are part of the CV (`CvData.projects`); there is no separate project collection. Each CV project also gets its own public page.
+
+**Files:** `server/domain/cv.ts`, `server/cv/cv-schema.ts`, `server/cv/cv-legacy.ts`, `server/cv/extraction-prompt.ts`, `server/cv/cv-ids.ts`, `server/cv/cv-markdown.ts`, `server/repositories/cv-version-repository.ts`, `server/services/cv-runtime.ts`, `app/(public)/projects/[projectId]/page.tsx`, `app/(public)/_components/cv/{cv-project-detail,cv-projects,cv-sections,cv-format,cv-seo}.ts(x)`, admin `cv-form.ts` and `cv-item-fields.tsx`.
+
+**Steps**
+1. Add `details: string | null` to project items: long-form text, blank line between paragraphs. It is required and nullable, like every CV field. The extraction prompt puts longer project descriptions there and leaves the summary short. `renderCvMarkdown` includes details after the summary.
+2. Versions stored before the field existed are upgraded on read. `upgradeStoredCvData` in `cv-legacy.ts`, called by the repository's `toEntity`, fills `details: null`. No write migration.
+3. The admin CV editor has an optional multiline "Details" field per project.
+4. `/projects/[projectId]` reads the published CV through `getPublishedProject(id)` (`cv-runtime`, `cache`d on top of `getPublishedCv`). It calls `notFound()` for unknown ids or when nothing is published. The page shows a back link to `/#projects-<id>`, the name as `<h1>`, role and dates, an external "Visit project" link via `safeWebUrl`, the summary, the detail paragraphs (`toParagraphs`), highlights and technologies.
+5. `generateMetadata` uses `projectPageMeta`: title `"<project> — <fullName>"`, description from the summary, falling back to details, truncated to 160 characters.
+6. The CV project card title links to `cvProjectPath(id)`. The external URL moves to a "Visit ↗" link on the card. Card anchors are unchanged.
+
+**Done when**
+- Standard checks pass. Unit tests cover the schema, the legacy upgrade, the markdown, the prompt, `cvProjectPath`, `toParagraphs` and `projectPageMeta`.
+- An unknown project id returns 404 with `noindex`. A CV published before this phase still renders.
 
 ## Phase 1.8: CV download
 

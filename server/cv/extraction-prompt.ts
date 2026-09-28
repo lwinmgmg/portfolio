@@ -7,6 +7,7 @@ Rules:
 - Keep bullet wording verbatim. Fix only broken line wraps.
 - Normalize dates to YYYY-MM or YYYY. When a role is current or its end date says Present, set endDate to null and current to true.
 - Put technologies mentioned inside a role into that role's technologies array.
+- A project's summary is one or two sentences. Put any longer project description into details, keeping paragraph breaks; otherwise details is null.
 - Put sections that are not experience, projects, education, skills, certifications, or languages into otherSections.
 - Every top-level key is required: profile, experience, projects, education, skills, certifications, languages, otherSections.
 - Do not include id fields.`;

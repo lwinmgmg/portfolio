@@ -146,6 +146,7 @@ function renderProject(item: CvProject): string {
       dateFact(item.startDate, item.endDate),
     ]),
     present(item.summary) ? item.summary : null,
+    present(item.details) ? item.details : null,
     bulletList("Highlights", item.highlights),
     technologyLine(item.technologies),
   ]);

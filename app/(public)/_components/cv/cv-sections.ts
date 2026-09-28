@@ -37,6 +37,11 @@ export function cvItemAnchor(sectionId: string, itemId: string): string {
   return `${sectionId}-${itemId}`;
 }
 
+// A project's own page. The id is the CV item id, so it is also a public URL.
+export function cvProjectPath(projectId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}`;
+}
+
 // "project:portfolio" -> "projects-portfolio". Unknown keys have no anchor.
 export function anchorForEntityKey(entityKey: string): string | null {
   if (entityKey === "profile") return CV_PROFILE_ID;

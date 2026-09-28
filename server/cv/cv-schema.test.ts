@@ -60,6 +60,16 @@ test("accepts a year or year-month and rejects any other date", () => {
   expect(parseStart("")).toBe(false);
 });
 
+test("requires project details as a nullable string", () => {
+  const withoutDetails: Record<string, unknown> = { ...sampleCv.projects[0] };
+  delete withoutDetails.details;
+  expect(CvDataSchema.safeParse({ ...sampleCv, projects: [withoutDetails] }).success).toBe(false);
+  expect(
+    CvDataSchema.safeParse({ ...sampleCv, projects: [{ ...sampleCv.projects[0], details: null }] })
+      .success,
+  ).toBe(true);
+});
+
 test("stores ids on saved data and keeps them off the extraction schema", () => {
   const experience: Record<string, unknown> = { ...sampleCv.experience[0] };
   delete experience.id;

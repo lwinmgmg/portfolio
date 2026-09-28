@@ -50,6 +50,10 @@ Dates: 2020 – 2020
 
 Personal site.
 
+Server-rendered CV with a chat assistant.
+
+Built on the App Router.
+
 Highlights:
 - Designed the CV page.
 

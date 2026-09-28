@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Filter, ObjectId, WithId } from "mongodb";
 
+import { type StoredCvData, upgradeStoredCvData } from "@/server/cv/cv-legacy";
 import type { TransactionContext } from "@/server/db/transaction";
 import { CV_PDF_CONTENT_TYPE } from "@/server/domain/blob-store";
 import {
@@ -32,7 +33,7 @@ type CvVersionDocument = {
     startedAt: Date | null;
     finishedAt: Date | null;
   };
-  data: CvData | null;
+  data: StoredCvData | null;
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
@@ -89,7 +90,7 @@ export class MongoCvVersionRepository
         startedAt: toIso(document.extraction.startedAt),
         finishedAt: toIso(document.extraction.finishedAt),
       },
-      data: document.data,
+      data: document.data ? upgradeStoredCvData(document.data) : null,
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
       publishedAt: toIso(document.publishedAt),

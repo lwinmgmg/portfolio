@@ -4,9 +4,15 @@ import {
   anchorForEntityKey,
   cvItemAnchor,
   cvNavItems,
+  cvProjectPath,
 } from "@/app/(public)/_components/cv/cv-sections";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
 import { listEntityKeys } from "@/server/cv/cv-markdown";
+
+test("cvProjectPath points at the project page and escapes the id", () => {
+  expect(cvProjectPath("portfolio")).toBe("/projects/portfolio");
+  expect(cvProjectPath("a b/c")).toBe("/projects/a%20b%2Fc");
+});
 
 test("cvItemAnchor joins the section and item id", () => {
   expect(cvItemAnchor("experience", "acme-senior-engineer-2021")).toBe(

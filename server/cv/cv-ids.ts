@@ -99,6 +99,7 @@ function toProject(item: Omit<CvProject, "id">, id: string): CvProject {
     startDate: item.startDate,
     endDate: item.endDate,
     summary: item.summary,
+    details: item.details,
     highlights: item.highlights.slice(),
     technologies: item.technologies.slice(),
   };

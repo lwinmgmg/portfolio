@@ -62,6 +62,13 @@ export const getPublishedCv = cache(async () => {
   return cvService.getPublishedData();
 });
 
+// Project pages read from the published CV, so they appear and change with each publish.
+export const getPublishedProject = cache(async (id: string) => {
+  const cv = await getPublishedCv();
+  const project = cv?.projects.find((item) => item.id === id);
+  return cv && project ? { profile: cv.profile, project } : null;
+});
+
 export const getCvVersion = cache(async (id: string) => {
   await connection();
   return cvService.get(id);

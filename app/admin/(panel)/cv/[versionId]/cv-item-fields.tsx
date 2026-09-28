@@ -149,6 +149,13 @@ export function ProjectFields({ item, path, update }: ItemEditorProps<CvProject>
         multiline
         onChange={(summary) => update({ summary })}
       />
+      <OptionalTextField
+        label="Details (project page, blank line between paragraphs)"
+        path={`${path}.details`}
+        value={item.details}
+        multiline
+        onChange={(details) => update({ details })}
+      />
       <LineField
         label="Highlights"
         path={`${path}.highlights`}

@@ -68,6 +68,7 @@ export function emptyProject(): CvProject {
     startDate: null,
     endDate: null,
     summary: "",
+    details: null,
     highlights: [],
     technologies: [],
   };

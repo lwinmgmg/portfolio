@@ -71,6 +71,15 @@ export function truncateText(text: string, max: number): string {
   return `${cut.replace(/[\s.,;:!?-]+$/, "")}…`;
 }
 
+// Blank lines separate paragraphs. Single line breaks stay inside a paragraph.
+export function toParagraphs(text: string | null): string[] {
+  if (!text) return [];
+  return text
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0);
+}
+
 export function joinPresent(parts: ReadonlyArray<string | null>, separator = " · "): string {
   return parts
     .map((part) => part?.trim())

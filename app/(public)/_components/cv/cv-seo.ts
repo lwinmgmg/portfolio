@@ -1,5 +1,5 @@
 import { safeWebUrl, truncateText } from "@/app/(public)/_components/cv/cv-format";
-import type { CvProfile } from "@/server/domain/cv";
+import type { CvProfile, CvProject } from "@/server/domain/cv";
 
 export const META_DESCRIPTION_MAX = 160;
 
@@ -12,6 +12,16 @@ export function cvPageMeta(profile: CvProfile): CvPageMeta {
   return {
     title: headline ? `${name} — ${headline}` : name,
     description: summary ? truncateText(summary, META_DESCRIPTION_MAX) : null,
+  };
+}
+
+export function projectPageMeta(project: CvProject, profile: CvProfile): CvPageMeta {
+  const name = project.name.trim();
+  const owner = profile.fullName.trim();
+  const about = project.summary.trim() || project.details?.trim();
+  return {
+    title: owner ? `${name} — ${owner}` : name,
+    description: about ? truncateText(about, META_DESCRIPTION_MAX) : null,
   };
 }
 

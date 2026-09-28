@@ -4,9 +4,26 @@ import {
   cvPageMeta,
   META_DESCRIPTION_MAX,
   personJsonLd,
+  projectPageMeta,
   serializeJsonLd,
 } from "@/app/(public)/_components/cv/cv-seo";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
+
+test("projectPageMeta names the project and owner and falls back to details", () => {
+  const project = structuredClone(sampleCv.projects[0]);
+  expect(projectPageMeta(project, sampleCv.profile)).toEqual({
+    title: "Portfolio — Jane Doe",
+    description: "Personal site.",
+  });
+
+  project.summary = " ";
+  expect(projectPageMeta(project, sampleCv.profile).description).toBe(
+    "Server-rendered CV with a chat assistant. Built on the App Router.",
+  );
+
+  project.details = null;
+  expect(projectPageMeta(project, sampleCv.profile).description).toBeNull();
+});
 
 test("cvPageMeta builds the title and a bounded description", () => {
   const profile = structuredClone(sampleCv.profile);

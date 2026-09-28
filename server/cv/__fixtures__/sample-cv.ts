@@ -33,6 +33,7 @@ export const sampleExtraction = {
       startDate: "2020",
       endDate: "2020",
       summary: "Personal site.",
+      details: "Server-rendered CV with a chat assistant.\n\nBuilt on the App Router.",
       highlights: ["Designed the CV page."],
       technologies: ["Next.js"],
     },

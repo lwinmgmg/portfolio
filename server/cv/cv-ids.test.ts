@@ -51,6 +51,7 @@ function project(name: string): CvExtraction["projects"][number] {
     startDate: null,
     endDate: null,
     summary: "",
+    details: null,
     highlights: [],
     technologies: [],
   };

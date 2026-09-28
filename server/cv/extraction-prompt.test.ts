@@ -10,4 +10,5 @@ test("extraction prompt forbids invention and fixes dates, technologies, and unk
   expect(CV_EXTRACTION_PROMPT.includes("set endDate to null and current to true")).toBe(true);
   expect(CV_EXTRACTION_PROMPT.includes("role's technologies")).toBe(true);
   expect(CV_EXTRACTION_PROMPT.includes("otherSections")).toBe(true);
+  expect(CV_EXTRACTION_PROMPT.includes("longer project description into details")).toBe(true);
 });

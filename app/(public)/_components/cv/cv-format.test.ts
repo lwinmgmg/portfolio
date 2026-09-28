@@ -6,8 +6,15 @@ import {
   joinPresent,
   mailtoHref,
   safeWebUrl,
+  toParagraphs,
   truncateText,
 } from "@/app/(public)/_components/cv/cv-format";
+
+test("toParagraphs splits on blank lines and drops empty paragraphs", () => {
+  expect(toParagraphs("One\nstill one.\n\n  Two  \n \n\n")).toEqual(["One\nstill one.", "Two"]);
+  expect(toParagraphs("  ")).toEqual([]);
+  expect(toParagraphs(null)).toEqual([]);
+});
 
 test("formatYearMonth names the month and keeps a bare year", () => {
   expect(formatYearMonth("2021-04")).toBe("Apr 2021");
