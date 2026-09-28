@@ -540,6 +540,8 @@ QUERY (per chat turn)
 
 ## Phase 2.2: Corpus source and chunkers
 
+**Status:** Done
+
 **Files:** `server/rag/corpus/cv-corpus-source.ts`, `server/rag/chunking/*`, tests.
 
 **Steps**

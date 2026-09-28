@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.1 (RAG domain, config and storage) on `master`.
+Last updated after Phase 2.2 (corpus source and chunkers) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.1. RAG domain types, retrieval config, RAG repositories. |
+| (next) | Phase 2.2. `CvCorpusSource`, structured and token-window chunkers. |
+| `ec21fd3` | Phase 2.1. RAG domain types, retrieval config, RAG repositories. |
 | `312381e` | Phase 1.8. Public CV download. |
 | `8dd619d` | Phase 1.7a. Project detail pages; `details` on CV projects. |
 | `b7e2c3f` | Removed the scaffold project slice from `1676201`. |
@@ -43,7 +44,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.2 is next.
+Phases 1.1 through 1.8 (including 1.7a), 2.1 and 2.2 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.3 is next.
 
 ## Environment
 
@@ -154,6 +155,16 @@ Do not switch model slugs. Defaults:
 - `rag_traces`: `_id` is the recorder's string trace id (so a chat message can reference it before the save). `{ createdAt: -1 }` plus a TTL index on `{ createdAt: 1 }`, 30 days (`RAG_TRACE_TTL_SECONDS`).
 - `parseInstant` moved to `server/repositories/mongo-dates.ts` and is shared by the CV and RAG repositories.
 - Repository tests are in `server/repositories/rag-repositories.test.ts` with a mocked collection, like the CV repository test. The collections were not created against the real database yet; nothing uses them until 2.3.
+
+## Corpus source and chunkers (Phase 2.2)
+
+- `CvCorpusSource` (`server/rag/corpus/cv-corpus-source.ts`) takes `Pick<CvVersionRepository, "findPublished">`, so a full repository still fits and tests pass a one-method fake. `sourceId` is the published version id, `title` is `cvCorpusTitle(profile)` (`"<fullName> — <headline>"`, or just the name), `markdown` is `renderCvMarkdown(data)`. Null when nothing is published or the version has no data.
+- Both chunkers are pure `Chunker` strategies in `server/rag/chunking/` and return `ChunkDraft`s with 0-based consecutive `ordinal`s and `tokenCount = estimateTokens(text)` (`ceil(length / 4)`). 2.3 should key a `Record<ChunkerKind, Chunker>` with them.
+- `section` is the entity key prefix (`profile`, `experience`, `project`, `education`, `skills`, `certification`, `language`, `other`), via `entitySection`. These are key prefixes, not the page anchor section names (`project` vs `projects`); use `anchorForEntityKey` for links.
+- `StructuredCvChunker({ maxEntityTokens = 350, mergeSkillsMaxTokens = 200 })`. An unsplit chunk's text is exactly `renderCvEntity`. `title` is the entity's last heading (the full name for `profile`). Splitting is done on the rendered text by `entity-splitter.ts`: the heading blocks (`## Section` + `### Heading`, or `# Name`) repeat in every part; body blocks are units, list blocks (`Highlights:`, `Details:`, plain `- ` lists) split per item and repeat their label line in each part that continues them; a unit bigger than a part is cut on word boundaries. Parts are packed greedily, in order, each ≤ 350 tokens. This applies to all body blocks, not only highlights/details.
+- Skills merge only when there are at least 2 groups and their renderings joined with a blank line (an exact substring of the markdown) are ≤ 200 tokens. The merged chunk is titled `Skills`, lists every skill key, and takes the first group's place. `mergeSkillsMaxTokens: null` disables merging.
+- `TokenWindowChunker({ windowTokens = 200, overlapTokens = 40 })`. Windows are `markdown.slice` of whole words (whitespace and newlines kept), as many as fit (at least one word). The next window starts at the earliest word keeping the shared tail ≤ `overlapTokens`, always after the previous start. `entityKeys` are the entities whose span overlaps the window (half-open), in document order. Spans come from `locateEntitySpans`, which searches each `renderCvEntity` output forward from the previous match and throws `ChunkingError` (a `RagError`) when one is missing. The fixture gives 2 windows with the defaults.
+- Options are validated in the constructors (`RangeError`). Test helpers `corpusDocumentFor`, `sampleCvWith`, `thrownBy` are in `server/rag/__fixtures__/sample-corpus.ts`.
 
 ## Scaffold removal
 
