@@ -370,6 +370,8 @@ evals/cv-retrieval.golden.json
 
 ## Phase 1.6: Admin review, edit and publish
 
+**Status:** Done
+
 **Files:** `app/admin/(panel)/cv/[versionId]/page.tsx`, editor components, actions, `cv-service.ts` (extend).
 
 **Steps**

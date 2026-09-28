@@ -65,9 +65,28 @@ function makeDocument(
 const session = {} as TransactionContext["session"];
 const tx = { session } as TransactionContext;
 
-test("ensureReady creates a unique index for each PDF pathname", async () => {
+function readyCollection(extra: Record<string, unknown> = {}) {
+  return {
+    indexes: async () => [] as unknown[],
+    dropIndex: async () => undefined,
+    updateMany: async () => undefined,
+    createIndex: async () => undefined,
+    ...extra,
+  };
+}
+
+test("ensureReady lets duplicated drafts share a PDF path and keeps uploads unique", async () => {
   const indexes: unknown[][] = [];
+  const dropped: string[] = [];
+  const updates: unknown[][] = [];
   activeCollection = {
+    indexes: async () => [{ name: "pdf.pathname_1", key: { "pdf.pathname": 1 }, unique: true }],
+    dropIndex: async (name: string) => {
+      dropped.push(name);
+    },
+    updateMany: async (...args: unknown[]) => {
+      updates.push(args);
+    },
     createIndex: async (...args: unknown[]) => {
       indexes.push(args);
     },
@@ -75,10 +94,36 @@ test("ensureReady creates a unique index for each PDF pathname", async () => {
 
   await new MongoCvVersionRepository().ensureReady();
 
-  expect(indexes[1]).toEqual([{ "pdf.pathname": 1 }, { unique: true }]);
+  expect(dropped).toEqual(["pdf.pathname_1"]);
+  expect(updates[0]?.[0]).toEqual({ uploadPathname: { $exists: false } });
+  expect(indexes).toEqual([
+    [{ createdAt: -1 }],
+    [{ "pdf.pathname": 1 }],
+    [
+      { uploadPathname: 1 },
+      { unique: true, partialFilterExpression: { uploadPathname: { $type: "string" } } },
+    ],
+    [{ status: 1 }, { unique: true, partialFilterExpression: { status: "published" } }],
+  ]);
 });
 
-test("findByPdfPathname looks up the stored path", async () => {
+test("ensureReady keeps a PDF path index that is already shared", async () => {
+  const dropped: string[] = [];
+  activeCollection = {
+    indexes: async () => [{ name: "pdf.pathname_1", key: { "pdf.pathname": 1 }, unique: false }],
+    dropIndex: async (name: string) => {
+      dropped.push(name);
+    },
+    updateMany: async () => undefined,
+    createIndex: async () => undefined,
+  };
+
+  await new MongoCvVersionRepository().ensureReady();
+
+  expect(dropped).toEqual([]);
+});
+
+test("findByPdfPathname looks up the original upload key", async () => {
   const document = makeDocument(new TestObjectId());
   let filter: unknown;
   activeCollection = {
@@ -90,8 +135,82 @@ test("findByPdfPathname looks up the stored path", async () => {
 
   const found = await new MongoCvVersionRepository().findByPdfPathname("cv/test.pdf");
 
-  expect(filter).toEqual({ "pdf.pathname": "cv/test.pdf" });
+  expect(filter).toEqual({ uploadPathname: "cv/test.pdf" });
   expect(found?.pdf.pathname).toBe("cv/test.pdf");
+});
+
+test("create stores the upload pathname used to recognize a retried registration", async () => {
+  const captured: { document?: Record<string, unknown> } = {};
+  activeCollection = {
+    insertOne: async (document: Record<string, unknown>) => {
+      captured.document = document;
+      return { insertedId: new TestObjectId() };
+    },
+  };
+
+  await new MongoCvVersionRepository().create(
+    {
+      pdf: {
+        pathname: "cv/test.pdf",
+        filename: "test.pdf",
+        size: 100,
+        contentType: "application/pdf",
+        uploadedAt: "2026-09-24T00:00:00.000Z",
+      },
+    },
+    tx,
+  );
+
+  expect(captured.document?.uploadPathname).toBe("cv/test.pdf");
+  expect((captured.document?.extraction as { status?: string } | undefined)?.status).toBe("pending");
+});
+
+test("createCopy inserts a succeeded draft that shares the PDF and has its own upload key", async () => {
+  const captured: { document?: Record<string, unknown> } = {};
+  activeCollection = readyCollection({
+    insertOne: async (document: Record<string, unknown>) => {
+      captured.document = document;
+      return { insertedId: new TestObjectId("507f1f77bcf86cd799439012") };
+    },
+  });
+
+  const version = await new MongoCvVersionRepository().createCopy({
+    pdf: {
+      pathname: "cv/test.pdf",
+      filename: "test.pdf",
+      size: 100,
+      contentType: "application/pdf",
+      uploadedAt: "2026-09-24T00:00:00.000Z",
+    },
+    data: sampleCv,
+    model: "extract-model",
+    finishedAt: "2026-09-25T12:00:00.000Z",
+  });
+
+  expect(version.id).toBe("507f1f77bcf86cd799439012");
+  expect(version.status).toBe("draft");
+  expect(version.data).toEqual(sampleCv);
+  expect(version.extraction.status).toBe("succeeded");
+  expect(version.extraction.model).toBe("extract-model");
+  expect(version.pdf.pathname).toBe("cv/test.pdf");
+  expect(typeof captured.document?.uploadPathname).toBe("string");
+  expect(String(captured.document?.uploadPathname).startsWith("copy:")).toBe(true);
+  expect(captured.document?.uploadPathname).not.toBe("cv/test.pdf");
+});
+
+test("countByPdfPathname counts every version that stores the blob path", async () => {
+  let filter: unknown;
+  activeCollection = readyCollection({
+    countDocuments: async (value: unknown) => {
+      filter = value;
+      return 2;
+    },
+  });
+
+  const count = await new MongoCvVersionRepository().countByPdfPathname("cv/test.pdf");
+
+  expect(filter).toEqual({ "pdf.pathname": "cv/test.pdf" });
+  expect(count).toBe(2);
 });
 
 for (const [name, changes] of [

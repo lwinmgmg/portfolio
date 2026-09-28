@@ -128,6 +128,11 @@ export type CvVersion = {
   publishedAt: string | null;
 };
 
+export type CvFieldIssue = {
+  path: string;
+  message: string;
+};
+
 export class CvVersionNotFoundError extends Error {
   readonly id: string;
 
@@ -142,13 +147,25 @@ export interface CvVersionRepository {
   ensureReady(): Promise<void>;
   create(input: { pdf: CvPdf }, tx: TransactionContext): Promise<CvVersion>;
   findById(id: string): Promise<CvVersion | null>;
+  // The upload registered at this pathname. A duplicate shares the blob path and is not returned.
   findByPdfPathname(pathname: string): Promise<CvVersion | null>;
+  countByPdfPathname(pathname: string): Promise<number>;
   findPublished(): Promise<CvVersion | null>;
   list(limit: number): Promise<CvVersion[]>;
   markExtraction(id: string, patch: Partial<CvVersion["extraction"]>): Promise<void>;
   saveData(id: string, data: CvData): Promise<CvVersion | null>;
   publish(id: string, tx: TransactionContext): Promise<CvVersion>;
   deleteDraft(id: string): Promise<boolean>;
+  createCopy(input: {
+    pdf: CvPdf;
+    data: CvData;
+    model: string | null;
+    finishedAt: string;
+  }): Promise<CvVersion>;
+}
+
+export interface CvPublishedListener {
+  onCvPublished(version: CvVersion): Promise<void>;
 }
 
 export interface CvExtractor {

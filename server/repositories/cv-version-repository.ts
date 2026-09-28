@@ -32,6 +32,8 @@ type CvVersionDocument = {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
+  // Idempotency key for the original upload. Copies share pdf.pathname and use another key.
+  uploadPathname?: string;
 };
 
 function parseInstant(value: string): Date {
@@ -81,10 +83,19 @@ export class MongoCvVersionRepository
     };
   }
 
-  protected override createIndexes(): Promise<unknown> {
+  protected override async createIndexes(): Promise<unknown> {
+    await this.dropUniquePdfPathnameIndex();
+    await this.backfillUploadPathnames();
     return Promise.all([
       this.collection().createIndex({ createdAt: -1 }),
-      this.collection().createIndex({ "pdf.pathname": 1 }, { unique: true }),
+      this.collection().createIndex({ "pdf.pathname": 1 }),
+      this.collection().createIndex(
+        { uploadPathname: 1 },
+        {
+          unique: true,
+          partialFilterExpression: { uploadPathname: { $type: "string" } },
+        },
+      ),
       this.collection().createIndex(
         { status: 1 },
         {
@@ -122,6 +133,7 @@ export class MongoCvVersionRepository
         createdAt: now,
         updatedAt: now,
         publishedAt: null,
+        uploadPathname: input.pdf.pathname,
       },
       tx,
     );
@@ -134,8 +146,13 @@ export class MongoCvVersionRepository
   }
 
   async findByPdfPathname(pathname: string): Promise<CvVersion | null> {
-    const document = await this.collection().findOne({ "pdf.pathname": pathname });
+    const document = await this.collection().findOne({ uploadPathname: pathname });
     return document ? this.toEntity(document) : null;
+  }
+
+  async countByPdfPathname(pathname: string): Promise<number> {
+    await this.ensureReady();
+    return this.collection().countDocuments({ "pdf.pathname": pathname });
   }
 
   async findPublished(): Promise<CvVersion | null> {
@@ -233,5 +250,55 @@ export class MongoCvVersionRepository
     if (!objectId) return false;
     const result = await this.collection().deleteOne({ _id: objectId, status: "draft" });
     return result.deletedCount === 1;
+  }
+
+  async createCopy(input: {
+    pdf: CvPdf;
+    data: CvData;
+    model: string | null;
+    finishedAt: string;
+  }): Promise<CvVersion> {
+    await this.ensureReady();
+    const finishedAt = parseInstant(input.finishedAt);
+    const document: CvVersionDocument = {
+      status: "draft",
+      pdf: {
+        pathname: input.pdf.pathname,
+        filename: input.pdf.filename,
+        size: input.pdf.size,
+        contentType: "application/pdf",
+        uploadedAt: parseInstant(input.pdf.uploadedAt),
+      },
+      extraction: {
+        status: "succeeded",
+        model: input.model,
+        error: null,
+        startedAt: finishedAt,
+        finishedAt,
+      },
+      data: input.data,
+      createdAt: finishedAt,
+      updatedAt: finishedAt,
+      publishedAt: null,
+      uploadPathname: `copy:${crypto.randomUUID()}`,
+    };
+    const result = await this.collection().insertOne(document);
+    return this.toEntity({ ...document, _id: result.insertedId });
+  }
+
+  private async dropUniquePdfPathnameIndex(): Promise<void> {
+    const indexes = await this.collection().indexes();
+    for (const index of indexes) {
+      const keys = Object.keys(index.key);
+      if (index.unique === true && index.name && keys.length === 1 && keys[0] === "pdf.pathname") {
+        await this.collection().dropIndex(index.name);
+      }
+    }
+  }
+
+  private backfillUploadPathnames(): Promise<unknown> {
+    return this.collection().updateMany({ uploadPathname: { $exists: false } }, [
+      { $set: { uploadPathname: "$pdf.pathname" } },
+    ]);
   }
 }

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { CvExtractionRefresh } from "@/app/admin/(panel)/cv/extraction-refresh";
 import { RetryExtractionForm } from "@/app/admin/(panel)/cv/retry-extraction-form";
 import { UploadCvForm } from "@/app/admin/(panel)/cv/upload-cv-form";
@@ -98,7 +100,14 @@ function CvVersionTable({ versions, now }: { versions: CvVersion[]; now: Date })
           {versions.map((version) => (
             <tr key={version.id} className="border-b border-gray-200">
               <td className="py-2 pr-4">{formatWhen(version.createdAt)}</td>
-              <td className="py-2 pr-4">{version.pdf.filename}</td>
+              <td className="py-2 pr-4">
+                <Link
+                  href={`/admin/cv/${version.id}`}
+                  className="underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                >
+                  {version.pdf.filename}
+                </Link>
+              </td>
               <td className="py-2 pr-4">
                 <StatusBadge value={version.status} />
               </td>

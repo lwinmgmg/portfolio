@@ -4,10 +4,18 @@ import type { TransactionContext } from "@/server/db/transaction";
 import {
   CV_PDF_CONTENT_TYPE,
   CV_PDF_MAX_BYTES,
+  type BlobBody,
   type BlobHead,
   type BlobStore,
 } from "@/server/domain/blob-store";
-import type { CvData, CvExtractor, CvPdf, CvVersion, CvVersionRepository } from "@/server/domain/cv";
+import type {
+  CvData,
+  CvExtractor,
+  CvPdf,
+  CvPublishedListener,
+  CvVersion,
+  CvVersionRepository,
+} from "@/server/domain/cv";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
 import {
   canRetryExtraction,
@@ -23,6 +31,7 @@ class MemoryCvVersions implements CvVersionRepository {
   events: string[] = [];
   patches: Array<Partial<CvVersion["extraction"]>> = [];
   limit: number | null = null;
+  private readonly uploadIds = new Set<string>();
 
   ensureReady(): Promise<void> {
     this.events.push("ready");
@@ -48,13 +57,48 @@ class MemoryCvVersions implements CvVersionRepository {
       updatedAt: "2026-09-25T12:00:00.000Z",
       publishedAt: null,
     };
+    this.uploadIds.add(version.id);
     this.rows.push(version);
     return Promise.resolve(version);
   }
 
   findByPdfPathname(pathname: string): Promise<CvVersion | null> {
     this.events.push("find");
-    return Promise.resolve(this.rows.find((row) => row.pdf.pathname === pathname) ?? null);
+    return Promise.resolve(
+      this.rows.find((row) => row.pdf.pathname === pathname && this.uploadIds.has(row.id)) ?? null,
+    );
+  }
+
+  countByPdfPathname(pathname: string): Promise<number> {
+    this.events.push("count");
+    return Promise.resolve(this.rows.filter((row) => row.pdf.pathname === pathname).length);
+  }
+
+  createCopy(input: {
+    pdf: CvPdf;
+    data: CvData;
+    model: string | null;
+    finishedAt: string;
+  }): Promise<CvVersion> {
+    this.events.push("copy");
+    const version: CvVersion = {
+      id: `copy-${this.rows.length + 1}`,
+      status: "draft",
+      pdf: input.pdf,
+      extraction: {
+        status: "succeeded",
+        model: input.model,
+        error: null,
+        startedAt: input.finishedAt,
+        finishedAt: input.finishedAt,
+      },
+      data: input.data,
+      createdAt: input.finishedAt,
+      updatedAt: input.finishedAt,
+      publishedAt: null,
+    };
+    this.rows.push(version);
+    return Promise.resolve(version);
   }
 
   findById(id: string): Promise<CvVersion | null> {
@@ -87,12 +131,29 @@ class MemoryCvVersions implements CvVersionRepository {
     return Promise.resolve(row);
   }
 
-  publish(): Promise<CvVersion> {
-    return Promise.reject(new Error("publish was not expected"));
+  publish(id: string, tx: TransactionContext): Promise<CvVersion> {
+    if (!tx.session) return Promise.reject(new Error("publish ran outside a transaction"));
+    this.events.push("publish");
+    const row = this.rows.find((item) => item.id === id);
+    if (!row || row.status !== "draft" || row.extraction.status !== "succeeded" || row.data === null) {
+      return Promise.reject(new Error(`CV version "${id}" must be a complete draft to publish.`));
+    }
+    for (const item of this.rows) {
+      if (item.status === "published") item.status = "archived";
+    }
+    row.status = "published";
+    row.publishedAt = "2026-09-25T12:00:00.000Z";
+    return Promise.resolve(row);
   }
 
-  deleteDraft(): Promise<boolean> {
-    return Promise.reject(new Error("deleteDraft was not expected"));
+  deleteDraft(id: string): Promise<boolean> {
+    this.events.push("delete");
+    const index = this.rows.findIndex((row) => row.id === id && row.status === "draft");
+    if (index < 0) return Promise.resolve(false);
+    const removed = this.rows[index];
+    if (removed) this.uploadIds.delete(removed.id);
+    this.rows.splice(index, 1);
+    return Promise.resolve(true);
   }
 }
 
@@ -114,16 +175,20 @@ class MemoryExtractor implements CvExtractor {
 class MemoryBlobs implements BlobStore {
   files = new Map<string, BlobHead>();
   bytes = new Map<string, Uint8Array | null>();
+  bodies = new Map<string, BlobBody | null>();
+  deleted: string[] = [];
   headError: Error | null = null;
   readError: Error | null = null;
+  deleteError: Error | null = null;
 
   head(pathname: string): Promise<BlobHead | null> {
     if (this.headError) return Promise.reject(this.headError);
     return Promise.resolve(this.files.get(pathname) ?? null);
   }
 
-  read(): Promise<null> {
-    return Promise.reject(new Error("read was not expected"));
+  read(pathname: string): Promise<BlobBody | null> {
+    if (!this.bodies.has(pathname)) return Promise.reject(new Error("read was not expected"));
+    return Promise.resolve(this.bodies.get(pathname) ?? null);
   }
 
   readBytes(pathname: string): Promise<Uint8Array | null> {
@@ -132,15 +197,17 @@ class MemoryBlobs implements BlobStore {
     return Promise.resolve(this.bytes.get(pathname) ?? null);
   }
 
-  delete(): Promise<void> {
-    return Promise.reject(new Error("delete was not expected"));
+  delete(pathname: string): Promise<void> {
+    if (this.deleteError) return Promise.reject(this.deleteError);
+    this.deleted.push(pathname);
+    return Promise.resolve();
   }
 }
 
 const now = new Date("2026-09-25T12:00:00.000Z");
 const session = {} as TransactionContext["session"];
 
-function setup(head?: BlobHead) {
+function setup(head?: BlobHead, listeners: readonly CvPublishedListener[] = []) {
   const versions = new MemoryCvVersions();
   const blobs = new MemoryBlobs();
   if (head) blobs.files.set("cv/resume.pdf", head);
@@ -149,7 +216,7 @@ function setup(head?: BlobHead) {
     return work({ session });
   };
   const extract = new MemoryExtractor();
-  const service = new CvService(versions, blobs, extract, transaction, () => now);
+  const service = new CvService(versions, blobs, extract, transaction, () => now, listeners);
   return { service, versions, blobs, extract };
 }
 
@@ -212,6 +279,27 @@ test("registerUpload returns the saved draft on retry without checking the blob 
     "ready", "find", "transaction", "create",
     "ready", "find",
   ]);
+});
+
+test("registerUpload reads the saved draft after an upload-key write error", async () => {
+  const { versions, blobs } = setup(pdfHead);
+  const duplicatePath = Object.assign(new Error("duplicate key"), {
+    code: 11000,
+    keyPattern: { uploadPathname: 1 },
+  });
+  const transaction = async <T>(work: (tx: TransactionContext) => Promise<T>): Promise<T> => {
+    await work({ session });
+    throw duplicatePath;
+  };
+  const service = new CvService(versions, blobs, new MemoryExtractor(), transaction, () => now);
+
+  const version = await service.registerUpload({
+    pathname: "cv/resume.pdf",
+    filename: "resume.pdf",
+  });
+
+  expect(version).toBe(versions.rows[0]);
+  expect(versions.events).toEqual(["ready", "find", "create", "find"]);
 });
 
 test("registerUpload reads the saved draft after a duplicate-path write error", async () => {
@@ -638,4 +726,229 @@ test("in-progress and retry helpers follow the five-minute running window", () =
   expect(canRetryExtraction(stale, now)).toBe(true);
   expect(canRetryExtraction(fresh, now)).toBe(false);
   expect(canRetryExtraction(published, now)).toBe(false);
+});
+
+function readyDraft(id: string, status: CvVersion["status"] = "draft"): CvVersion {
+  return {
+    ...draft({ status: "succeeded", model: "extract-model", finishedAt: now.toISOString() }, status),
+    id,
+    data: sampleCv,
+  };
+}
+
+test("saveDraft stores validated CV data and drops blank list lines", async () => {
+  const { service, versions } = setup();
+  versions.rows.push(readyDraft("cv-1"));
+  const input = structuredClone(sampleCv);
+  input.profile.headline = "Staff Engineer";
+  input.experience[0]?.highlights.push("  ");
+
+  const saved = await service.saveDraft("cv-1", input);
+
+  expect(saved.data?.profile.headline).toBe("Staff Engineer");
+  expect(saved.data?.experience[0]?.highlights).toEqual(sampleCv.experience[0]?.highlights);
+  expect(versions.events).toEqual(["find-id", "save"]);
+});
+
+test("saveDraft fills a blank id and rejects a duplicate id before writing", async () => {
+  const filled = setup();
+  filled.versions.rows.push(readyDraft("cv-1"));
+  const blank = structuredClone(sampleCv);
+  const experience = blank.experience[0];
+  if (!experience) throw new Error("fixture");
+  experience.id = " ";
+  const saved = await filled.service.saveDraft("cv-1", blank);
+  expect(saved.data?.experience[0]?.id).not.toBe(" ");
+  expect((saved.data?.experience[0]?.id.length ?? 0) > 0).toBe(true);
+
+  const duplicated = setup();
+  duplicated.versions.rows.push(readyDraft("cv-1"));
+  const input = structuredClone(sampleCv);
+  const first = input.experience[0];
+  if (!first) throw new Error("fixture");
+  input.experience.push({ ...first });
+  const error = await rejection(() => duplicated.service.saveDraft("cv-1", input));
+  expect(error.message.startsWith("Duplicate CV entity key")).toBe(true);
+  expect(error.issues.length).toBe(1);
+  expect(duplicated.versions.events.includes("save")).toBe(false);
+});
+
+test("saveDraft rejects invalid data, a published version, and a running extraction", async () => {
+  const invalid = setup();
+  invalid.versions.rows.push(readyDraft("cv-1"));
+  const invalidError = await rejection(() => invalid.service.saveDraft("cv-1", { profile: {} }));
+  expect(invalidError.message).toBe("The CV data is invalid.");
+  expect(invalidError.issues.length > 0).toBe(true);
+  expect(invalid.versions.events).toEqual(["find-id"]);
+
+  const published = setup();
+  published.versions.rows.push(readyDraft("cv-1", "published"));
+  expect((await rejection(() => published.service.saveDraft("cv-1", sampleCv))).message).toBe(
+    "Only a draft can be edited.",
+  );
+
+  const running = setup();
+  running.versions.rows.push(
+    readyDraft("cv-1"),
+  );
+  const row = running.versions.rows[0];
+  if (!row) throw new Error("fixture");
+  row.extraction = { ...row.extraction, status: "running", startedAt: now.toISOString() };
+  expect((await rejection(() => running.service.saveDraft("cv-1", sampleCv))).message).toBe(
+    "Wait for extraction to finish before editing.",
+  );
+  expect(running.versions.events.includes("save")).toBe(false);
+});
+
+test("publish promotes one draft and archives the previous published version", async () => {
+  const seen: string[] = [];
+  const { service, versions } = setup(undefined, [
+    {
+      onCvPublished(version) {
+        seen.push(version.id);
+        return Promise.resolve();
+      },
+    },
+  ]);
+  versions.rows.push(readyDraft("cv-1"), readyDraft("cv-2"));
+
+  await service.publish("cv-1");
+  await service.publish("cv-2");
+
+  expect(versions.rows.find((row) => row.id === "cv-1")?.status).toBe("archived");
+  expect(versions.rows.find((row) => row.id === "cv-2")?.status).toBe("published");
+  expect(versions.rows.filter((row) => row.status === "published").length).toBe(1);
+  expect(seen).toEqual(["cv-1", "cv-2"]);
+  expect(versions.events).toEqual([
+    "find-id", "ready", "transaction", "publish",
+    "find-id", "ready", "transaction", "publish",
+  ]);
+});
+
+test("publish logs a listener failure and still returns the published version", async () => {
+  const logged: unknown[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args[0]);
+  };
+  const { service, versions } = setup(undefined, [
+    {
+      onCvPublished() {
+        return Promise.reject(new Error("index failed"));
+      },
+    },
+  ]);
+  versions.rows.push(readyDraft("cv-1"));
+
+  try {
+    const published = await service.publish("cv-1");
+    expect(published.status).toBe("published");
+    expect(logged[0] instanceof Error).toBe(true);
+  } finally {
+    console.error = original;
+  }
+});
+
+test("publish rejects a draft that is not ready and a missing version before writing", async () => {
+  const unfinished = setup();
+  const unfinishedDraft = draft();
+  unfinishedDraft.data = sampleCv;
+  unfinished.versions.rows.push(unfinishedDraft);
+  expect((await rejection(() => unfinished.service.publish("cv-1"))).message).toBe(
+    "Only a draft with extracted CV data can be published.",
+  );
+
+  const missing = setup();
+  expect((await rejection(() => missing.service.publish("missing"))).message).toBe(
+    'CV version "missing" was not found.',
+  );
+  expect(unfinished.versions.events.includes("transaction")).toBe(false);
+  expect(missing.versions.events).toEqual(["find-id"]);
+});
+
+test("duplicateAsDraft copies the PDF and data into a new succeeded draft", async () => {
+  const { service, versions } = setup();
+  versions.rows.push(readyDraft("cv-1", "published"));
+
+  const copy = await service.duplicateAsDraft("cv-1");
+
+  expect(copy.id).not.toBe("cv-1");
+  expect(copy.status).toBe("draft");
+  expect(copy.pdf).toEqual(versions.rows[0]?.pdf);
+  expect(copy.data).toEqual(sampleCv);
+  expect(copy.extraction.status).toBe("succeeded");
+  expect(copy.extraction.model).toBe("extract-model");
+  expect(versions.rows[0]?.status).toBe("published");
+  expect(versions.rows.filter((row) => row.pdf.pathname === "cv/resume.pdf").length).toBe(2);
+});
+
+test("duplicateAsDraft rejects a version that has no CV data", async () => {
+  const { service, versions } = setup();
+  versions.rows.push(draft({ status: "failed", error: "model down" }));
+
+  const error = await rejection(() => service.duplicateAsDraft("cv-1"));
+
+  expect(error.message).toBe("A version needs CV data before it can be duplicated.");
+  expect(versions.events.includes("copy")).toBe(false);
+});
+
+test("deleteDraft removes the PDF only when no other version references it", async () => {
+  const shared = setup();
+  shared.versions.rows.push(readyDraft("cv-1"), readyDraft("cv-2", "published"));
+  await shared.service.deleteDraft("cv-1");
+  expect(shared.versions.rows.map((row) => row.id)).toEqual(["cv-2"]);
+  expect(shared.blobs.deleted).toEqual([]);
+
+  const last = setup();
+  last.versions.rows.push(readyDraft("cv-1"));
+  await last.service.deleteDraft("cv-1");
+  expect(last.versions.rows).toEqual([]);
+  expect(last.blobs.deleted).toEqual(["cv/resume.pdf"]);
+});
+
+test("deleteDraft keeps the draft removed when the PDF deletion fails", async () => {
+  const logged: unknown[] = [];
+  const original = console.error;
+  console.error = (error: unknown) => {
+    logged.push(error);
+  };
+  const { service, versions, blobs } = setup();
+  versions.rows.push(readyDraft("cv-1"));
+  blobs.deleteError = new Error("blob store unavailable");
+
+  try {
+    await service.deleteDraft("cv-1");
+  } finally {
+    console.error = original;
+  }
+
+  expect(versions.rows).toEqual([]);
+  expect(logged[0]).toBe(blobs.deleteError);
+});
+
+test("deleteDraft rejects a published version before deleting the PDF", async () => {
+  const { service, versions, blobs } = setup();
+  versions.rows.push(readyDraft("cv-1", "published"));
+
+  const error = await rejection(() => service.deleteDraft("cv-1"));
+
+  expect(error.message).toBe("Only a draft can be deleted.");
+  expect(versions.rows.length).toBe(1);
+  expect(blobs.deleted).toEqual([]);
+});
+
+test("openPdf returns the stored stream and nothing for a missing version", async () => {
+  const { service, versions, blobs } = setup();
+  versions.rows.push(readyDraft("cv-1"));
+  const body = { stream: new ReadableStream<Uint8Array>(), size: 4 };
+  blobs.bodies.set("cv/resume.pdf", body);
+
+  const opened = await service.openPdf("cv-1");
+  expect(opened?.stream).toBe(body.stream);
+  expect(opened?.size).toBe(4);
+  expect(opened?.filename).toBe("resume.pdf");
+  expect(await service.openPdf("missing")).toBeNull();
+
+  blobs.bodies.set("cv/resume.pdf", null);
+  expect(await service.openPdf("cv-1")).toBeNull();
 });

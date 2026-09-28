@@ -1,20 +1,33 @@
 import type { TransactionContext } from "@/server/db/transaction";
+import { DuplicateCvEntityKeyError, ensureIds } from "@/server/cv/cv-ids";
+import { cvFieldIssues } from "@/server/cv/cv-issues";
+import { CvDataSchema } from "@/server/cv/cv-schema";
 import {
   CV_PDF_CONTENT_TYPE,
   CV_PDF_MAX_BYTES,
   type BlobStore,
 } from "@/server/domain/blob-store";
-import type {
-  CvExtractor,
-  CvPdf,
-  CvVersion,
-  CvVersionRepository,
+import {
+  CvVersionNotFoundError,
+  type CvData,
+  type CvExtractor,
+  type CvFieldIssue,
+  type CvPdf,
+  type CvPublishedListener,
+  type CvVersion,
+  type CvVersionRepository,
 } from "@/server/domain/cv";
 
 export class InvalidCvError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
+  readonly issues: readonly CvFieldIssue[];
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; issues?: readonly CvFieldIssue[] },
+  ) {
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "InvalidCvError";
+    this.issues = options?.issues ?? [];
   }
 }
 
@@ -67,7 +80,12 @@ export class CvService {
     private readonly extractor: CvExtractor,
     private readonly transaction: TransactionRunner,
     private readonly now: () => Date = () => new Date(),
+    private readonly publishListeners: readonly CvPublishedListener[] = [],
   ) {}
+
+  get(id: string): Promise<CvVersion | null> {
+    return this.versions.findById(id);
+  }
 
   list(limit: number): Promise<CvVersion[]> {
     if (!Number.isInteger(limit) || limit < 1) {
@@ -185,6 +203,117 @@ export class CvService {
     });
   }
 
+  async saveDraft(id: string, input: unknown): Promise<CvVersion> {
+    const version = await this.requireDraft(id, "Only a draft can be edited.");
+    if (isExtractionInProgress(version, this.now())) {
+      throw new InvalidCvError("Wait for extraction to finish before editing.");
+    }
+    const data = this.parseCvData(input);
+    const saved = await this.versions.saveData(version.id, data);
+    if (!saved) throw new InvalidCvError("The CV draft could not be saved.");
+    return saved;
+  }
+
+  async publish(id: string): Promise<CvVersion> {
+    const version = await this.requireDraft(id, "Only a draft with extracted CV data can be published.");
+    if (version.extraction.status !== "succeeded" || version.data === null) {
+      throw new InvalidCvError("Only a draft with extracted CV data can be published.");
+    }
+    await this.versions.ensureReady();
+    let published: CvVersion;
+    try {
+      published = await this.transaction((tx) => this.versions.publish(version.id, tx));
+    } catch (error) {
+      if (error instanceof CvVersionNotFoundError) {
+        throw new InvalidCvError(error.message, { cause: error });
+      }
+      if (error instanceof Error && error.message.includes("complete draft")) {
+        throw new InvalidCvError("Only a draft with extracted CV data can be published.", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    await this.notifyPublished(published);
+    return published;
+  }
+
+  async duplicateAsDraft(id: string): Promise<CvVersion> {
+    const source = await this.versions.findById(id);
+    if (!source) throw new InvalidCvError(`CV version "${id}" was not found.`);
+    if (source.data === null) {
+      throw new InvalidCvError("A version needs CV data before it can be duplicated.");
+    }
+    return this.versions.createCopy({
+      pdf: source.pdf,
+      data: this.parseCvData(source.data),
+      model: source.extraction.model,
+      finishedAt: this.now().toISOString(),
+    });
+  }
+
+  async deleteDraft(id: string): Promise<void> {
+    const version = await this.requireDraft(id, "Only a draft can be deleted.");
+    const deleted = await this.versions.deleteDraft(version.id);
+    if (!deleted) throw new InvalidCvError("The CV draft could not be deleted.");
+    const remaining = await this.versions.countByPdfPathname(version.pdf.pathname);
+    if (remaining > 0) return;
+    try {
+      await this.blobs.delete(version.pdf.pathname);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async openPdf(id: string): Promise<{
+    stream: ReadableStream<Uint8Array>;
+    size: number;
+    filename: string;
+  } | null> {
+    const version = await this.versions.findById(id);
+    if (!version) return null;
+    const body = await this.blobs.read(version.pdf.pathname);
+    if (!body) return null;
+    return { stream: body.stream, size: body.size, filename: version.pdf.filename };
+  }
+
+  private async requireDraft(id: string, statusMessage: string): Promise<CvVersion> {
+    const version = await this.versions.findById(id);
+    if (!version) throw new InvalidCvError(`CV version "${id}" was not found.`);
+    if (version.status !== "draft") throw new InvalidCvError(statusMessage);
+    return version;
+  }
+
+  private parseCvData(input: unknown): CvData {
+    const parsed = CvDataSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new InvalidCvError("The CV data is invalid.", {
+        issues: cvFieldIssues(parsed.error.issues),
+      });
+    }
+    try {
+      return ensureIds(compactCvData(parsed.data));
+    } catch (error) {
+      if (error instanceof DuplicateCvEntityKeyError) {
+        throw new InvalidCvError(error.message, {
+          cause: error,
+          issues: [{ path: error.entityKey, message: error.message }],
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async notifyPublished(version: CvVersion): Promise<void> {
+    for (const listener of this.publishListeners) {
+      try {
+        await listener.onCvPublished(version);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+  }
+
   private async readPdfHead(pathname: string) {
     try {
       const head = await this.blobs.head(pathname);
@@ -209,7 +338,7 @@ function mayHaveCommittedCvPath(error: unknown): boolean {
     candidate.code === 11000 &&
     typeof candidate.keyPattern === "object" &&
     candidate.keyPattern !== null &&
-    "pdf.pathname" in candidate.keyPattern
+    ("pdf.pathname" in candidate.keyPattern || "uploadPathname" in candidate.keyPattern)
   ) {
     return true;
   }
@@ -248,6 +377,48 @@ function isStaleRunning(version: CvVersion, now: Date): boolean {
   const started = Date.parse(startedAt);
   if (Number.isNaN(started)) return true;
   return now.getTime() - started >= STALE_EXTRACTION_MS;
+}
+
+function compactLines(items: readonly string[]): string[] {
+  return items.map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+function compactCvData(data: CvData): CvData {
+  return {
+    profile: {
+      fullName: data.profile.fullName,
+      headline: data.profile.headline,
+      location: data.profile.location,
+      summary: data.profile.summary,
+      email: data.profile.email,
+      phone: data.profile.phone,
+      links: data.profile.links.map((link) => ({ label: link.label, url: link.url })),
+    },
+    experience: data.experience.map((item) => ({
+      ...item,
+      highlights: compactLines(item.highlights),
+      technologies: compactLines(item.technologies),
+    })),
+    projects: data.projects.map((item) => ({
+      ...item,
+      highlights: compactLines(item.highlights),
+      technologies: compactLines(item.technologies),
+    })),
+    education: data.education.map((item) => ({
+      ...item,
+      details: compactLines(item.details),
+    })),
+    skills: data.skills.map((item) => ({
+      ...item,
+      items: compactLines(item.items),
+    })),
+    certifications: data.certifications.map((item) => ({ ...item })),
+    languages: data.languages.map((item) => ({ ...item })),
+    otherSections: data.otherSections.map((item) => ({
+      ...item,
+      items: compactLines(item.items),
+    })),
+  };
 }
 
 function extractionErrorMessage(error: unknown): string {

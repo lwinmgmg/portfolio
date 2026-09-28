@@ -53,4 +53,29 @@ export function runExtraction(versionId: string): Promise<void> {
   return cvService.runExtraction(versionId);
 }
 
+export const getCvVersion = cache(async (id: string) => {
+  await connection();
+  return cvService.get(id);
+});
+
+export function saveCvDraft(id: string, input: unknown) {
+  return cvService.saveDraft(id, input);
+}
+
+export function publishCv(id: string) {
+  return cvService.publish(id);
+}
+
+export function duplicateCvAsDraft(id: string) {
+  return cvService.duplicateAsDraft(id);
+}
+
+export function deleteCvDraft(id: string) {
+  return cvService.deleteDraft(id);
+}
+
+export function openCvPdf(id: string) {
+  return cvService.openPdf(id);
+}
+
 export { InvalidCvError } from "@/server/services/cv-service";
