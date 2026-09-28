@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 1.8 (CV download) on `master`.
+Last updated after Phase 2.1 (RAG domain, config and storage) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 1.8. Public CV download. |
+| (next) | Phase 2.1. RAG domain types, retrieval config, RAG repositories. |
+| `312381e` | Phase 1.8. Public CV download. |
 | `8dd619d` | Phase 1.7a. Project detail pages; `details` on CV projects. |
 | `b7e2c3f` | Removed the scaffold project slice from `1676201`. |
 | `5fae480` | Phase 1.7. Public CV page. |
@@ -42,7 +43,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2 has not been started.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.2 is next.
 
 ## Environment
 
@@ -142,6 +143,17 @@ Do not switch model slugs. Defaults:
 - `ETag` is `"<versionId>"`. Every publish, including a republished copy, has a new id, so the tag changes. `Cache-Control: public, max-age=0, s-maxage=300, stale-while-revalidate=86400` is on both the 200 and the 304, so a new publish reaches visitors within 5 minutes.
 - `If-None-Match` uses weak comparison (`ifNoneMatchIncludes`, `*` matches). A 304 still opens the blob once and then cancels the stream. That keeps the service shape the plan asks for. If blob reads become a cost, add a metadata-only lookup before opening.
 - Verified with curl against the dev server and the live published CV: 200 with `%PDF-` body and `LWIN-MAUNG-MAUNG-CV.pdf`, 304 for strong and weak tags, 200 for a different tag. The 404 path was covered by unit tests only, because a CV is published. The browser save dialog was not checked.
+
+## RAG domain and storage (Phase 2.1)
+
+- Types and repository interfaces are in `server/domain/rag.ts`. `RetrievalConfig`, `RetrievalTrace` and `TraceStage` are declared there too, so the trace repository exists before Phase 2.7. `TraceStage.startedAt` is milliseconds from the trace start (`performance.now()` offsets), not a date.
+- `server/rag/pipeline/retrieval-config.ts`: strict zod `RetrievalConfigSchema` (`satisfies z.ZodType<RetrievalConfig>`, so the schema and the domain type cannot drift), frozen `DEFAULT_RETRIEVAL_CONFIG`, `RETRIEVAL_PRESETS` and `isRetrievalPresetName`. Presets change only `rewrite`, `search` and `rerank`: `vector-only`, `lexical-only`, `hybrid` and `hybrid-rerank` use `rewrite: "none"`; `hybrid-rerank-rewrite` equals the default; `full` is multi + hybrid + rerank.
+- Vector storage decision (owner discussion): embeddings live in Mongo `rag_chunks` as plain number arrays, searched in memory (2.4). Atlas Vector Search stays the optional 2.13 adapter. Its search index updates asynchronously, so a freshly activated index can briefly return incomplete results there.
+- `rag_indexes`: `{ createdAt: -1 }` and a partial unique `{ active: 1 }` where `active: true`. `create` needs `sourceId`, so the 2.3 builder must load the corpus **before** creating the index (the plan lists create first). `markReady`/`markFailed` apply only while `state = "building"` and return null otherwise. `activate(id, tx)` checks the target in the session, throws `RagIndexNotFoundError` / `RagIndexStateError` before any write, then deactivates the others and activates the target only if `ready`. Call `ensureReady()` before the transaction. `delete` removes only an inactive index (the 2.3 service check is a second guard).
+- `rag_chunks`: `indexId` is stored as an ObjectId, index `{ indexId: 1, ordinal: 1 }`. `insertMany` throws on a malformed index id and returns 0 for an empty batch. `listByIndex` sorts by `ordinal`.
+- `rag_traces`: `_id` is the recorder's string trace id (so a chat message can reference it before the save). `{ createdAt: -1 }` plus a TTL index on `{ createdAt: 1 }`, 30 days (`RAG_TRACE_TTL_SECONDS`).
+- `parseInstant` moved to `server/repositories/mongo-dates.ts` and is shared by the CV and RAG repositories.
+- Repository tests are in `server/repositories/rag-repositories.test.ts` with a mocked collection, like the CV repository test. The collections were not created against the real database yet; nothing uses them until 2.3.
 
 ## Scaffold removal
 

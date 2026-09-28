@@ -486,6 +486,8 @@ QUERY (per chat turn)
 
 ## Phase 2.1: RAG domain, config and storage
 
+**Status:** Done
+
 **Files:** `server/domain/rag.ts`, `server/rag/pipeline/retrieval-config.ts`, `server/repositories/rag-index-repository.ts`, `rag-chunk-repository.ts`, `rag-trace-repository.ts`, tests.
 
 **Steps**

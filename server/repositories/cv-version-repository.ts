@@ -15,6 +15,7 @@ import {
   type CvVersionRepository,
 } from "@/server/domain/cv";
 import { migrateLegacyUploadKeys } from "@/server/repositories/cv-version-migration";
+import { parseInstant } from "@/server/repositories/mongo-dates";
 import { MongoRepository } from "@/server/repositories/mongo-repository";
 
 type CvVersionDocument = {
@@ -45,14 +46,6 @@ type CvVersionDocument = {
 
 // Only a settled extraction may be overwritten by an admin edit.
 const EDITABLE_EXTRACTION_STATUSES: CvVersion["extraction"]["status"][] = ["succeeded", "failed"];
-
-function parseInstant(value: string): Date {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`Invalid ISO date "${value}".`);
-  }
-  return date;
-}
 
 function toIso(value: Date | null): string | null {
   return value === null ? null : value.toISOString();
