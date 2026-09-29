@@ -74,7 +74,7 @@ function mood(state: ChatState, flags: { typing?: boolean; greeting?: boolean } 
 
 test("names the robot and lists every mood once", () => {
   expect(ROBOT_NAME).toBe("Bit");
-  expect(new Set(ROBOT_MOODS).size).toBe(8);
+  expect(new Set(ROBOT_MOODS).size).toBe(11);
 });
 
 test("an empty chat is idle, listening while the visitor types", () => {
@@ -94,6 +94,46 @@ test("thinks until answer text arrives, then talks", () => {
 
 test("thinks when streaming before the pending answer exists", () => {
   expect(mood(chat({ streaming: true, entries: [question] }))).toBe("thinking");
+});
+
+function running(name: AnswerStep["name"]): AnswerStep {
+  return { name, status: "running", startedAt: 0, durationMs: null, detail: null };
+}
+
+function working(...steps: AnswerStep[]): ChatState {
+  return chat({ streaming: true, entries: [question, answer({ status: "streaming", text: "", steps })] });
+}
+
+test("acts out the step in progress before the answer text", () => {
+  expect(mood(working(running("route")))).toBe("thinking");
+  expect(mood(working(running("rewrite")))).toBe("thinking");
+  for (const name of ["embed-queries", "vector-search", "lexical-search", "fuse"] as const) {
+    expect(mood(working(running(name)))).toBe("searching");
+  }
+  expect(mood(working(running("rerank")))).toBe("reading");
+  expect(mood(working(running("filter")))).toBe("reading");
+  expect(mood(working(running("reasoning")))).toBe("thinking");
+  expect(mood(working(running("generate")))).toBe("thinking");
+  expect(mood(working(running("tool")))).toBe("writing");
+});
+
+test("follows the latest running step and thinks between steps", () => {
+  expect(mood(working(rewriteStep("cv"), running("vector-search"), running("lexical-search")))).toBe(
+    "searching",
+  );
+  expect(mood(working(rewriteStep("cv")))).toBe("thinking");
+});
+
+test("answer text wins over a step still running", () => {
+  const talking = chat({
+    streaming: true,
+    entries: [question, answer({ status: "streaming", text: "Lwin", steps: [running("tool")] })],
+  });
+  expect(mood(talking)).toBe("talking");
+});
+
+test("a step in progress does not act once the turn is over", () => {
+  expect(mood(settled(answer({ steps: [running("rerank")] })))).toBe("idle");
 });
 
 test("thinking and talking win over typing", () => {

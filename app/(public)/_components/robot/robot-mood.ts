@@ -1,4 +1,5 @@
-import type { AssistantEntry, ChatState } from "@/app/(public)/_components/chat/chat-state";
+import type { AnswerStep, AssistantEntry, ChatState } from "@/app/(public)/_components/chat/chat-state";
+import type { ChatStepName } from "@/server/domain/chat";
 import type { QueryScope } from "@/server/domain/rag";
 
 // The owner may rename the robot; every visible mention reads this.
@@ -9,6 +10,9 @@ export type RobotMood =
   | "waving"
   | "listening"
   | "thinking"
+  | "searching"
+  | "reading"
+  | "writing"
   | "talking"
   | "puzzled"
   | "happy"
@@ -19,6 +23,9 @@ export const ROBOT_MOODS: readonly RobotMood[] = [
   "waving",
   "listening",
   "thinking",
+  "searching",
+  "reading",
+  "writing",
   "talking",
   "puzzled",
   "happy",
@@ -39,8 +46,8 @@ export function robotMood({ chat, typing, greeting }: RobotMoodInput): RobotMood
   if (greeting) return "waving";
   const answer = lastAnswer(chat);
   if (chat.streaming) {
-    // A turn that has not produced its pending entry yet is still thinking.
-    return answer?.status === "streaming" && answer.text ? "talking" : "thinking";
+    if (answer?.status !== "streaming") return "thinking";
+    return answer.text ? "talking" : workMood(answer.steps);
   }
   if (typing) return "listening";
   if (chat.notice !== null) return "sad";
@@ -51,6 +58,27 @@ export function robotMood({ chat, typing, greeting }: RobotMoodInput): RobotMood
   if (lastScope(answer) === "off_topic") return "puzzled";
   return "idle";
 }
+
+// What the robot does before the first answer token: the step in progress decides. Between two
+// steps, and before the first one, nothing runs and it thinks. Parallel searches share a mood.
+function workMood(steps: readonly AnswerStep[]): RobotMood {
+  const running = steps.findLast((step) => step.status === "running");
+  return running ? STEP_MOODS[running.name] : "thinking";
+}
+
+const STEP_MOODS: Record<ChatStepName, RobotMood> = {
+  route: "thinking",
+  rewrite: "thinking",
+  "embed-queries": "searching",
+  "vector-search": "searching",
+  "lexical-search": "searching",
+  fuse: "searching",
+  rerank: "reading",
+  filter: "reading",
+  reasoning: "thinking",
+  generate: "thinking",
+  tool: "writing",
+};
 
 // The route step's scope when it short-circuited, else the rewriter's. Null when neither step
 // ran or reported one, as for an entry stored before steps existed.

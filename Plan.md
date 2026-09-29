@@ -1955,6 +1955,36 @@ bubble closes by itself after 6 s, because the same text is on the page.
 
 The owner decides after 5.4 whether this helps or distracts. It is not planned in detail until then.
 
+## Phase 5.7: Robot acts out the steps
+
+**Files:** `app/(public)/_components/robot/robot-mood.ts` (+ test), `robot.tsx`, `robot.module.css`.
+
+Until now the robot was `thinking` for the whole wait before the first answer token. It now shows what the
+chat is doing, from the step events (`ChatStep`) that already stream before the answer.
+
+**Steps**
+1. Three new moods, so `ROBOT_MOODS` has eleven: `searching` (magnifier sweeps beside the head, eyes look around), `reading` (a page in front of the body, eyes scan down and across), `writing` (an envelope in front of the body, eyes look down). The bulb pulses in all three, like `thinking`.
+2. While streaming with no answer text, the mood is the one of the latest `running` step:
+
+   | Step | Mood |
+   |---|---|
+   | `route`, `rewrite`, `reasoning`, `generate` | `thinking` |
+   | `embed-queries`, `vector-search`, `lexical-search`, `fuse` | `searching` |
+   | `rerank`, `filter` | `reading` |
+   | `tool` | `writing` |
+
+   With no step running (before the first, or between two) it is `thinking`. Answer text still wins (`talking`), and nothing changes once the turn is over.
+3. Still poses for the three moods are the reduced-motion view. The props fade in with the same 150 ms opacity cross-fade; only `transform` and `opacity` animate.
+4. Tests: every step name, the latest running step, parallel searches, between steps, text over a running step, a settled entry.
+
+**Status:** Built. The look and the browser checks wait for the owner.
+
+**Done when**
+- The standard gate (§0.2) passes.
+- `/admin/robot` shows the three new moods, recognisable at 64 px, in light and dark mode and with reduced motion.
+- In a real turn the launcher and the header robot search, read, then talk. An email request shows writing.
+- Steps that finish in a few milliseconds (`fuse`, `filter`) flash by; a minimum dwell time is not built. Add one only if the owner finds the switching too busy.
+
 ---
 
 ## 3. Owner checkpoints

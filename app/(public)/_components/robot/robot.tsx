@@ -68,6 +68,20 @@ export function Robot({ mood, className, theme, still = false, ref }: RobotProps
             <path className={`${styles.stroke} ${styles.mouthSad}`} d="M45 53 Q50 49 55 53" />
           </g>
         </g>
+        {/* Props for the work moods: a magnifier (searching), a page (reading), an envelope
+            (writing). The page and the envelope share the spot in front of the body. */}
+        <g className={`${styles.prop} ${styles.magnifier}`}>
+          <line className={styles.line} x1="84.5" y1="69" x2="91" y2="76" />
+          <circle className={styles.lens} cx="80" cy="64" r="6.5" />
+        </g>
+        <g className={`${styles.prop} ${styles.page}`}>
+          <rect className={styles.paper} x="38" y="68" width="24" height="17" rx="2.5" />
+          <path className={styles.stroke} d="M42 73 L58 73 M42 77 L58 77 M42 81 L53 81" />
+        </g>
+        <g className={`${styles.prop} ${styles.envelope}`}>
+          <rect className={styles.paper} x="38" y="68" width="24" height="17" rx="2.5" />
+          <path className={styles.stroke} d="M39.5 70 L50 78 L60.5 70" />
+        </g>
         <g className={styles.question}>
           <text x="84" y="22" className={styles.questionMark}>
             ?
