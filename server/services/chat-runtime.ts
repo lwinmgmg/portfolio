@@ -1,5 +1,8 @@
 import "server-only";
 
+import { cache } from "react";
+import { connection } from "next/server";
+
 import type { ChatEvent } from "@/server/domain/chat";
 import { getLlm } from "@/server/llm/llm-runtime";
 import { getRag, isRagConfigured } from "@/server/rag/rag-runtime";
@@ -36,6 +39,19 @@ function getChat(): ChatService {
 export function isChatConfigured(): boolean {
   return isRagConfigured();
 }
+
+// Whether the public page shows the chat: configured, with an active index to answer from.
+// A failed lookup hides the chat instead of breaking the CV page.
+export const isChatAvailable = cache(async (): Promise<boolean> => {
+  await connection();
+  if (!isChatConfigured()) return false;
+  try {
+    return (await indexes.findActive()) !== null;
+  } catch (error) {
+    console.error("Could not check the active RAG index.", error);
+    return false;
+  }
+});
 
 export function replyToChat(request: ChatReplyRequest): AsyncIterable<ChatEvent> {
   return getChat().reply(request);

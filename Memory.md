@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.9 (answer generation and chat API) on `master`.
+Last updated after Phase 2.10 (chat UI) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.9. `ChatService`, answer prompt, citations, conversations, `POST /api/public/chat`. |
+| (next) | Phase 2.10. Chat widget on `/`, `streamChat`, `postPublicStream`. |
+| `a0e6c32` | Phase 2.9. `ChatService`, answer prompt, citations, conversations, `POST /api/public/chat`. |
 | `ddafbbb` | Phase 2.8. Golden set, retrieval metrics, `RetrievalEvaluator`, `scripts/rag-eval.ts`. |
 | `e91daff` | Phase 2.7. `TraceRecorder`, `RetrievalPipeline`, trace reader, `/admin/rag/playground`. |
 | `800eff7` | Phase 2.6. `reciprocalRankFusion`, `ApiReranker`, `PassthroughReranker`. |
@@ -52,7 +53,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8 and 2.9 are built but not marked Done: both live checks need an active RAG index, and the database has none. The owner asked for 2.9 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, then Phase 2.10.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, check the chat in a browser (375 px, keyboard only, source chips), then Phase 2.11.
 
 ## Environment
 
@@ -266,6 +267,18 @@ Do not switch model slugs. Defaults:
 - `server/services/chat-runtime.ts` builds `ChatService` lazily with `getRag().pipeline` (`getRag` is now exported) and its own repository instances. `isChatConfigured()` = `isRagConfigured()`.
 - The answer stream has no deadline of its own beyond the client's 60 s per attempt. A slow model can reach the route's 60 s `maxDuration` before a stopped answer is saved. The embedding call in retrieval still has no deadline (see 2.7).
 - Verified live with curl against the dev server: a session from `POST /api/public/session`, then 400 `invalid_request` for a blank message, then a 200 NDJSON stream with a rotated `public_session` cookie that ended in `{"type":"error","code":"unavailable"}`. The database has a published CV and **no RAG index**, and no conversation row was created. The `meta` → `delta` → `sources` → `done` path is covered by unit tests only. No answer-model call has been made.
+
+## Chat UI (Phase 2.10)
+
+- `client/api/public-http.ts`: `sessionFetch(path, request)` now takes `{ method: "GET" }` or `{ method: "POST", json }`. The body is a string so the 401 → issue → retry path can resend it. `postPublicStream` returns once headers arrive, which also releases the session lock. It takes no `AbortSignal`, for the same reason as `sessionFetch`: stop by cancelling the body after the headers. `errorKindFor` is exported.
+- `client/api/ndjson.ts`: `readNdjson(body, signal)` buffers split lines and split UTF-8, skips blank and invalid lines, and cancels the body on abort or early exit. `client/api/chat.ts`: `streamChat(request, onEvent, { signal })` → `"complete" | "stopped" | "interrupted"`, throws `PublicApiError` (429 `limited`, 503 `unavailable`, other statuses `http`). `parseChatEvent` validates events by hand (no zod in the client bundle) and skips unknown types. `isChatSource` requires anchors to start with `#`, because they become hrefs. The built chunk was checked: no zod or Mongo code.
+- Widget files are in `app/(public)/_components/chat/`. Pure and tested: `chat-text.ts` (paragraphs, `-`/`*` lists, `[S#]` and grouped markers as citation parts, hidden partial marker while streaming, chip numbering, section labels), `chat-state.ts` (reducer and `CHAT_NOTICES`), `chat-storage.ts`, `chat-suggestions.ts`. Components: `chat-widget.tsx` (button + `<dialog>`), `chat-messages.tsx` (empty state, `role="log"` with `aria-busy` while streaming, follows the bottom only while the reader is there), `chat-answer.tsx`, `chat-composer.tsx`, and the `use-chat.ts` hook.
+- The panel is a native modal `<dialog>` opened with `showModal()`. That gives the inert page, `Esc`, and the top layer. `onClose` focuses the button with `preventScroll`. Below `md` (48rem) a source link closes the panel first, so the browser's fragment scroll lands on the CV item (items already have `scroll-mt-12`). At `md` and up the panel stays open and the page scrolls behind it. On narrow screens the input is not auto-focused, so the keyboard does not cover the suggestions.
+- Answers are rendered as React text only. No `dangerouslySetInnerHTML`, and markdown such as `**bold**` shows as typed.
+- `sessionStorage`: `cv-chat:conversationId` plus `cv-chat:messages` (the settled transcript, validated on read). It is read on the first open and written by an effect only while no answer is streaming. "New chat" clears both. Every access is guarded.
+- Entry ids use a time-prefixed counter, not `crypto.randomUUID`, which needs a secure context (a phone on the LAN over http).
+- `isChatAvailable()` (`chat-runtime.ts`, `cache` + `connection()`) is true when RAG is configured and `findActive()` returns an index. A failed lookup is logged and hides the widget. The page calls it only when a CV is published.
+- Verified: unit tests, lint, types, build, and static markup of the widget and a sample answer (escaped HTML, chips, source links, the unknown `[S7]` dropped). Against the dev server, `/` renders the CV **without** the widget, and `POST /api/public/chat` still returns `unavailable` because there is no active index. No browser was available here, so nothing was checked in one: no streaming, 375 px layout, keyboard-only use, dark mode, or anchor scrolling.
 
 ## Scaffold removal
 

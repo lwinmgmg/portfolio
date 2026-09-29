@@ -43,11 +43,26 @@ async function withSessionLock<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+type SessionRequest = { method: "GET" } | { method: "POST"; json: string };
+
+function send(path: string, request: SessionRequest): Promise<Response> {
+  const init: RequestInit = { cache: "no-store", credentials: "same-origin" };
+  if (request.method === "GET") return fetch(path, init);
+  return fetch(path, {
+    ...init,
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: request.json,
+  });
+}
+
 // Deliberately takes no AbortSignal: aborting after the server rotated the key
 // would drop the replacement cookie and force a fresh session issuance.
-function sessionFetch(path: string): Promise<Response> {
+// The lock is released once the response headers (and the rotated cookie) arrive,
+// so a streamed body does not block other requests.
+function sessionFetch(path: string, request: SessionRequest = { method: "GET" }): Promise<Response> {
   return withSessionLock(async () => {
-    const first = await fetch(path, { cache: "no-store", credentials: "same-origin" });
+    const first = await send(path, request);
     if (first.status !== 401) return first;
 
     const issued = await fetch(SESSION_PATH, {
@@ -56,11 +71,12 @@ function sessionFetch(path: string): Promise<Response> {
       credentials: "same-origin",
     });
     if (!issued.ok) return issued;
-    return fetch(path, { cache: "no-store", credentials: "same-origin" });
+    // The body is a string, so it can be sent again.
+    return send(path, request);
   });
 }
 
-function errorKindFor(status: number): PublicApiErrorKind {
+export function errorKindFor(status: number): PublicApiErrorKind {
   switch (status) {
     case 404:
       return "not_found";
@@ -83,4 +99,10 @@ export async function getPublicJson<T>(
   const body: unknown = await response.json().catch(() => undefined);
   if (!parse(body)) throw new PublicApiError("invalid_response", response.status);
   return body;
+}
+
+// Returns the response as soon as its headers arrive; the caller reads (or cancels) the body.
+// To stop early, cancel the body rather than aborting the fetch, for the reason on sessionFetch.
+export function postPublicStream(path: string, body: string): Promise<Response> {
+  return sessionFetch(path, { method: "POST", json: body });
 }

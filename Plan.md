@@ -858,6 +858,8 @@ QUERY (per chat turn)
 
 ## Phase 2.10: Chat UI
 
+**Status:** Built, not Done. The live checks are pending: the database has no active RAG index, so the page hides the widget. No browser check at 375 px or with keyboard only.
+
 **Files:** `client/api/public-http.ts` (extend), `client/api/chat.ts`, `app/(public)/_components/chat/*`, `app/(public)/page.tsx`.
 
 **Steps**
@@ -871,6 +873,16 @@ QUERY (per chat turn)
    - Keep `conversationId` in `sessionStorage` under `cv-chat:conversationId`, wrapped in try/catch, plus a "New chat" button that clears it.
    - Error and limit messages are inline and human-readable.
 4. Render the widget from `app/(public)/page.tsx` only when a CV is published and an active index exists.
+
+**As built**
+- `postPublicStream` shares `sessionFetch`, which now also sends a JSON string body (resent after 401 → issue). Like `sessionFetch`, it takes no `AbortSignal`: Stop cancels the response body after the headers (and the rotated cookie) arrived, which also ends the request.
+- `streamChat(request, onEvent, { signal })` returns `"complete" | "stopped" | "interrupted"` and throws `PublicApiError` for a refused request. The incremental reader is `client/api/ndjson.ts`. Unknown event types and invalid lines are skipped. A source `anchor` must start with `#`.
+- The panel is a native modal `<dialog>` (`showModal()`): the page behind is inert, `Esc` closes it, and `onClose` returns focus to the button. Tab moves between the panel and the browser UI rather than wrapping inside the panel. A click on the backdrop also closes it.
+- The textarea is `readOnly` + `aria-disabled` while streaming, not `disabled`, so keyboard focus stays in it.
+- Besides `cv-chat:conversationId`, the transcript is kept in `sessionStorage` under `cv-chat:messages`, so a reload shows the turns the server still uses as history. Storage is read on first open, not during render. A `meta` event with a different conversation id (new session or expired conversation) drops the older turns from view.
+- Chips are numbered 1..n in order of first use, matching the source list. Ids the `sources` event does not list get no chip. A marker still streaming in (`[S1,`) is hidden.
+- Suggestions are in the second person, like the button: "What is your role at <company>?", "How have you used <skill> and <skill>?", "Tell me about the <project> project.", with general fallbacks.
+- `isChatAvailable()` in `server/services/chat-runtime.ts` (active index lookup, errors hide the widget) is the page's check.
 
 **Done when**
 - A visitor can hold a multi-turn conversation, follow-up questions resolve correctly ("what about before that?"), and source chips scroll to the right CV item.

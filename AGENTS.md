@@ -55,9 +55,10 @@ evals/                        Golden set (cv-retrieval.golden.json), usage READM
 app/                          Routes. Keep them thin: parse input, call a service or runtime, render.
   layout.tsx, globals.css     Root layout, Tailwind 4.
   (public)/                   Visitor site.
-    page.tsx                  Published CV at /.
+    page.tsx                  Published CV at /, plus the chat widget when an index is active.
     projects/[projectId]/     Project detail pages.
     _components/cv/           CV section components. Pure helpers: cv-format, cv-sections, cv-seo.
+    _components/chat/         Chat widget (<dialog> panel, use-chat hook). Pure: chat-text, chat-state, chat-storage, chat-suggestions.
   admin/
     login/                    Login page, form, action, state.
     (panel)/                  Admin shell (nav layout). Pages call requireAdmin().
@@ -77,7 +78,8 @@ app/                          Routes. Keep them thin: parse input, call a servic
   cv/download/                Public CV PDF download.
 
 client/                       Browser-side data access.
-  api/public-http.ts          getPublicJson, the base for public fetchers.
+  api/public-http.ts          getPublicJson and postPublicStream, the base for public fetchers (session lock, 401 -> issue -> retry).
+  api/chat.ts                 streamChat: NDJSON chat events (reader in api/ndjson.ts).
   query/                      TanStack Query client and provider.
 
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.
@@ -128,6 +130,7 @@ server/                       All server logic. Layered: domain -> repositories/
 | A public JSON API | `app/api/public/**/route.ts` with `withPublicSession` and `publicJson` | `app/api/public/session/route.ts` |
 | A public streaming API | Service returns an `AsyncIterable` of events; route wraps it in `ndjsonStream` and `after(() => finished)` | `app/api/public/chat/route.ts` |
 | A client fetcher | `client/api/*` on `getPublicJson`, query options in `client/query/*` | `client/api/public-http.ts` |
+| A client stream reader | `client/api/*` on `postPublicStream`; stop by cancelling the body, not by aborting the fetch | `client/api/chat.ts` |
 | A script that uses the DB | `scripts/`, run with `bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local`; no `next/*`; logic in pure modules | `scripts/rag-eval.ts` (`eval:rag` in package.json) |
 
 <!-- BEGIN:nextjs-agent-rules -->
