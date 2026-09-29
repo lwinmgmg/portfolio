@@ -67,6 +67,7 @@ export interface RerankClient {
     query: string;
     documents: string[];
     topN: number;
+    signal?: AbortSignal;
   }): Promise<RerankResult[]>;
 }
 

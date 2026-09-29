@@ -160,8 +160,9 @@ export class OpenRouterClient implements ChatClient, EmbeddingClient, RerankClie
     query: string;
     documents: string[];
     topN: number;
+    signal?: AbortSignal;
   }): Promise<RerankResult[]> {
-    const payload = await this.execute(undefined, async (signal) => {
+    const payload = await this.execute(input.signal, async (signal) => {
       const response = await this.fetchOnce(
         "/rerank",
         {

@@ -639,6 +639,32 @@ test("does not retry an aborted request", async () => {
   expect(delays).toEqual([]);
 });
 
+test("does not retry an aborted rerank request", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const fetch: OpenRouterFetch = async (_input, init) => {
+    calls += 1;
+    controller.abort();
+    if (!init?.signal) throw new Error("missing signal");
+    throw new DOMException("The operation was aborted", "AbortError");
+  };
+  const { client, delays } = createClient(fetch);
+
+  const error = await capture(() =>
+    client.rerank({
+      model: "rerank/model",
+      query: "capital",
+      documents: ["Paris"],
+      topN: 1,
+      signal: controller.signal,
+    }),
+  );
+
+  expect(error.message).toBe("OpenRouter request was aborted");
+  expect(calls).toBe(1);
+  expect(delays).toEqual([]);
+});
+
 test("retries a timed out request", async () => {
   let calls = 0;
   const fetch: OpenRouterFetch = (_input, init) => {

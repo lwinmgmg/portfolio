@@ -42,10 +42,11 @@ function envWith(models: Record<string, string>) {
 test("the composed pipeline builds and activates the default index from the published CV", async () => {
   const requests: ChatRequest[] = [];
   const embeddedModels: string[] = [];
+  const rerankModels: string[] = [];
   const indexes = new MemoryRagIndexes();
   const chunks = new MemoryRagChunks();
   const rag = createRag(
-    envWith({ EMBEDDING_MODEL: "embed-x", LLM_UTILITY_MODEL: "utility-x" }),
+    envWith({ EMBEDDING_MODEL: "embed-x", LLM_UTILITY_MODEL: "utility-x", RERANK_MODEL: "rerank-x" }),
     {
       llm: {
         complete: async (request) => {
@@ -58,6 +59,10 @@ test("the composed pipeline builds and activates the default index from the publ
         embed: async ({ model, texts }) => {
           embeddedModels.push(model);
           return { vectors: texts.map(() => [1, 1]), usage: null };
+        },
+        rerank: async ({ model, documents }) => {
+          rerankModels.push(model);
+          return documents.map((_document, index) => ({ index, score: 1 - index / 10 }));
         },
       },
       cvVersions: { findPublished: async () => published },
@@ -102,4 +107,13 @@ test("the composed pipeline builds and activates the default index from the publ
   expect(rewrite.queries).toEqual(["Skills?"]);
   expect(requests.at(-1)?.model).toBe("utility-x");
   expect(requests.at(-1)?.jsonSchema?.name).toBe("query_rewrite");
+
+  const reranked = await rag.reranker.rerank(
+    "Skills?",
+    stored.slice(0, 2).map((chunk) => ({ chunkId: chunk.id, text: chunk.indexText })),
+    2,
+  );
+  expect(rerankModels).toEqual(["rerank-x"]);
+  expect(reranked.fallback).toBe(false);
+  expect(reranked.hits.map((hit) => hit.chunkId)).toEqual(stored.slice(0, 2).map((chunk) => chunk.id));
 });

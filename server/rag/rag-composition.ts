@@ -1,5 +1,5 @@
 import type { CvVersionRepository } from "@/server/domain/cv";
-import type { ChatClient, EmbeddingClient } from "@/server/domain/llm";
+import type { ChatClient, EmbeddingClient, RerankClient } from "@/server/domain/llm";
 import type {
   Chunker,
   ChunkerKind,
@@ -8,6 +8,7 @@ import type {
   QueryRewriter,
   RagChunkRepository,
   RagIndexRepository,
+  Reranker,
   Retriever,
 } from "@/server/domain/rag";
 import type { LlmEnv } from "@/server/llm/llm-env";
@@ -18,6 +19,7 @@ import { CvCorpusSource } from "@/server/rag/corpus/cv-corpus-source";
 import { IndexBuilder } from "@/server/rag/indexing/index-builder";
 import { defaultIndexConfig } from "@/server/rag/indexing/index-config";
 import { LlmQueryRewriter } from "@/server/rag/query/llm-query-rewriter";
+import { ApiReranker } from "@/server/rag/rerank/api-reranker";
 import {
   InMemoryRetriever,
   sharedSearchIndexCache,
@@ -28,7 +30,7 @@ import { RagIndexService, type TransactionRunner } from "@/server/services/rag-i
 // Everything with I/O is passed in, so this module stays free of `server-only` and `next/*`
 // and scripts can compose the same pipeline as the app.
 export type RagDependencies = {
-  llm: ChatClient & EmbeddingClient;
+  llm: ChatClient & EmbeddingClient & RerankClient;
   cvVersions: Pick<CvVersionRepository, "findPublished">;
   indexes: RagIndexRepository;
   chunks: RagChunkRepository;
@@ -46,6 +48,7 @@ export type Rag = {
   indexService: RagIndexService;
   retriever: Retriever;
   queryRewriter: QueryRewriter;
+  reranker: Reranker;
 };
 
 // Composition root for the RAG components.
@@ -79,6 +82,7 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     cache: deps.searchCache ?? sharedSearchIndexCache(),
   });
   const queryRewriter = new LlmQueryRewriter(deps.llm, env.LLM_UTILITY_MODEL);
+  const reranker = new ApiReranker(deps.llm, env.RERANK_MODEL);
   return {
     corpus,
     chunkers,
@@ -87,5 +91,6 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     indexService,
     retriever,
     queryRewriter,
+    reranker,
   };
 }

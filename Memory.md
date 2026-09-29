@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.5 (query rewriting) on `master`.
+Last updated after Phase 2.6 (fusion and reranking) on `master`.
 
 ## How to work
 
@@ -25,7 +25,9 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.5. `LlmQueryRewriter`, `ChatTurn`, shared `unwrapJsonFence`. |
+| (next) | Phase 2.6. `reciprocalRankFusion`, `ApiReranker`, `PassthroughReranker`. |
+| `95be32f` | Owner commit: AGENTS.md rewrite (project map, gate) and the Plan.md §0.2 AGENTS.md check. |
+| `7a77cbb` | Phase 2.5. `LlmQueryRewriter`, `ChatTurn`, shared `unwrapJsonFence`. |
 | `fd0299b` | Phase 2.4. Text analyzer, BM25, vector index, `InMemoryRetriever`. |
 | `3d401b6` | Phase 2.3. Contextualizers, index builder, `RagIndexService`, `/admin/rag`. |
 | `0d681f8` | Phase 2.2. `CvCorpusSource`, structured and token-window chunkers. |
@@ -47,7 +49,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.5 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.6 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.6 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.7 is next.
 
 ## Environment
 
@@ -206,6 +208,17 @@ Do not switch model slugs. Defaults:
 - Every failure falls back to `{ queries: [message], scope: "cv", raw: <error message> }`: provider errors, timeouts, invalid JSON, schema mismatches and a blank `standalone`. On success `raw` is the parsed output. The rewriter never throws for these errors, so the pipeline does not need its own try/catch for them.
 - `unwrapJsonFence` moved from `cv-extractor.ts` to `server/llm/json-fence.ts`, and both callers share it.
 - `createRag` exposes `rag.queryRewriter` with `LLM_UTILITY_MODEL`. It was not run against OpenRouter. Whether `nvidia/nemotron-3.5-lightning` honours structured outputs has not been checked; the fence and extra-key handling are there in case it does not.
+
+## Fusion and reranking (Phase 2.6)
+
+- Types are in `server/domain/rag.ts`: `NamedHitList`, `FusedHit`, `RerankCandidate`, `RerankedHit`, `RerankOutcome` and the `Reranker` interface. Phase 2.7 should depend on `Reranker`, not on the classes.
+- `reciprocalRankFusion(lists, k)` (`server/rag/fusion/`) is pure. It uses each hit's `rank` field, not its position. `score = Σ 1/(k + rank)`, summed in ascending rank order so equal rank sets give bit-identical scores. Ties go to the best single rank, then the smaller chunk id (code-unit order, not `localeCompare`). A chunk repeated inside one list counts once, at its first rank. `contributions` are in list order. It returns every fused chunk; cutting to `fusedLimit` is the pipeline's job. `k` and ranks must be positive integers (`RangeError`).
+- `Reranker.rerank(query, candidates, topN)` returns `{ hits, fallback, error }` rather than the plan's bare array, so the trace gets the fallback flag and reason. Candidate `text` should be the chunk's `indexText`.
+- `PassthroughReranker` keeps the input order with `score = 1 / rank`. `passthroughHits` and `assertTopN` are shared with the API reranker.
+- `ApiReranker(client, model, { timeoutMs = 15_000 })` sends `min(topN, candidates)` as `topN`, maps indices back, sorts by score (ties keep candidate order) and cuts to `topN`. It does not rely on the client's sorting. An out-of-range or repeated index is a `RerankError` (a `RagError`). Provider errors, timeouts and those errors all fall back to passthrough with `fallback: true` and the message in `error`. No candidates means no call. An invalid `topN` still throws, because it is a programming error.
+- Fallback scores are `1 / rank`, so the 2.7 `minRerankScore` filter also applies to them. Decide there whether to skip the filter on fallback.
+- `RerankClient.rerank` takes an optional `signal`. `OpenRouterClient` now passes it to `execute`, like `complete`. Its 60 s per-attempt timeout and retries are unchanged.
+- `createRag` needs `llm: ChatClient & EmbeddingClient & RerankClient` (the OpenRouter client is all three) and exposes `rag.reranker` with `RERANK_MODEL`. Not run against OpenRouter. Whether `nvidia/llama-nemotron-rerank-vl-1b-v2:free` returns scores in 0..1 (what `minRerankScore` assumes) has not been checked.
 
 ## Scaffold removal
 

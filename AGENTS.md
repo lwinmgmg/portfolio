@@ -97,6 +97,8 @@ server/                       All server logic. Layered: domain -> repositories/
     indexing/                 IndexBuilder, index config, chunker kinds.
     search/                   English analyzer, BM25, vector index, InMemoryRetriever, LRU cache.
     query/                    LlmQueryRewriter and its prompt.
+    fusion/                   Reciprocal Rank Fusion.
+    rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.
     rag-runtime.ts            server-only; builds the RAG components lazily on first use.

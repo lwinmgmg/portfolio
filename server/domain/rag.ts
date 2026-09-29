@@ -143,6 +143,39 @@ export interface QueryRewriter {
   rewrite(input: RewriteInput): Promise<RewriteResult>;
 }
 
+// One search result list to fuse, named for the trace, e.g. `vector:q0` or `bm25:q1`.
+export type NamedHitList = { name: string; hits: readonly RankedHit[] };
+
+export type FusedHit = {
+  chunkId: string;
+  score: number;
+  // Where the chunk ranked in each list that returned it, in list order.
+  contributions: { list: string; rank: number }[];
+};
+
+// `text` is what the reranker reads: the chunk's `indexText`.
+export type RerankCandidate = { chunkId: string; text: string };
+
+export type RerankedHit = { chunkId: string; score: number };
+
+export type RerankOutcome = {
+  // Best first, at most `topN`.
+  hits: RerankedHit[];
+  // True when the reranker could not score and kept the candidate order instead.
+  fallback: boolean;
+  // Why it fell back, for the trace. Null otherwise.
+  error: string | null;
+};
+
+export interface Reranker {
+  // Never throws for a provider failure. It falls back to the candidate order.
+  rerank(
+    query: string,
+    candidates: readonly RerankCandidate[],
+    topN: number,
+  ): Promise<RerankOutcome>;
+}
+
 export type SearchMode = "vector" | "lexical" | "hybrid";
 
 export type RetrievalConfig = {

@@ -672,6 +672,8 @@ QUERY (per chat turn)
 
 ## Phase 2.6: Fusion and reranking
 
+**Status:** Done
+
 **Files:** `server/rag/fusion/reciprocal-rank-fusion.ts`, `server/rag/rerank/*`, tests.
 
 **Steps**
@@ -684,6 +686,12 @@ QUERY (per chat turn)
    - `ApiReranker(RerankClient, model)`: sends `indexText` as the documents and maps indices back to chunk ids.
    - `PassthroughReranker`: keeps input order; score = `1 / rank`.
 3. `ApiReranker` falls back to passthrough order if the API throws, and marks `fallback: true` in its result metadata for the trace.
+
+**As built**
+- `Reranker.rerank` returns `RerankOutcome = { hits: { chunkId, score }[]; fallback; error }`, so the fallback flag and its reason reach the trace. `FusedHit`, `NamedHitList`, `RerankCandidate`, `RerankedHit`, `RerankOutcome` and `Reranker` are in `server/domain/rag.ts`.
+- Fusion sums each chunk's terms in rank order, so equal rank sets score exactly alike. A chunk repeated in one list counts once, at its best rank. It returns every chunk; the pipeline cuts to `fusedLimit`.
+- `ApiReranker` has a 15 s timeout. `RerankClient.rerank` gained an optional `signal`, which the OpenRouter client passes to its retry loop. It asks for `min(topN, candidates)`, sorts the results itself, and also falls back when a result index is out of range or repeated. No candidates means no call.
+- `createRag` exposes `rag.reranker` with `RERANK_MODEL`.
 
 **Done when**
 - Fusion and reranker tests pass.
