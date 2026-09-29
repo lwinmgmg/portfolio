@@ -87,6 +87,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `GMAIL_REFRESH_TOKEN` | no | — | `gmail.send` refresh token from `scripts/gmail-refresh-token.ts` (Phase 4) |
 | `CONTACT_EMAIL_TO` | no | — | where visitor messages go, normally the owner's Gmail address (Phase 4) |
 | `CONTACT_EMAIL_DAILY_LIMIT` | no | `20` | site-wide cap on emails sent from the chat per UTC day (Phase 4) |
+| `CONTACT_EMAIL_SESSION_LIMIT` | no | `2` | emails sent per public session (Phase 4) |
 
 Verify each default model slug exists on `openrouter.ai/models` and supports the needed parameters
 (`structured_outputs` for extract/utility models; native file input only when using the `native` PDF mode). If a slug is
@@ -1532,6 +1533,21 @@ mistake cannot send mail by itself.
    - Tests with a fake `fetch`: token caching and expiry, the 401 refresh, request shape, error mapping. No network.
 5. `scripts/gmail-refresh-token.ts` (run by the owner, not the agent): reads the client id and secret from `.env.local`, starts a loopback server with `Bun.serve` on a free port (never 3000), prints the Google consent URL for the `gmail.send` scope with `access_type=offline&prompt=consent`, exchanges the returned code, and prints `GMAIL_REFRESH_TOKEN=...` for `.env.local`. It uses PKCE and a `state` check.
 6. `scripts/send-test-email.ts` (`bun run email:test`): sends one fixed test email to `CONTACT_EMAIL_TO` through `GmailEmailSender`. It needs no Mongo, so no shim.
+
+**Status:** Built. Waiting for the owner's 4.2 checkpoint: the OAuth client, `bun run email:token`, then `bun run email:test`.
+
+**As built**
+- `server/domain/email.ts`: `OutgoingEmail`, `SentEmail` (`{ messageId }`), `EmailSender`, and `EmailSendError` with `status` and `retryable`, shaped like `LlmProviderError`. `retryable` is true only when Gmail cannot have taken the message.
+- `email-env.ts` also reads `CONTACT_EMAIL_SESSION_LIMIT` (positive int, default 2). The fixed decisions name it, but step 2 left it out. It is in §1.1 and `.env.example`. `parseEmailEnv` returns the zod result so `email:test` can name the variable that failed; `readEmailEnv` returns null on any failure, as `readLlmEnv` does.
+- `mime-message.ts`: `buildMimeMessage` and `buildGmailRaw`. A subject is sent as-is only when it is printable ASCII and fits on a 78-character line. Otherwise it is written as RFC 2047 `B` words of 42 UTF-8 bytes, split on code points and folded one per line. The body's line ends become CRLF before base64. `To` must be non-empty printable ASCII. A line break in `To` or `Subject` throws `MimeHeaderError`, and the sender turns that into a non-retryable `EmailSendError` before any request.
+- `GmailEmailSender(credentials, { fetch, now, timeoutMs })`:
+  - The token is cached until 60 s before `expires_in`. A token response with no `expires_in` is used for one send only.
+  - A 401 from Gmail clears the cache, gets a new token and sends once more. Gmail refused the first request, so nothing was sent.
+  - Token-request failures (network, timeout, 429, 5xx) are retryable. `invalid_grant` names `bun run email:token`, and `invalid_client` names the client id and secret.
+  - On the send request, only a 429 is retryable. A network error, timeout, 5xx, other 4xx, or a 200 with no `id` is final, and the sender never retries a send itself.
+- `server/email/gmail-oauth.ts` (not in the plan's file list) holds the Google URLs, the scope, PKCE S256, `state`, the consent URL, callback parsing and the OAuth error reader. The refresh-token script and the sender share it, and it is tested, including against the RFC 7636 example.
+- `scripts/gmail-refresh-token.ts` uses `node:http` on `127.0.0.1` port 0, not `Bun.serve`. The repo has no Bun global types (`bun:test` is typed by `server/auth/bun-test.d.ts`), and Bun runs `node:http` natively. The redirect URI is `http://127.0.0.1:<port>`, which Desktop-app clients accept without registration. The script checks that `gmail.send` was granted and a refresh token came back. It prints the token line to stdout and everything else to stderr, and gives up after 5 minutes. `package.json` gains `email:token` for it, besides `email:test`.
+- Checked without Google: both scripts fail with a clear message when unconfigured. With a fake client id the loopback server printed the consent URL, returned 404 for `/favicon.ico`, and rejected a wrong `state` with 400. The real OAuth flow and the test email wait for the owner.
 
 **Done when**
 - The owner runs `bun run email:test` and the test email arrives in their Gmail inbox.
