@@ -698,6 +698,8 @@ QUERY (per chat turn)
 
 ## Phase 2.7: Retrieval pipeline, tracing and admin playground
 
+**Status:** Done
+
 **Files:** `server/rag/pipeline/trace-recorder.ts`, `retrieval-pipeline.ts`, `app/admin/(panel)/rag/playground/*`, shared trace UI components, tests.
 
 **Steps**
@@ -730,6 +732,13 @@ QUERY (per chat turn)
    - Rerank: before rank → after rank, rerank score.
    - Final: `S#`, context (muted) + text, scores.
    - Timing bar per stage.
+
+**As built**
+- `RetrievalTrace` gained `sources: TraceSource[]` (the final `S#` chunks with text, context and scores), so a stored trace shows its final panel even after its index is deleted. `RetrievalRequest` also carries the trace `kind`.
+- Stage outputs have zod schemas in `pipeline/trace-stages.ts`. Search, fuse, rerank and filter hits carry the chunk title, section and entity keys. `readTrace` parses a stored trace into a typed view; a failed, unknown (e.g. 2.9's `generate`) or reshaped stage renders as raw JSON.
+- Skipped stages are not recorded. When the reranker falls back, `rerankScore` is null and `filter` is skipped, because `1 / rank` is not a relevance score.
+- A failed stage throws `RetrievalError` with the partial trace. A missing active index is `NoActiveRagIndexError`; the index must be `ready`.
+- `RetrievalPlaygroundService` takes the subject name from the published CV and saves every trace, failed runs included. `/admin/rag/playground?index=<id>` preselects an index.
 
 **Done when**
 - In the playground, the admin can run the same question with different presets and indexes and see every stage's output and timing.

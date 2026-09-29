@@ -52,7 +52,12 @@ export default async function RagAdminPage() {
   return (
     <div className="mx-auto max-w-7xl space-y-8">
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Active index</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold">Active index</h2>
+          <Link href="/admin/rag/playground" className={`text-sm ${link}`}>
+            Open the retrieval playground →
+          </Link>
+        </div>
         {active ? (
           <ActiveIndexSummary index={active} />
         ) : (

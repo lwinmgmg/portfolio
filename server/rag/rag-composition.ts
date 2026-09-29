@@ -8,7 +8,9 @@ import type {
   QueryRewriter,
   RagChunkRepository,
   RagIndexRepository,
+  RagTraceRepository,
   Reranker,
+  RetrievalRunner,
   Retriever,
 } from "@/server/domain/rag";
 import type { LlmEnv } from "@/server/llm/llm-env";
@@ -18,6 +20,7 @@ import { LlmContextualizer } from "@/server/rag/contextualize/llm-contextualizer
 import { CvCorpusSource } from "@/server/rag/corpus/cv-corpus-source";
 import { IndexBuilder } from "@/server/rag/indexing/index-builder";
 import { defaultIndexConfig } from "@/server/rag/indexing/index-config";
+import { RetrievalPipeline } from "@/server/rag/pipeline/retrieval-pipeline";
 import { LlmQueryRewriter } from "@/server/rag/query/llm-query-rewriter";
 import { ApiReranker } from "@/server/rag/rerank/api-reranker";
 import {
@@ -26,6 +29,7 @@ import {
   type SearchIndexCache,
 } from "@/server/rag/search/in-memory-retriever";
 import { RagIndexService, type TransactionRunner } from "@/server/services/rag-index-service";
+import { RetrievalPlaygroundService } from "@/server/services/retrieval-playground-service";
 
 // Everything with I/O is passed in, so this module stays free of `server-only` and `next/*`
 // and scripts can compose the same pipeline as the app.
@@ -34,6 +38,7 @@ export type RagDependencies = {
   cvVersions: Pick<CvVersionRepository, "findPublished">;
   indexes: RagIndexRepository;
   chunks: RagChunkRepository;
+  traces: Pick<RagTraceRepository, "save">;
   transaction: TransactionRunner;
   now?: () => Date;
   // Loaded search indexes. Defaults to the process-wide cache.
@@ -49,6 +54,8 @@ export type Rag = {
   retriever: Retriever;
   queryRewriter: QueryRewriter;
   reranker: Reranker;
+  pipeline: RetrievalRunner;
+  playground: RetrievalPlaygroundService;
 };
 
 // Composition root for the RAG components.
@@ -83,6 +90,15 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
   });
   const queryRewriter = new LlmQueryRewriter(deps.llm, env.LLM_UTILITY_MODEL);
   const reranker = new ApiReranker(deps.llm, env.RERANK_MODEL);
+  const pipeline = new RetrievalPipeline({
+    indexes: deps.indexes,
+    retriever,
+    rewriter: queryRewriter,
+    reranker,
+    embeddings: deps.llm,
+    now,
+  });
+  const playground = new RetrievalPlaygroundService(pipeline, deps.traces, deps.cvVersions);
   return {
     corpus,
     chunkers,
@@ -92,5 +108,7 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     retriever,
     queryRewriter,
     reranker,
+    pipeline,
+    playground,
   };
 }

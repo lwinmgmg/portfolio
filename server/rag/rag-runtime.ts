@@ -14,11 +14,14 @@ import { createRag, type Rag } from "@/server/rag/rag-composition";
 import { MongoCvVersionRepository } from "@/server/repositories/cv-version-repository";
 import { MongoRagChunkRepository } from "@/server/repositories/rag-chunk-repository";
 import { MongoRagIndexRepository } from "@/server/repositories/rag-index-repository";
+import { MongoRagTraceRepository } from "@/server/repositories/rag-trace-repository";
+import type { PlaygroundRequest } from "@/server/services/retrieval-playground-service";
 
 const RAG_INDEX_LIST_LIMIT = 50;
 
 const indexes = new MongoRagIndexRepository();
 const chunks = new MongoRagChunkRepository();
+const traces = new MongoRagTraceRepository();
 const cvVersions = new MongoCvVersionRepository();
 
 let rag: Rag | null = null;
@@ -32,6 +35,7 @@ function getRag(): Rag {
     cvVersions,
     indexes,
     chunks,
+    traces,
     transaction: runTransaction,
   });
   return rag;
@@ -69,6 +73,10 @@ export function activateRagIndex(id: string) {
 
 export function deleteRagIndex(id: string) {
   return getRag().indexService.delete(id);
+}
+
+export function runRetrievalPlayground(request: PlaygroundRequest) {
+  return getRag().playground.run(request);
 }
 
 // Registered with the CV service. Building an index calls the LLM for every chunk, so it runs

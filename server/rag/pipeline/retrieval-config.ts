@@ -1,20 +1,32 @@
 import { z } from "zod";
 
 import type { RetrievalConfig } from "@/server/domain/rag";
+import {
+  QUERY_REWRITE_MODES,
+  RETRIEVAL_NUMBER_FIELDS,
+  SEARCH_MODES,
+  type NumberField,
+} from "@/server/rag/pipeline/retrieval-config-fields";
 
-const boundedInt = (min: number, max: number, fallback: number) =>
+const boundedInt = ({ min, max, default: fallback }: NumberField) =>
   z.int().min(min).max(max).default(fallback);
+
+const fields = RETRIEVAL_NUMBER_FIELDS;
 
 // Every field has a default, so `parse({})` yields the default config.
 export const RetrievalConfigSchema = z.strictObject({
-  rewrite: z.enum(["none", "standalone", "multi"]).default("standalone"),
-  search: z.enum(["vector", "lexical", "hybrid"]).default("hybrid"),
-  candidatesPerSearch: boundedInt(1, 50, 20),
-  rrfK: boundedInt(1, 200, 60),
-  fusedLimit: boundedInt(1, 50, 20),
+  rewrite: z.enum(QUERY_REWRITE_MODES).default("standalone"),
+  search: z.enum(SEARCH_MODES).default("hybrid"),
+  candidatesPerSearch: boundedInt(fields.candidatesPerSearch),
+  rrfK: boundedInt(fields.rrfK),
+  fusedLimit: boundedInt(fields.fusedLimit),
   rerank: z.boolean().default(true),
-  finalK: boundedInt(1, 10, 5),
-  minRerankScore: z.number().min(0).max(1).default(0),
+  finalK: boundedInt(fields.finalK),
+  minRerankScore: z
+    .number()
+    .min(fields.minRerankScore.min)
+    .max(fields.minRerankScore.max)
+    .default(fields.minRerankScore.default),
 }) satisfies z.ZodType<RetrievalConfig>;
 
 export const DEFAULT_RETRIEVAL_CONFIG: Readonly<RetrievalConfig> = Object.freeze(

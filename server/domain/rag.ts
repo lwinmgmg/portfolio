@@ -189,6 +189,38 @@ export type RetrievalConfig = {
   minRerankScore: number;
 };
 
+// A chunk the pipeline returns, with the source id the answer cites (`S1`..`Sn`).
+export type RetrievedChunk = Chunk & {
+  fusedScore: number;
+  // Null when reranking was off or fell back to the fused order.
+  rerankScore: number | null;
+  sourceId: string;
+};
+
+export type RetrievalRequest = {
+  message: string;
+  // Earlier turns, oldest first.
+  history: readonly ChatTurn[];
+  config: RetrievalConfig;
+  // Defaults to the active index.
+  indexId?: string;
+  subjectName: string;
+  kind: RetrievalTraceKind;
+};
+
+export type RetrievalResult = {
+  // Best first. Empty when the message is off topic.
+  chunks: RetrievedChunk[];
+  scope: QueryScope;
+  queries: string[];
+  trace: RetrievalTrace;
+};
+
+export interface RetrievalRunner {
+  // Throws RetrievalError, with the trace so far, when a stage fails.
+  run(request: RetrievalRequest): Promise<RetrievalResult>;
+}
+
 // ---- Traces ----
 
 export type RetrievalTraceKind = "chat" | "playground" | "eval";
@@ -203,6 +235,19 @@ export type TraceStage = {
   error: string | null;
 };
 
+// A final source as the trace keeps it, so the trace still reads after its index is deleted.
+export type TraceSource = {
+  sourceId: string;
+  chunkId: string;
+  title: string;
+  section: string;
+  entityKeys: string[];
+  context: string | null;
+  text: string;
+  fusedScore: number;
+  rerankScore: number | null;
+};
+
 export type RetrievalTrace = {
   // Assigned by the recorder, so a chat message can reference the trace before it is saved.
   id: string;
@@ -210,6 +255,8 @@ export type RetrievalTrace = {
   indexId: string | null;
   config: RetrievalConfig;
   stages: TraceStage[];
+  // The pipeline's final chunks, in source order. Empty when it failed or skipped retrieval.
+  sources: TraceSource[];
   totalMs: number;
   createdAt: string;
 };
@@ -234,6 +281,29 @@ export class RagIndexStateError extends RagError {
   constructor(message: string) {
     super(message);
     this.name = "RagIndexStateError";
+  }
+}
+
+export class NoActiveRagIndexError extends RagError {
+  constructor() {
+    super("No RAG index is active. Activate one, or choose an index.");
+    this.name = "NoActiveRagIndexError";
+  }
+}
+
+// A pipeline stage failed. Not a RagError: the cause may be a provider error, so callers show the
+// trace (which records the stage error) rather than this message.
+export class RetrievalError extends Error {
+  readonly trace: RetrievalTrace;
+  // Name of the failed stage, or null when the failure happened between stages.
+  readonly stage: string | null;
+
+  constructor(trace: RetrievalTrace, cause: unknown) {
+    const stage = trace.stages.findLast((entry) => entry.error !== null)?.name ?? null;
+    super(stage ? `Retrieval failed at the ${stage} stage.` : "Retrieval failed.", { cause });
+    this.name = "RetrievalError";
+    this.trace = trace;
+    this.stage = stage;
   }
 }
 

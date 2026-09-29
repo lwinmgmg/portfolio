@@ -340,6 +340,19 @@ const trace: RetrievalTrace = {
       error: null,
     },
   ],
+  sources: [
+    {
+      sourceId: "S1",
+      chunkId: "507f1f77bcf86cd799439013",
+      title: "Staff Engineer",
+      section: "experience",
+      entityKeys: ["experience:acme"],
+      context: "Jane Doe's role at Acme.",
+      text: "Led the platform team.",
+      fusedScore: 0.0325,
+      rerankScore: 0.91,
+    },
+  ],
   totalMs: 120,
   createdAt: "2026-09-28T00:00:00.000Z",
 };

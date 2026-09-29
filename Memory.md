@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.6 (fusion and reranking) on `master`.
+Last updated after Phase 2.7 (retrieval pipeline, tracing and admin playground) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.6. `reciprocalRankFusion`, `ApiReranker`, `PassthroughReranker`. |
+| (next) | Phase 2.7. `TraceRecorder`, `RetrievalPipeline`, trace reader, `/admin/rag/playground`. |
+| `800eff7` | Phase 2.6. `reciprocalRankFusion`, `ApiReranker`, `PassthroughReranker`. |
 | `95be32f` | Owner commit: AGENTS.md rewrite (project map, gate) and the Plan.md §0.2 AGENTS.md check. |
 | `7a77cbb` | Phase 2.5. `LlmQueryRewriter`, `ChatTurn`, shared `unwrapJsonFence`. |
 | `fd0299b` | Phase 2.4. Text analyzer, BM25, vector index, `InMemoryRetriever`. |
@@ -49,7 +50,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.6 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.7 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.8 is next.
 
 ## Environment
 
@@ -219,6 +220,23 @@ Do not switch model slugs. Defaults:
 - Fallback scores are `1 / rank`, so the 2.7 `minRerankScore` filter also applies to them. Decide there whether to skip the filter on fallback.
 - `RerankClient.rerank` takes an optional `signal`. `OpenRouterClient` now passes it to `execute`, like `complete`. Its 60 s per-attempt timeout and retries are unchanged.
 - `createRag` needs `llm: ChatClient & EmbeddingClient & RerankClient` (the OpenRouter client is all three) and exposes `rag.reranker` with `RERANK_MODEL`. Not run against OpenRouter. Whether `nvidia/llama-nemotron-rerank-vl-1b-v2:free` returns scores in 0..1 (what `minRerankScore` assumes) has not been checked.
+
+## Retrieval pipeline, tracing and playground (Phase 2.7)
+
+- `RetrievalRunner`, `RetrievalRequest` (with the trace `kind`), `RetrievalResult`, `RetrievedChunk`, `TraceSource`, `RetrievalError` and `NoActiveRagIndexError` are in `server/domain/rag.ts`. 2.8 and 2.9 should depend on `RetrievalRunner`; `createRag` exposes it as `rag.pipeline`.
+- `RetrievalTrace.sources` is new (final `S#` chunks with title, section, entity keys, context, text, fused and rerank scores). The trace repository stores it; no traces existed before, so there is no legacy fallback.
+- `TraceRecorder` (`server/rag/pipeline/trace-recorder.ts`): `stage(name, input, fn, summarize?)` reserves the stage's slot when it starts (start order, even if stages overlap), records `startedAt` relative to the trace start, and on failure stores the message and rethrows. `clock`, `now` and `id` are injectable. `toTrace(sources)` copies everything.
+- `RetrievalPipeline` (`server/rag/pipeline/retrieval-pipeline.ts`) resolves `indexId` or the active index first (`RagIndexNotFoundError`, `NoActiveRagIndexError`, `RagIndexStateError` for a non-ready index; no trace exists yet). Stages: `rewrite`, `embed-queries` (one `embedInBatches` call with the **index's** `embeddingModel`), `vector-search`, `lexical-search` (per query in parallel), `fuse` (lists `vector:qN`, `bm25:qN`, cut to `fusedLimit`), `rerank` (query `queries[0]`, candidate text `indexText`, `topN = finalK`), `filter` (`rerankScore < minRerankScore` dropped). Skipped stages are not recorded. Off-topic stops after `rewrite`; smalltalk still retrieves.
+- Rerank fallback decision (left open by 2.6): on fallback `rerankScore` is null and `filter` does not run, since `1 / rank` is not relevance. The filter otherwise assumes rerank scores in 0..1; with the default 0 a model returning negative logits would drop everything. Check the real scores in the playground before 2.9.
+- Chunk details are fetched once per id with `retriever.getChunks` and carried into every traced hit (title, section, entity keys), so traces read without the index. A hit whose chunk is missing throws `UnknownChunkError`.
+- Any failure inside a stage becomes `RetrievalError` with `trace` (partial, `sources: []`) and `stage` (last stage with an error). It is not a `RagError`: callers show the trace, not a provider message.
+- Stage output schemas are in `trace-stages.ts` (the pipeline builds those types). `readTrace` (`trace-reader.ts`) turns a stored trace into a `TraceView` with a typed `detail` per stage; failed, unknown or unparseable stages become `{ kind: "raw", input, output }` JSON strings. 2.9's `generate` stage will show as raw until 2.11 adds a panel.
+- `retrieval-config-fields.ts` holds the config's modes, number bounds and labels without zod; `RetrievalConfigSchema` is built from it. Client code imports that module, never `retrieval-config.ts` (except `import type`). The built playground chunk was checked to contain no zod.
+- `RetrievalPlaygroundService` (`server/services/`) takes the subject name from the published CV's `profile.fullName` (`PlaygroundSubjectError` otherwise), runs with kind `playground`, saves the trace even when a stage failed, and returns `{ trace, error, saved }`. A save failure is logged and the run is still shown. `createRag` now needs `deps.traces` and exposes `rag.playground`; the runtime passes `MongoRagTraceRepository` and exports `runRetrievalPlayground`.
+- `/admin/rag/playground` (`maxDuration = 60`): ready indexes only (default: `?index=<id>`, else the active one, else the newest), question (≤ 500 chars), optional history (`user:`/`assistant:` lines, parsed by `playground-input.ts`), preset select (shows "Custom" after an edit via `matchingPreset`), every config field, Cmd/Ctrl+Enter to run. Inputs are controlled so values survive the post-action form reset. The action returns `readTrace(trace)` in its state and renders `TraceView` below the form. Links: "Open the retrieval playground" on `/admin/rag`, "Test retrieval on this index" on a ready index's page.
+- Trace UI lives in `app/admin/(panel)/rag/_components/` (`trace-view`, `trace-stage-panel`, `trace-timing`, `trace-format`). No hooks or `"use client"`, so 2.11's server pages can reuse them.
+- The embedding call in `embed-queries` has no timeout of its own (the client's 60 s per attempt and 2 retries apply). Consider a deadline before the chat path depends on it in 2.9.
+- Not verified live: no admin session here, so no run against Atlas or OpenRouter. Curl confirmed only that `/admin/rag/playground` redirects to login when signed out. `TraceView` was rendered with `renderToStaticMarkup` from a faked pipeline run over the sample CV (all seven stages parsed into their panels). No browser check at 375 px / 1440 px or in dark mode.
 
 ## Scaffold removal
 

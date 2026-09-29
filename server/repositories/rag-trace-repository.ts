@@ -6,6 +6,7 @@ import type {
   RagTraceRepository,
   RetrievalConfig,
   RetrievalTrace,
+  TraceSource,
   TraceStage,
 } from "@/server/domain/rag";
 import { parseInstant } from "@/server/repositories/mongo-dates";
@@ -20,6 +21,7 @@ type RagTraceDocument = {
   indexId: string | null;
   config: RetrievalConfig;
   stages: TraceStage[];
+  sources: TraceSource[];
   totalMs: number;
   createdAt: Date;
 };
@@ -39,6 +41,7 @@ export class MongoRagTraceRepository
       indexId: document.indexId,
       config: { ...document.config },
       stages: document.stages.map((stage) => ({ ...stage })),
+      sources: document.sources.map(copySource),
       totalMs: document.totalMs,
       createdAt: document.createdAt.toISOString(),
     };
@@ -64,6 +67,7 @@ export class MongoRagTraceRepository
       indexId: trace.indexId,
       config: { ...trace.config },
       stages: trace.stages.map((stage) => ({ ...stage })),
+      sources: trace.sources.map(copySource),
       totalMs: trace.totalMs,
       createdAt: parseInstant(trace.createdAt),
     });
@@ -84,4 +88,8 @@ export class MongoRagTraceRepository
       .toArray();
     return documents.map((document) => this.toEntity(document));
   }
+}
+
+function copySource(source: TraceSource): TraceSource {
+  return { ...source, entityKeys: [...source.entityKeys] };
 }

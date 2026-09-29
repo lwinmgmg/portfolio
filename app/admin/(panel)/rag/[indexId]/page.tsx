@@ -57,6 +57,16 @@ export default async function RagIndexPage({
             : null}
         </p>
         {index.error ? <p className={errorText}>{index.error}</p> : null}
+        {index.state === "ready" ? (
+          <p>
+            <Link
+              href={`/admin/rag/playground?index=${encodeURIComponent(index.id)}`}
+              className={`text-sm ${link}`}
+            >
+              Test retrieval on this index →
+            </Link>
+          </p>
+        ) : null}
         {isIndexBuildInProgress(index, now) ? (
           <AutoRefresh message="This index is building." />
         ) : null}

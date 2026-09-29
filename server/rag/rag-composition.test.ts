@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
 import type { CvVersion } from "@/server/domain/cv";
 import type { ChatRequest } from "@/server/domain/llm";
+import type { RetrievalTrace } from "@/server/domain/rag";
 import { readLlmEnv } from "@/server/llm/llm-env";
 import {
   fakeTransaction,
@@ -11,6 +12,7 @@ import {
 } from "@/server/rag/__fixtures__/memory-rag-repositories";
 import { StructuredCvChunker } from "@/server/rag/chunking/structured-cv-chunker";
 import { TokenWindowChunker } from "@/server/rag/chunking/token-window-chunker";
+import { RETRIEVAL_PRESETS } from "@/server/rag/pipeline/retrieval-config";
 import { createRag } from "@/server/rag/rag-composition";
 import { createSearchIndexCache } from "@/server/rag/search/in-memory-retriever";
 
@@ -45,6 +47,7 @@ test("the composed pipeline builds and activates the default index from the publ
   const rerankModels: string[] = [];
   const indexes = new MemoryRagIndexes();
   const chunks = new MemoryRagChunks();
+  const traces: RetrievalTrace[] = [];
   const rag = createRag(
     envWith({ EMBEDDING_MODEL: "embed-x", LLM_UTILITY_MODEL: "utility-x", RERANK_MODEL: "rerank-x" }),
     {
@@ -68,6 +71,11 @@ test("the composed pipeline builds and activates the default index from the publ
       cvVersions: { findPublished: async () => published },
       indexes,
       chunks,
+      traces: {
+        save: async (trace) => {
+          traces.push(trace);
+        },
+      },
       transaction: fakeTransaction,
       now: () => new Date(at),
       searchCache: createSearchIndexCache(),
@@ -116,4 +124,28 @@ test("the composed pipeline builds and activates the default index from the publ
   expect(rerankModels).toEqual(["rerank-x"]);
   expect(reranked.fallback).toBe(false);
   expect(reranked.hits.map((hit) => hit.chunkId)).toEqual(stored.slice(0, 2).map((chunk) => chunk.id));
+
+  // The playground runs the composed pipeline against the active index and saves its trace.
+  const run = await rag.playground.run({
+    message: "Skills?",
+    history: [],
+    config: RETRIEVAL_PRESETS["hybrid-rerank"],
+    indexId: null,
+  });
+  expect(run.error).toBeNull();
+  expect(run.saved).toBe(true);
+  expect(traces.map((trace) => trace.id)).toEqual([run.trace.id]);
+  expect(run.trace.indexId).toBe(active?.id ?? "");
+  expect(run.trace.stages.map((stage) => stage.name)).toEqual([
+    "rewrite",
+    "embed-queries",
+    "vector-search",
+    "lexical-search",
+    "fuse",
+    "rerank",
+    "filter",
+  ]);
+  expect(run.trace.sources.length).toBe(Math.min(5, stored.length));
+  expect(embeddedModels.at(-1)).toBe("embed-x");
+  expect(rerankModels.at(-1)).toBe("rerank-x");
 });

@@ -64,6 +64,8 @@ app/                          Routes. Keep them thin: parse input, call a servic
         [versionId]/          Draft editor (cv-form.ts is the pure form mapper).
       rag/                    Build, activate, delete indexes.
         [indexId]/            Index detail with chunks.
+        playground/           Retrieval playground: run the pipeline with any config and index, see its trace.
+        _components/          Shared trace view (summary, timing bars, stage panels, final sources).
   api/
     admin/cv/upload/          Vercel Blob client-upload token and callback.
     admin/cv/[versionId]/pdf/ Admin PDF download.
@@ -82,6 +84,7 @@ server/                       All server logic. Layered: domain -> repositories/
     auth-service.ts           requireAdmin, withAdmin (server-action wrapper).
     cv-service.ts             Upload registration, extraction, edit, publish.
     rag-index-service.ts      RAG index lifecycle.
+    retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
@@ -99,7 +102,7 @@ server/                       All server logic. Layered: domain -> repositories/
     query/                    LlmQueryRewriter and its prompt.
     fusion/                   Reciprocal Rank Fusion.
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
-    pipeline/                 RetrievalConfig.
+    pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.
     rag-runtime.ts            server-only; builds the RAG components lazily on first use.
 ```
@@ -110,6 +113,8 @@ server/                       All server logic. Layered: domain -> repositories/
 |---|---|---|
 | A type or interface | `server/domain/<area>.ts` | `server/domain/rag.ts` |
 | Pure logic | `server/<feature>/` with a colocated test | `server/rag/search/bm25-index.ts` |
+| Constants a client form shares with a zod schema | A zod-free sibling module the schema imports | `server/rag/pipeline/retrieval-config-fields.ts` |
+| A new traced RAG stage | Output schema in `trace-stages.ts`, a case in `readTrace`, a panel in `rag/_components/trace-stage-panel.tsx` | the `rerank` stage |
 | A Mongo collection | `server/repositories/`, extend `MongoRepository` | `rag-index-repository.ts` |
 | A use case | `server/services/<name>-service.ts`; wire it in `<name>-runtime.ts` | `cv-service.ts` + `cv-runtime.ts` |
 | An admin mutation | `actions.ts` wrapped in `withAdmin`, state in `*-state.ts`, form with `useActionState` | `app/admin/(panel)/rag/` |

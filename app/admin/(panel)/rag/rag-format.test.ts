@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
 
+import { formatWhen } from "@/app/admin/(panel)/_components/format-when";
 import {
   contextSummary,
   formatCost,
   formatCount,
   formatDuration,
+  indexLabel,
 } from "@/app/admin/(panel)/rag/rag-format";
 
 test("formatDuration picks ms, seconds or minutes", () => {
@@ -29,4 +31,19 @@ test("contextSummary names the context model", () => {
   const base = { chunker: "structured" as const, embeddingModel: "e" };
   expect(contextSummary({ ...base, contextualize: true, contextModel: "u" })).toBe("Yes (u)");
   expect(contextSummary({ ...base, contextualize: false, contextModel: null })).toBe("No");
+});
+
+test("indexLabel names the chunker, context, build time and active flag", () => {
+  const config = { chunker: "structured" as const, embeddingModel: "e", contextualize: true, contextModel: "u" };
+  const createdAt = "2026-09-29T08:00:00.000Z";
+  expect(indexLabel({ config, createdAt, active: true })).toBe(
+    `structured + context · ${formatWhen(createdAt)} (active)`,
+  );
+  expect(
+    indexLabel({
+      config: { ...config, chunker: "token-window", contextualize: false, contextModel: null },
+      createdAt,
+      active: false,
+    }),
+  ).toBe(`token-window · ${formatWhen(createdAt)}`);
 });
