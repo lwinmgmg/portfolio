@@ -1,4 +1,5 @@
 import type { TransactionContext } from "@/server/db/transaction";
+import type { ChatTurn } from "@/server/domain/chat";
 import type { CvData } from "@/server/domain/cv";
 
 // ---- Indexes ----
@@ -116,6 +117,31 @@ export interface Retriever {
 }
 
 export type QueryRewriteMode = "none" | "standalone" | "multi";
+
+// What the latest message asks for. Only `cv` messages need sources.
+export type QueryScope = "cv" | "smalltalk" | "off_topic";
+
+export type RewriteInput = {
+  message: string;
+  // Earlier turns, oldest first. The rewriter reads only the most recent ones.
+  history: readonly ChatTurn[];
+  mode: QueryRewriteMode;
+  // Whose CV is searched, e.g. the published profile's full name.
+  subjectName: string;
+};
+
+export type RewriteResult = {
+  // Search queries, the standalone one first. Never empty.
+  queries: string[];
+  scope: QueryScope;
+  // The model's parsed output for the trace, the error message after a fallback, or null in mode `none`.
+  raw: unknown;
+};
+
+export interface QueryRewriter {
+  // Never throws for a provider or parse failure. It falls back to the message itself.
+  rewrite(input: RewriteInput): Promise<RewriteResult>;
+}
 
 export type SearchMode = "vector" | "lexical" | "hybrid";
 

@@ -647,6 +647,8 @@ QUERY (per chat turn)
 
 ## Phase 2.5: Query rewriting
 
+**Status:** Done
+
 **Files:** `server/rag/query/llm-query-rewriter.ts`, tests.
 
 **Steps**
@@ -658,6 +660,11 @@ QUERY (per chat turn)
    - `queries = [standalone, ...variants]` for `multi`, `[standalone]` for `standalone`. Deduplicate case-insensitively.
 4. On any LLM or parse error: return `{ queries: [message], scope: "cv" }` and set `raw` to the error message.
 5. Tests with a fake `ChatClient`: each mode, dedupe, fallback on error, history truncation to 6 turns.
+
+**As built**
+- `ChatTurn` is in `server/domain/chat.ts` (2.9 extends that file). `QueryRewriter`, `RewriteInput`, `RewriteResult` and `QueryScope` are in `server/domain/rag.ts`.
+- The provider gets a strict JSON schema. Parsing ignores extra keys and accepts a fenced reply. A blank `standalone` counts as a parse error. `multi` keeps at most 3 variants after deduplication. On success `raw` is the parsed output; in mode `none` it is `null`.
+- The call has a 15 s timeout (`AbortSignal.timeout`), `temperature: 0`, `maxTokens: 300`. `createRag` exposes it as `rag.queryRewriter` with `LLM_UTILITY_MODEL`.
 
 **Done when**
 - Rewriter tests pass.

@@ -5,6 +5,7 @@ import type {
   ChunkerKind,
   CorpusSource,
   IndexConfig,
+  QueryRewriter,
   RagChunkRepository,
   RagIndexRepository,
   Retriever,
@@ -16,6 +17,7 @@ import { LlmContextualizer } from "@/server/rag/contextualize/llm-contextualizer
 import { CvCorpusSource } from "@/server/rag/corpus/cv-corpus-source";
 import { IndexBuilder } from "@/server/rag/indexing/index-builder";
 import { defaultIndexConfig } from "@/server/rag/indexing/index-config";
+import { LlmQueryRewriter } from "@/server/rag/query/llm-query-rewriter";
 import {
   InMemoryRetriever,
   sharedSearchIndexCache,
@@ -43,6 +45,7 @@ export type Rag = {
   indexBuilder: IndexBuilder;
   indexService: RagIndexService;
   retriever: Retriever;
+  queryRewriter: QueryRewriter;
 };
 
 // Composition root for the RAG components.
@@ -75,5 +78,14 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
   const retriever = new InMemoryRetriever(deps.chunks, {
     cache: deps.searchCache ?? sharedSearchIndexCache(),
   });
-  return { corpus, chunkers, defaultIndexConfig: config, indexBuilder, indexService, retriever };
+  const queryRewriter = new LlmQueryRewriter(deps.llm, env.LLM_UTILITY_MODEL);
+  return {
+    corpus,
+    chunkers,
+    defaultIndexConfig: config,
+    indexBuilder,
+    indexService,
+    retriever,
+    queryRewriter,
+  };
 }

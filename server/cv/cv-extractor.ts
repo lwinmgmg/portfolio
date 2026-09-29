@@ -3,6 +3,7 @@ import { CvExtractionSchema, cvExtractionJsonSchema } from "@/server/cv/cv-schem
 import { CV_EXTRACTION_PROMPT } from "@/server/cv/extraction-prompt";
 import type { CvData, CvExtraction, CvExtractor } from "@/server/domain/cv";
 import type { ChatClient, ChatMessage, ChatRequest, ChatResult, PdfEngine } from "@/server/domain/llm";
+import { unwrapJsonFence } from "@/server/llm/json-fence";
 
 /** Conversion, the extraction request, and one repair stay inside the 60s admin route. */
 export const CV_EXTRACTION_BUDGET_MS = 45_000;
@@ -114,7 +115,7 @@ type ParseResult = { ok: true; data: CvExtraction } | { ok: false; issues: strin
 function parseExtraction(text: string): ParseResult {
   let value: unknown;
   try {
-    value = JSON.parse(unwrapFence(text));
+    value = JSON.parse(unwrapJsonFence(text));
   } catch {
     return { ok: false, issues: ["Response was not valid JSON."] };
   }
@@ -122,12 +123,6 @@ function parseExtraction(text: string): ParseResult {
   const parsed = CvExtractionSchema.safeParse(value);
   if (!parsed.success) return { ok: false, issues: formatIssues(parsed.error.issues) };
   return { ok: true, data: parsed.data };
-}
-
-function unwrapFence(text: string): string {
-  const trimmed = text.trim();
-  const fenced = /^```(?:json)?[^\n]*\n([\s\S]*?)\n?```$/i.exec(trimmed);
-  return fenced?.[1] ?? trimmed;
 }
 
 function formatIssues(issues: readonly { path: PropertyKey[]; message: string }[]): string[] {

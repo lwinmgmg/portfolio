@@ -91,4 +91,15 @@ test("the composed pipeline builds and activates the default index from the publ
   const hits = await rag.retriever.searchVector(active?.id ?? "", [1, 1], 3);
   expect(hits.length).toBe(Math.min(3, stored.length));
   expect(hits[0].score).toBeCloseTo(1, 6);
+
+  // The fake reply is not rewrite JSON, so the rewriter falls back, but it used the utility model.
+  const rewrite = await rag.queryRewriter.rewrite({
+    message: "Skills?",
+    history: [],
+    mode: "standalone",
+    subjectName: "Jane Doe",
+  });
+  expect(rewrite.queries).toEqual(["Skills?"]);
+  expect(requests.at(-1)?.model).toBe("utility-x");
+  expect(requests.at(-1)?.jsonSchema?.name).toBe("query_rewrite");
 });

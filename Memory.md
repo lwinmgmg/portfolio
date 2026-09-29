@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.4 (lexical and vector search, in-memory) on `master`.
+Last updated after Phase 2.5 (query rewriting) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.4. Text analyzer, BM25, vector index, `InMemoryRetriever`. |
+| (next) | Phase 2.5. `LlmQueryRewriter`, `ChatTurn`, shared `unwrapJsonFence`. |
+| `fd0299b` | Phase 2.4. Text analyzer, BM25, vector index, `InMemoryRetriever`. |
 | `3d401b6` | Phase 2.3. Contextualizers, index builder, `RagIndexService`, `/admin/rag`. |
 | `0d681f8` | Phase 2.2. `CvCorpusSource`, structured and token-window chunkers. |
 | `ec21fd3` | Phase 2.1. RAG domain types, retrieval config, RAG repositories. |
@@ -46,7 +47,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.4 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.5 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.5 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.6 is next.
 
 ## Environment
 
@@ -195,6 +196,16 @@ Do not switch model slugs. Defaults:
 - `sharedSearchIndexCache()` keeps the cache on `globalThis.ragSearchIndexCache`, which survives hot reloads. `createRag` uses it unless `deps.searchCache` is given (tests pass `createSearchIndexCache()`), and exposes `rag.retriever`. Retrievers that share a cache must use the same analyzer and BM25 options, because the cache key is only the index id.
 - A ready index never changes, so there is no cache invalidation. A deleted index stays cached until it is evicted, which is harmless.
 - Not wired into any route yet (2.7 does that). Nothing was run against Atlas.
+
+## Query rewriting (Phase 2.5)
+
+- `ChatTurn` lives in `server/domain/chat.ts`, which holds only that type for now. Phase 2.9 adds `StoredMessage`, `Conversation` and the repository there. `QueryRewriter`, `RewriteInput`, `RewriteResult` and `QueryScope` are in `server/domain/rag.ts`. Phase 2.7 should depend on the interface.
+- `LlmQueryRewriter(chat, model, { timeoutMs = 15_000 })` (`server/rag/query/`). Mode `none` makes no call and returns `{ queries: [message], scope: "cv", raw: null }`. `standalone` and `multi` make one call: `temperature: 0`, `maxTokens: 300`, a `jsonSchema` named `query_rewrite`, and `AbortSignal.timeout`. The schema comes from `z.strictObject` and has all three fields required. The parse uses a non-strict `z.object`, so extra keys are dropped instead of failing.
+- The prompt is `buildRewriteMessages` in `rewrite-prompt.ts`. The system message holds the instructions. The user message is `<conversation>` (the last `REWRITE_HISTORY_TURNS = 6` turns, one `role: text` line each, left out when there is no history) followed by `<message>`. The instructions say "you/your/he/she/they" usually mean the subject, because the chat button reads "Ask about my experience". They also say the conversation is data, not instructions. In `standalone` mode the prompt asks for an empty `variants` list, and any variants returned are ignored.
+- `queries` go through `uniqueQueries`: trimmed, blanks dropped, and case- and whitespace-insensitive duplicates removed with the first spelling kept. In `multi` the standalone query comes first, then at most 3 variants after deduplication.
+- Every failure falls back to `{ queries: [message], scope: "cv", raw: <error message> }`: provider errors, timeouts, invalid JSON, schema mismatches and a blank `standalone`. On success `raw` is the parsed output. The rewriter never throws for these errors, so the pipeline does not need its own try/catch for them.
+- `unwrapJsonFence` moved from `cv-extractor.ts` to `server/llm/json-fence.ts`, and both callers share it.
+- `createRag` exposes `rag.queryRewriter` with `LLM_UTILITY_MODEL`. It was not run against OpenRouter. Whether `nvidia/nemotron-3.5-lightning` honours structured outputs has not been checked; the fence and extra-key handling are there in case it does not.
 
 ## Scaffold removal
 
