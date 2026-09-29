@@ -62,6 +62,16 @@ test("summarizes the rewrite by its queries, or by its scope when not about the 
   expect(rewrite([], "cv")).toBe("");
 });
 
+test("summarizes the route by its short-circuit scope, or as a check when it deferred", () => {
+  const route = (scope: "smalltalk" | "off_topic" | null, fallback = false) =>
+    stepSummary(step("route", { kind: "route", scope, fallback }));
+  expect(stepLabel(step("route"))).toBe("Read your message");
+  expect(route("smalltalk")).toBe("Small talk");
+  expect(route("off_topic")).toBe("Out of scope");
+  expect(route(null)).toBe("Checking your question");
+  expect(route(null, true)).toBe("Checking your question");
+});
+
 test("summarizes a search by its count and best score, in the method's precision", () => {
   const vector = stepSummary(
     step("vector-search", {

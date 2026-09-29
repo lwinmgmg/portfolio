@@ -29,6 +29,8 @@ const defaultFields = {
   ignoreSubjectInLexical: "on",
   ignoreSubjectInRerank: "on",
   dropBelowMeanRerank: "on",
+  scopeRouter: "rewriter",
+  minRouteConfidence: "0.8",
 };
 
 test("history lines become turns and blank lines are skipped", () => {
@@ -73,6 +75,19 @@ test("config fields are read from the form, with an unchecked box meaning false"
       dropBelowMeanRerank: false,
     },
   });
+});
+
+test("the scope router and its cutoff are read from the form", () => {
+  expect(
+    parseRetrievalConfig(formWith({ ...defaultFields, scopeRouter: "decision", minRouteConfidence: "0.9" })),
+  ).toEqual({
+    ok: true,
+    value: { ...DEFAULT_RETRIEVAL_CONFIG, scopeRouter: "decision", minRouteConfidence: 0.9 },
+  });
+
+  const low = parseRetrievalConfig(formWith({ ...defaultFields, minRouteConfidence: "0.3" }));
+  if (low.ok) throw new Error("expected a cutoff below 0.5 to fail");
+  expect(low.message.startsWith("Min route confidence:")).toBe(true);
 });
 
 test("an out-of-range or missing config field names the field", () => {

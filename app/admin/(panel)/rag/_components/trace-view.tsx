@@ -5,14 +5,13 @@ import { formatMs, formatScore } from "@/app/admin/(panel)/rag/_components/trace
 import { StagePanel } from "@/app/admin/(panel)/rag/_components/trace-stage-panel";
 import { TraceTiming } from "@/app/admin/(panel)/rag/_components/trace-timing";
 import { card, link, note } from "@/app/admin/(panel)/rag/rag-styles";
-import type { RetrievalConfig, TraceSource } from "@/server/domain/rag";
+import type { QueryScope, RetrievalConfig, TraceSource } from "@/server/domain/rag";
 import type { TraceView as TraceViewModel } from "@/server/rag/pipeline/trace-reader";
 import { RETRIEVAL_FIELD_LABELS } from "@/server/rag/pipeline/retrieval-config-fields";
 
 // A whole retrieval trace: summary, timing, one panel per stage, then the final sources.
 export function TraceView({ view }: { view: TraceViewModel }) {
-  const rewrite = view.stages.find((stage) => stage.detail.kind === "rewrite")?.detail;
-  const offTopic = rewrite?.kind === "rewrite" && rewrite.output.scope === "off_topic";
+  const scope = finalScope(view);
 
   return (
     <div className="space-y-4">
@@ -21,7 +20,7 @@ export function TraceView({ view }: { view: TraceViewModel }) {
       {view.stages.map((stage, index) => (
         <StagePanel key={`${stage.name}-${index}`} traceId={view.id} index={index} stage={stage} />
       ))}
-      <FinalSources traceId={view.id} sources={view.sources} offTopic={offTopic} />
+      <FinalSources traceId={view.id} sources={view.sources} scope={scope} />
     </div>
   );
 }
@@ -70,14 +69,29 @@ function ConfigList({ config }: { config: RetrievalConfig }) {
   );
 }
 
+// A router short-circuit decides the scope before any rewrite; otherwise the rewriter does.
+function finalScope(view: TraceViewModel): QueryScope {
+  for (const { detail } of view.stages) {
+    if (detail.kind === "route" && detail.output.scope !== null) return detail.output.scope;
+    if (detail.kind === "rewrite") return detail.output.scope;
+  }
+  return "cv";
+}
+
+const SKIPPED_NOTES: Record<QueryScope, string> = {
+  cv: "No sources were returned.",
+  smalltalk: "Small talk: retrieval was skipped.",
+  off_topic: "Off-topic message: retrieval was skipped.",
+};
+
 function FinalSources({
   traceId,
   sources,
-  offTopic,
+  scope,
 }: {
   traceId: string;
   sources: readonly TraceSource[];
-  offTopic: boolean;
+  scope: QueryScope;
 }) {
   return (
     <section className="space-y-3" aria-labelledby={`${traceId}-sources`}>
@@ -86,7 +100,7 @@ function FinalSources({
       </h3>
       {sources.length === 0 ? (
         <p className={note}>
-          {offTopic ? "Off-topic message: retrieval was skipped." : "No sources were returned."}
+          {SKIPPED_NOTES[scope]}
         </p>
       ) : (
         <ol className="space-y-3">

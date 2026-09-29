@@ -60,6 +60,7 @@ export const CHAT_REASONING_MAX_CHARS = 8_000;
 
 // The retrieval stage names (STAGE in trace-stages.ts), plus the answer model's reasoning.
 export type ChatStepName =
+  | "route"
   | "rewrite"
   | "embed-queries"
   | "vector-search"
@@ -82,6 +83,8 @@ export type ChatStepHit = {
 };
 
 export type ChatStepDetail =
+  // `scope`: the short-circuit, or null when the rewriter decides. `fallback`: the router failed.
+  | { kind: "route"; scope: QueryScope | null; fallback: boolean }
   // `fallback`: the rewriter failed and the message was searched as written.
   | { kind: "rewrite"; queries: string[]; scope: QueryScope; fallback: boolean }
   | { kind: "embed"; count: number; dimensions: number }

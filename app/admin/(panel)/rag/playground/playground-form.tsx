@@ -19,12 +19,18 @@ import {
   primaryButton,
   secondaryButton,
 } from "@/app/admin/(panel)/rag/rag-styles";
-import type { QueryRewriteMode, RetrievalConfig, SearchMode } from "@/server/domain/rag";
+import type {
+  QueryRewriteMode,
+  RetrievalConfig,
+  ScopeRouterKind,
+  SearchMode,
+} from "@/server/domain/rag";
 import type { RetrievalPresetName } from "@/server/rag/pipeline/retrieval-config";
 import {
   QUERY_REWRITE_MODES,
   RETRIEVAL_FIELD_LABELS,
   RETRIEVAL_NUMBER_FIELDS,
+  SCOPE_ROUTERS,
   SEARCH_MODES,
   type RetrievalNumberFieldName,
 } from "@/server/rag/pipeline/retrieval-config-fields";
@@ -45,6 +51,7 @@ type FormConfig = {
   ignoreSubjectInLexical: boolean;
   ignoreSubjectInRerank: boolean;
   dropBelowMeanRerank: boolean;
+  scopeRouter: ScopeRouterKind;
 } & Record<RetrievalNumberFieldName, string>;
 
 type BooleanField =
@@ -70,6 +77,12 @@ const HINTS: Partial<Record<keyof RetrievalConfig, string>> = {
   dropBelowMeanRerank:
     "Also drops reranked chunks scoring below the mean of this question's rerank scores. Can " +
     "drop a second relevant chunk.",
+  scopeRouter:
+    "decision asks a decision model first; confident small talk and off-topic messages skip the " +
+    "rewrite and retrieval.",
+  minRouteConfidence:
+    "Small talk and off-topic messages at or above this confidence skip retrieval. Used only " +
+    "with the decision router.",
 };
 
 function toForm(config: RetrievalConfig): FormConfig {
@@ -83,6 +96,7 @@ function toForm(config: RetrievalConfig): FormConfig {
     ignoreSubjectInLexical: config.ignoreSubjectInLexical,
     ignoreSubjectInRerank: config.ignoreSubjectInRerank,
     dropBelowMeanRerank: config.dropBelowMeanRerank,
+    scopeRouter: config.scopeRouter,
     ...numbers,
   };
 }
@@ -100,6 +114,8 @@ function fromForm(form: FormConfig): RetrievalConfig {
     ignoreSubjectInLexical: form.ignoreSubjectInLexical,
     ignoreSubjectInRerank: form.ignoreSubjectInRerank,
     dropBelowMeanRerank: form.dropBelowMeanRerank,
+    scopeRouter: form.scopeRouter,
+    minRouteConfidence: Number(form.minRouteConfidence),
   };
 }
 
@@ -260,6 +276,12 @@ export function PlaygroundForm({
               value={config.search}
               onChange={(value) => update("search", value)}
             />
+            <ChoiceField
+              field="scopeRouter"
+              options={SCOPE_ROUTERS}
+              value={config.scopeRouter}
+              onChange={(value) => update("scopeRouter", value)}
+            />
             {NUMBER_FIELDS.map((field) => (
               <NumberInput
                 key={field}
@@ -340,7 +362,7 @@ function ChoiceField<T extends string>({
   value,
   onChange,
 }: {
-  field: "rewrite" | "search";
+  field: "rewrite" | "search" | "scopeRouter";
   options: readonly T[];
   value: T;
   onChange: (value: T) => void;

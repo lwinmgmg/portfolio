@@ -23,10 +23,26 @@ function errorOf(value: unknown): GoldenSetError {
   return error;
 }
 
-test("history and tags default to empty and text is trimmed", () => {
+test("history and tags default to empty, the scope to cv, and text is trimmed", () => {
   expect(parseGoldenSet([item(" q1 ", { question: "  Where?  " })])).toEqual([
-    { id: "q1", question: "Where?", history: [], relevantEntityKeys: ["profile"], tags: [] },
+    {
+      id: "q1",
+      question: "Where?",
+      history: [],
+      expectedScope: "cv",
+      relevantEntityKeys: ["profile"],
+      tags: [],
+    },
   ]);
+});
+
+test("only a non-cv item may leave out its relevant keys", () => {
+  const [greeting] = parseGoldenSet([
+    { id: "hi", question: "hi!", expectedScope: "smalltalk", tags: ["scope"] },
+  ]);
+  expect(greeting?.relevantEntityKeys).toEqual([]);
+  expect(errorOf([{ id: "q1", question: "Where?" }]).message).toContain("relevant entity key");
+  errorOf([item("q1", { expectedScope: "weather" })]);
 });
 
 test("keeps history turns in order", () => {
@@ -73,7 +89,7 @@ test("unknownEntityKeys lists keys no chunk carries, per item", () => {
 
 test("the committed golden file parses and its example keys exist in the fixture CV", () => {
   const items = parseGoldenSet(golden);
-  const examples = selectByTags(items, ["example"]);
+  const examples = selectByTags(items, ["example"]).filter((entry) => entry.expectedScope === "cv");
   expect(examples.length).toBe(5);
   const keys = new Set(new StructuredCvChunker().chunk(sampleCorpus).flatMap((chunk) => chunk.entityKeys));
   expect(unknownEntityKeys(examples, keys)).toEqual([]);

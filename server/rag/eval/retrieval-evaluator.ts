@@ -26,6 +26,7 @@ import {
   RETRIEVAL_PRESETS,
   type RetrievalPresetName,
 } from "@/server/rag/pipeline/retrieval-config";
+import { RouteStageOutputSchema, STAGE } from "@/server/rag/pipeline/trace-stages";
 
 // Runs the saved chat config (EvalInput.chatConfig) next to the fixed presets.
 export const CHAT_PRESET = "chat";
@@ -67,22 +68,36 @@ export type QuestionResult = {
   itemId: string;
   question: string;
   tags: string[];
+  expectedScope: QueryScope;
   // Null when retrieval failed.
   scope: QueryScope | null;
+  // Whether the scope router fell back to the rewriter. Null when no route stage ran.
+  routerFallback: boolean | null;
   queries: string[];
   retrieved: RetrievedSummary[];
-  // A failed run scores 0 everywhere: the visitor would have got no sources.
-  metrics: QuestionMetrics;
+  // A failed run scores 0 everywhere: the visitor would have got no sources. Null for a question
+  // that is not about the CV, which has no relevant chunks to find.
+  metrics: QuestionMetrics | null;
   totalMs: number;
   // Duration of each recorded stage. Skipped stages are absent.
   stageMs: Record<string, number>;
   error: { stage: string | null; message: string } | null;
 };
 
+export type ScopeSummary = {
+  // Questions whose final scope matched the golden one. A failed run counts as a miss.
+  correct: number;
+  // CV questions that skipped retrieval as small talk or off topic: the costly mistake.
+  cvSkipped: number;
+  routerFallbacks: number;
+};
+
 export type RunSummary = {
   questions: number;
   errors: number;
-  metrics: MeanMetrics;
+  // Means over the cv questions. Null when the run had none.
+  metrics: MeanMetrics | null;
+  scope: ScopeSummary;
   meanTotalMs: number;
   // Mean duration of each stage over the questions that ran it.
   meanStageMs: Record<string, number>;
@@ -191,7 +206,13 @@ export class RetrievalEvaluator {
     ks: readonly number[],
     subjectName: string,
   ): Promise<QuestionResult> {
-    const base = { itemId: item.id, question: item.question, tags: [...item.tags] };
+    const base = {
+      itemId: item.id,
+      question: item.question,
+      tags: [...item.tags],
+      expectedScope: item.expectedScope,
+    };
+    const scored = item.expectedScope === "cv";
     try {
       const result = await this.deps.runner.run({
         message: item.question,
@@ -205,13 +226,16 @@ export class RetrievalEvaluator {
       return {
         ...base,
         scope: result.scope,
+        routerFallback: routerFallback(result.trace),
         queries: [...result.queries],
         retrieved: result.chunks.map((chunk) => summarizeChunk(chunk, relevant)),
-        metrics: questionMetrics(
-          result.chunks.map((chunk) => chunk.entityKeys),
-          item.relevantEntityKeys,
-          ks,
-        ),
+        metrics: scored
+          ? questionMetrics(
+              result.chunks.map((chunk) => chunk.entityKeys),
+              item.relevantEntityKeys,
+              ks,
+            )
+          : null,
         ...timings(result.trace),
         error: null,
       };
@@ -224,9 +248,10 @@ export class RetrievalEvaluator {
       return {
         ...base,
         scope: null,
+        routerFallback: routerFallback(failure.trace),
         queries: [],
         retrieved: [],
-        metrics: questionMetrics([], item.relevantEntityKeys, ks),
+        metrics: scored ? questionMetrics([], item.relevantEntityKeys, ks) : null,
         ...timings(failure.trace),
         error: { stage: failure.stage, message: failed?.error ?? failure.message },
       };
@@ -251,6 +276,14 @@ function summarizeChunk(chunk: RetrievedChunk, relevant: ReadonlySet<string>): R
   };
 }
 
+function routerFallback(trace: RetrievalTrace): boolean | null {
+  const stage = trace.stages.find((entry) => entry.name === STAGE.route);
+  if (!stage) return null;
+  // A route stage that threw has no output; count it as a fallback too.
+  const output = RouteStageOutputSchema.safeParse(stage.output);
+  return output.success ? output.data.fallback : true;
+}
+
 function timings(trace: RetrievalTrace): Pick<QuestionResult, "totalMs" | "stageMs"> {
   const stageMs: Record<string, number> = {};
   for (const stage of trace.stages) {
@@ -266,13 +299,18 @@ export function summarize(results: readonly QuestionResult[], ks: readonly numbe
       byStage.set(name, [...(byStage.get(name) ?? []), ms]);
     }
   }
+  const scored = results.flatMap((result) => (result.metrics ? [result.metrics] : []));
   return {
     questions: results.length,
     errors: results.filter((result) => result.error !== null).length,
-    metrics: meanMetrics(
-      results.map((result) => result.metrics),
-      ks,
-    ),
+    metrics: scored.length > 0 ? meanMetrics(scored, ks) : null,
+    scope: {
+      correct: results.filter((result) => result.scope === result.expectedScope).length,
+      cvSkipped: results.filter(
+        (result) => result.expectedScope === "cv" && result.scope !== null && result.scope !== "cv",
+      ).length,
+      routerFallbacks: results.filter((result) => result.routerFallback === true).length,
+    },
     meanTotalMs: mean(results.map((result) => result.totalMs)),
     meanStageMs: Object.fromEntries([...byStage].map(([name, values]) => [name, mean(values)])),
   };

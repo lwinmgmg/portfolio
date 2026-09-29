@@ -60,6 +60,30 @@ test("known stages are parsed into typed details with their timing", () => {
   expect(view.id).toBe("trace-1");
 });
 
+test("a route stage is parsed with its input and decision", () => {
+  const output = {
+    scope: "smalltalk",
+    probabilities: { cv: 0.01, smalltalk: 0.98, off_topic: 0.01 },
+    choice: "smalltalk",
+    model: "typesafe/jev-1.13-20260917",
+    fallback: false,
+    error: null,
+  };
+  const view = readTrace(
+    traceWith([
+      stage("route", { model: "typesafe/jev-1.13", minConfidence: 0.8, historyTurns: 0 }, output),
+      stage("route", { model: "m" }, output),
+    ]),
+  );
+
+  expect(view.stages[0]?.detail).toEqual({
+    kind: "route",
+    input: { model: "typesafe/jev-1.13", minConfidence: 0.8, historyTurns: 0 },
+    output,
+  });
+  expect(view.stages[1]?.detail.kind).toBe("raw");
+});
+
 test("a lexical search keeps the name it ignored, and older traces without it still parse", () => {
   const view = readTrace(
     traceWith([

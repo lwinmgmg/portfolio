@@ -51,7 +51,12 @@ test("the composed pipeline builds and activates the default index from the publ
   const traces: RetrievalTrace[] = [];
   const settings = new MemoryRagSettings();
   const rag = createRag(
-    envWith({ EMBEDDING_MODEL: "embed-x", LLM_UTILITY_MODEL: "utility-x", RERANK_MODEL: "rerank-x" }),
+    envWith({
+      EMBEDDING_MODEL: "embed-x",
+      LLM_UTILITY_MODEL: "utility-x",
+      RERANK_MODEL: "rerank-x",
+      LLM_ROUTER_MODEL: "router-x",
+    }),
     {
       llm: {
         complete: async (request) => {
@@ -68,6 +73,9 @@ test("the composed pipeline builds and activates the default index from the publ
         rerank: async ({ model, documents }) => {
           rerankModels.push(model);
           return documents.map((_document, index) => ({ index, score: 1 - index / 10 }));
+        },
+        decide: () => {
+          throw new Error("not used");
         },
       },
       cvVersions: { findPublished: async () => published },
@@ -91,6 +99,7 @@ test("the composed pipeline builds and activates the default index from the publ
     embeddingModel: "embed-x",
     contextModel: "utility-x",
   });
+  expect(rag.scopeRouter.model).toBe("router-x");
   expect(rag.chunkers.structured instanceof StructuredCvChunker).toBe(true);
   expect(rag.chunkers["token-window"] instanceof TokenWindowChunker).toBe(true);
 

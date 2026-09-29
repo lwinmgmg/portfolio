@@ -33,7 +33,7 @@ chunk contexts.
 | Option | Default | Meaning |
 |---|---|---|
 | `--index <id\|active>[,...]` | `active` | Indexes to compare, e.g. a structured contextual index against a token-window plain one. Repeatable. Each must be `ready`. |
-| `--presets <name>[,...]` | all but `chat` | `vector-only`, `lexical-only`, `hybrid`, `hybrid-rerank`, `hybrid-rerank-rewrite`, `full`, and `chat`: the config saved with "Use for chat" in the playground (the defaults when none is saved). |
+| `--presets <name>[,...]` | all but `chat` | `vector-only`, `lexical-only`, `hybrid`, `hybrid-rerank`, `hybrid-rerank-rewrite`, `hybrid-rerank-rewrite-route` (the same with the decision-model scope router), `full`, and `chat`: the config saved with "Use for chat" in the playground (the defaults when none is saved). |
 | `--k <n>[,...]` | `1,3,5` | Cutoffs for hit@k and recall@k, 1 to 10. |
 | `--tag <tag>[,...]` | none | Only questions with any of these tags. Repeatable. |
 | `--golden <path>` | `evals/cv-retrieval.golden.json` | Golden file. |
@@ -45,8 +45,10 @@ Traces are not saved.
 ## Output
 
 - stdout: a markdown table with one row per index and preset (hit@k for each k, recall at the largest
-  k, MRR, mean total and rerank milliseconds, errors), then the questions with no relevant chunk
-  within the largest k and their top 3 retrieved titles, then golden keys the index does not contain.
+  k, MRR, scope accuracy, CV questions that skipped retrieval, router fallbacks, mean total and rerank
+  milliseconds, errors), then the questions with no relevant chunk within the largest k and their
+  top 3 retrieved titles, then the questions whose scope differs from the golden one, then golden
+  keys the index does not contain.
 - `evals/reports/<timestamp>.json`: every question's retrieved chunks, metrics and stage timings.
   Git ignores this folder.
 
@@ -59,17 +61,21 @@ A JSON array. Every item:
   "id": "experience-1",
   "question": "Where does she work now?",
   "history": [{ "role": "user", "text": "..." }, { "role": "assistant", "text": "..." }],
+  "expectedScope": "cv",
   "relevantEntityKeys": ["experience:acme-senior-software-engineer-2021-04"],
   "tags": ["experience"]
 }
 ```
 
 - `id` must be unique. `history` (oldest first) and `tags` may be left out.
-- `relevantEntityKeys` needs at least one key. A retrieved chunk is relevant when it carries any of
+- `expectedScope` is `cv` (the default), `smalltalk` or `off_topic`: how the chat should classify the
+  question. Only `cv` items get retrieval metrics; every item counts for scope accuracy.
+- `relevantEntityKeys` needs at least one key on a `cv` item, and may be left out otherwise. A retrieved chunk is relevant when it carries any of
   them. Keys are shown on `/admin/rag/<indexId>` for each chunk: `profile`, `experience:<id>`,
   `project:<id>`, `education:<id>`, `skills:<id>`, `certification:<id>`, `language:<id>`, `other:<id>`.
 - The five items tagged `example` use the test fixture CV (Jane Doe), not the published CV, so they
-  score 0 against the real index. Replace them with real questions.
+  score 0 against the real index. Replace them with real questions. The four items tagged `scope`
+  are small talk and off-topic examples; they work against any CV.
 
 ## Metrics
 
@@ -82,6 +88,21 @@ count as missed.
 - MRR: mean of 1 / rank of the first relevant chunk (0 when none is in the top 10).
 
 A question whose retrieval failed scores 0 and is counted under errors.
+
+Scope columns, over every question:
+
+- scope acc: share of questions whose final scope (the router's short-circuit, else the rewriter's)
+  equals `expectedScope`. A failed run counts as a miss.
+- cv skipped: `cv` questions answered as small talk or off topic, so they got a fixed reply instead of
+  sources. This is the costly mistake; compare it between `hybrid-rerank-rewrite` and
+  `hybrid-rerank-rewrite-route` before saving the router for the chat.
+- router fallbacks: questions whose route stage failed and went on to the rewriter.
+
+To compare the router with the rewriter:
+
+```sh
+bun run eval:rag -- --presets hybrid-rerank-rewrite,hybrid-rerank-rewrite-route
+```
 
 # Scope-router probe (Plan.md 2.14)
 
@@ -104,3 +125,5 @@ bun --env-file=.env.local scripts/probe-scope-router.ts --model typesafe/jev-1.1
 | `--file <path>` | `evals/scope-probe.json` | Probe file: `{ "subject", "items": [{ "id", "expected", "message", "history"? }] }`, `expected` one of `cv`, `smalltalk`, `off_topic`. |
 
 Free models allow about 20 requests a minute, so the last items of a full run can return 429.
+`respan/span-01-lite:free` refuses the route question (it takes only yes/no questions);
+`typesafe/jev-1.13`, the default, passed on 2026-09-29.

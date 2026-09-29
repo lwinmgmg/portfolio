@@ -5,12 +5,16 @@ import {
   QUERY_REWRITE_MODES,
   RETRIEVAL_FIELD_LABELS,
   RETRIEVAL_NUMBER_FIELDS,
+  SCOPE_ROUTERS,
   SEARCH_MODES,
   type NumberField,
 } from "@/server/rag/pipeline/retrieval-config-fields";
 
 const boundedInt = ({ min, max, default: fallback }: NumberField) =>
   z.int().min(min).max(max).default(fallback);
+
+const boundedNumber = ({ min, max, default: fallback }: NumberField) =>
+  z.number().min(min).max(max).default(fallback);
 
 const fields = RETRIEVAL_NUMBER_FIELDS;
 
@@ -23,14 +27,13 @@ export const RetrievalConfigSchema = z.strictObject({
   fusedLimit: boundedInt(fields.fusedLimit),
   rerank: z.boolean().default(true),
   finalK: boundedInt(fields.finalK),
-  minRerankScore: z
-    .number()
-    .min(fields.minRerankScore.min)
-    .max(fields.minRerankScore.max)
-    .default(fields.minRerankScore.default),
+  minRerankScore: boundedNumber(fields.minRerankScore),
   ignoreSubjectInLexical: z.boolean().default(true),
   ignoreSubjectInRerank: z.boolean().default(true),
   dropBelowMeanRerank: z.boolean().default(true),
+  // A saved chat config from before Phase 2.14 has neither field and parses with these defaults.
+  scopeRouter: z.enum(SCOPE_ROUTERS).default("rewriter"),
+  minRouteConfidence: boundedNumber(fields.minRouteConfidence),
 }) satisfies z.ZodType<RetrievalConfig>;
 
 export const DEFAULT_RETRIEVAL_CONFIG: Readonly<RetrievalConfig> = Object.freeze(
@@ -54,21 +57,34 @@ export const RETRIEVAL_PRESET_NAMES = [
   "hybrid",
   "hybrid-rerank",
   "hybrid-rerank-rewrite",
+  "hybrid-rerank-rewrite-route",
   "full",
 ] as const;
 
 export type RetrievalPresetName = (typeof RETRIEVAL_PRESET_NAMES)[number];
 
-type PresetShape = Pick<RetrievalConfig, "rewrite" | "search" | "rerank">;
+type PresetShape = Pick<RetrievalConfig, "rewrite" | "search" | "rerank" | "scopeRouter">;
 
-// Presets differ only in rewriting, search mode and reranking, so their results are comparable.
+// Presets differ only in rewriting, search mode, reranking and scope routing, so their results
+// are comparable.
 const PRESET_SHAPES: Record<RetrievalPresetName, PresetShape> = {
-  "vector-only": { rewrite: "none", search: "vector", rerank: false },
-  "lexical-only": { rewrite: "none", search: "lexical", rerank: false },
-  hybrid: { rewrite: "none", search: "hybrid", rerank: false },
-  "hybrid-rerank": { rewrite: "none", search: "hybrid", rerank: true },
-  "hybrid-rerank-rewrite": { rewrite: "standalone", search: "hybrid", rerank: true },
-  full: { rewrite: "multi", search: "hybrid", rerank: true },
+  "vector-only": { rewrite: "none", search: "vector", rerank: false, scopeRouter: "rewriter" },
+  "lexical-only": { rewrite: "none", search: "lexical", rerank: false, scopeRouter: "rewriter" },
+  hybrid: { rewrite: "none", search: "hybrid", rerank: false, scopeRouter: "rewriter" },
+  "hybrid-rerank": { rewrite: "none", search: "hybrid", rerank: true, scopeRouter: "rewriter" },
+  "hybrid-rerank-rewrite": {
+    rewrite: "standalone",
+    search: "hybrid",
+    rerank: true,
+    scopeRouter: "rewriter",
+  },
+  "hybrid-rerank-rewrite-route": {
+    rewrite: "standalone",
+    search: "hybrid",
+    rerank: true,
+    scopeRouter: "decision",
+  },
+  full: { rewrite: "multi", search: "hybrid", rerank: true, scopeRouter: "rewriter" },
 };
 
 export const RETRIEVAL_PRESETS: Readonly<Record<RetrievalPresetName, Readonly<RetrievalConfig>>> =

@@ -41,6 +41,8 @@ export function StagePanel({
 
 function StageBody({ detail }: { detail: StageDetail }) {
   switch (detail.kind) {
+    case "route":
+      return <RouteBody detail={detail} />;
     case "rewrite":
       return <RewriteBody detail={detail} />;
     case "embed":
@@ -92,6 +94,75 @@ function StageBody({ detail }: { detail: StageDetail }) {
         </div>
       );
   }
+}
+
+const ROUTE_OUTCOMES = {
+  smalltalk: "Short-circuit: small talk",
+  off_topic: "Short-circuit: off topic",
+} as const;
+
+const ROUTE_SCOPES = ["cv", "smalltalk", "off_topic"] as const;
+
+function RouteBody({ detail }: { detail: Extract<StageDetail, { kind: "route" }> }) {
+  const { input, output } = detail;
+  const outcome = output.scope ? ROUTE_OUTCOMES[output.scope] : "Deferred to rewriter";
+  const cutoff = `${input.minConfidence * 100}%`;
+  return (
+    <div className="space-y-3 text-sm">
+      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
+        <dt className="font-medium">Outcome</dt>
+        <dd className="font-semibold">{outcome}</dd>
+        <dt className="font-medium">Model</dt>
+        <dd className="break-all font-mono">{output.model ?? input.model}</dd>
+        <dt className="font-medium">Cutoff</dt>
+        <dd className="tabular-nums">{input.minConfidence.toFixed(2)}</dd>
+        <dt className="font-medium">History</dt>
+        <dd>
+          {input.historyTurns === 0
+            ? "None"
+            : `${input.historyTurns} ${input.historyTurns === 1 ? "turn" : "turns"}`}
+        </dd>
+      </dl>
+      {output.probabilities ? (
+        <ul className="space-y-2" aria-label="Scope probabilities">
+          {ROUTE_SCOPES.map((scope) => {
+            const probability = output.probabilities?.[scope] ?? 0;
+            return (
+              <li key={scope} className="grid grid-cols-[6.5rem_1fr_3rem] items-center gap-2">
+                <span className="flex items-center gap-1">
+                  <ScopeBadge scope={scope} />
+                  {output.choice === scope ? <span className="sr-only">(chosen)</span> : null}
+                </span>
+                <span className="relative h-3 rounded-full bg-zinc-100 dark:bg-zinc-800">
+                  <span
+                    className={`absolute inset-y-0 left-0 rounded-full ${
+                      output.choice === scope ? "bg-zinc-700 dark:bg-zinc-300" : "bg-zinc-400 dark:bg-zinc-500"
+                    }`}
+                    style={{ width: `${probability * 100}%` }}
+                  />
+                  {/* cv never short-circuits, so its bar has no cutoff. */}
+                  {scope === "cv" ? null : (
+                    <span
+                      className="absolute -inset-y-1 w-0.5 bg-red-600 dark:bg-red-400"
+                      style={{ left: cutoff }}
+                      aria-hidden
+                    />
+                  )}
+                </span>
+                <span className="text-right tabular-nums">{formatScore(probability)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <p className={note}>The red mark is the cutoff; only small talk and off topic can short-circuit.</p>
+      {output.fallback ? (
+        <p className={errorText}>
+          The router fell back to the rewriter{output.error ? `: ${output.error}` : "."}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function RewriteBody({ detail }: { detail: Extract<StageDetail, { kind: "rewrite" }> }) {

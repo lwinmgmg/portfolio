@@ -154,6 +154,38 @@ export interface QueryRewriter {
   rewrite(input: RewriteInput): Promise<RewriteResult>;
 }
 
+// Who decides the scope: the rewriter alone, or a decision model first (Phase 2.14).
+export type ScopeRouterKind = "rewriter" | "decision";
+
+export type RouteInput = {
+  message: string;
+  // Earlier turns, oldest first. The router reads only the most recent ones.
+  history: readonly ChatTurn[];
+  subjectName: string;
+  // A small-talk or off-topic choice short-circuits only at or above this probability.
+  minConfidence: number;
+};
+
+export type RouteDecision = {
+  // Set only for a confident short-circuit. Null: the rewriter decides, as without a router.
+  scope: "smalltalk" | "off_topic" | null;
+  // Null after a fallback.
+  probabilities: Record<QueryScope, number> | null;
+  choice: QueryScope | null;
+  // The model that answered, as the provider named it. Null when nothing answered.
+  model: string | null;
+  // True when the router could not decide: a provider error, a timeout or an unreadable answer.
+  fallback: boolean;
+  error: string | null;
+};
+
+export interface ScopeRouter {
+  // The model asked, for the trace.
+  readonly model: string;
+  // Never throws for a provider or parse failure. It defers to the rewriter instead.
+  route(input: RouteInput): Promise<RouteDecision>;
+}
+
 // One search result list to fuse, named for the trace, e.g. `vector:q0` or `bm25:q1`.
 export type NamedHitList = { name: string; hits: readonly RankedHit[] };
 
@@ -204,6 +236,10 @@ export type RetrievalConfig = {
   ignoreSubjectInRerank: boolean;
   // Also drop reranked hits scoring below the mean of that turn's reranked scores.
   dropBelowMeanRerank: boolean;
+  // `decision` asks a decision model for the scope before the rewrite.
+  scopeRouter: ScopeRouterKind;
+  // The router's short-circuit cutoff. Unused with `rewriter`.
+  minRouteConfidence: number;
 };
 
 // The retrieval config every chat turn runs with.

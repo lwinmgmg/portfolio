@@ -6,8 +6,8 @@ import {
   ANSWER_HISTORY_TURNS,
   answerGenerationSettings,
   buildAnswerMessages,
-  buildSmalltalkMessages,
   offTopicReply,
+  smalltalkReply,
   type AnswerSource,
 } from "@/server/rag/answer/answer-prompt";
 
@@ -117,24 +117,6 @@ test("no sources still sends an empty sources block", () => {
   expect(contentOf(messages[1])).toBe("<sources></sources>\n\n<question>Her salary?</question>");
 });
 
-test("small talk has no sources and steers back to the CV", () => {
-  const messages = buildSmalltalkMessages({
-    subjectName: "Jane Doe",
-    history: turns(2),
-    message: "Hi!",
-  });
-
-  expect(messages.map((message) => message.role)).toEqual([
-    "system",
-    "user",
-    "assistant",
-    "user",
-  ]);
-  expect(contentOf(messages[0])).toContain("ask about Jane Doe's experience");
-  expect(contentOf(messages[3])).toBe("<question>Hi!</question>");
-  expect(messages.some((message) => contentOf(message).includes("<source"))).toBe(false);
-});
-
 test("answer settings map the reasoning level and leave room for reasoning tokens", () => {
   expect(answerGenerationSettings("off")).toEqual({ reasoning: { enabled: false }, maxTokens: 600 });
   for (const effort of ["low", "medium", "high"] as const) {
@@ -142,8 +124,16 @@ test("answer settings map the reasoning level and leave room for reasoning token
   }
 });
 
-test("the off-topic reply names the subject", () => {
+test("the small-talk reply names the subject and invites a CV question", () => {
+  expect(smalltalkReply("Jane Doe")).toBe(
+    "Happy to help! I answer questions about Jane Doe's experience, projects, skills and " +
+      "education. What would you like to know?",
+  );
+});
+
+test("the off-topic reply names the subject and points to them for help", () => {
   expect(offTopicReply("Jane Doe")).toBe(
-    "I can only answer questions about Jane Doe's experience, skills and background.",
+    "I can only answer questions about Jane Doe's experience, skills and background. " +
+      "If you'd like Jane Doe's help with something, you can contact Jane Doe directly.",
   );
 });

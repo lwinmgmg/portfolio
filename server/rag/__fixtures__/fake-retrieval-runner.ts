@@ -1,5 +1,6 @@
 import {
   RetrievalError,
+  type QueryScope,
   type RagIndex,
   type RetrievalRequest,
   type RetrievalResult,
@@ -30,9 +31,22 @@ export function readyIndex(id: string, overrides: Partial<RagIndex["config"]> = 
   };
 }
 
-function stage(name: string, durationMs: number, error: string | null = null): TraceStage {
-  return { name, input: null, output: null, startedAt: 0, durationMs, error };
+function stage(
+  name: string,
+  durationMs: number,
+  error: string | null = null,
+  output: unknown = null,
+): TraceStage {
+  return { name, input: null, output, startedAt: 0, durationMs, error };
 }
+
+export type FakeRunnerOptions = {
+  // The scope a question ends with. Defaults to cv when it has answers, else off_topic. A
+  // non-cv scope returns no chunks, as the pipeline does.
+  scopes?: Record<string, QueryScope>;
+  // With `scopeRouter: "decision"`, questions whose route stage falls back (1 ms, before rewrite).
+  routerFallbacks?: readonly string[];
+};
 
 // Answers each question with chunks carrying the given entity keys, titled by their first key.
 // Rewrite and lexical search take 1 and 2 ms, rerank 5 ms when the config reranks.
@@ -43,19 +57,23 @@ export class FakeRetrievalRunner implements RetrievalRunner {
     private readonly answers: Record<string, string[][]>,
     // Questions whose run fails at the lexical-search stage with this error.
     private readonly failures: Record<string, string> = {},
+    private readonly options: FakeRunnerOptions = {},
   ) {}
 
   async run(request: RetrievalRequest): Promise<RetrievalResult> {
     this.requests.push(request);
+    const route = this.routeStages(request);
     const failure = this.failures[request.message];
     if (failure !== undefined) {
-      const stages = [stage("rewrite", 1), stage("lexical-search", 2, failure)];
+      const stages = [...route, stage("rewrite", 1), stage("lexical-search", 2, failure)];
       throw new RetrievalError(this.trace(request, stages, 3), new Error(failure));
     }
 
-    const stages = [stage("rewrite", 1), stage("lexical-search", 2)];
+    const stages = [...route, stage("rewrite", 1), stage("lexical-search", 2)];
     if (request.config.rerank) stages.push(stage("rerank", 5));
-    const chunks = (this.answers[request.message] ?? []).map(
+    const answers = this.answers[request.message] ?? [];
+    const scope = this.options.scopes?.[request.message] ?? (answers.length > 0 ? "cv" : "off_topic");
+    const chunks = (scope === "cv" ? answers : []).map(
       (entityKeys, index): RetrievedChunk => ({
         id: `c${index + 1}`,
         indexId: request.indexId ?? "active",
@@ -74,10 +92,25 @@ export class FakeRetrievalRunner implements RetrievalRunner {
     );
     return {
       chunks,
-      scope: chunks.length > 0 ? "cv" : "off_topic",
+      scope,
       queries: [request.message],
       trace: this.trace(request, stages, request.config.rerank ? 10 : 4),
     };
+  }
+
+  private routeStages(request: RetrievalRequest): TraceStage[] {
+    if (request.config.scopeRouter !== "decision") return [];
+    const fallback = this.options.routerFallbacks?.includes(request.message) ?? false;
+    return [
+      stage("route", 1, null, {
+        scope: null,
+        probabilities: null,
+        choice: null,
+        model: null,
+        fallback,
+        error: fallback ? "router down" : null,
+      }),
+    ];
   }
 
   private trace(request: RetrievalRequest, stages: TraceStage[], totalMs: number): RetrievalTrace {

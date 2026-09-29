@@ -10,15 +10,27 @@ const ChatTurnSchema = z.strictObject({
 }) satisfies z.ZodType<ChatTurn>;
 
 // Strict, so a misspelled field fails instead of being ignored.
-export const GoldenItemSchema = z.strictObject({
-  id: nonBlank,
-  question: nonBlank,
-  // Earlier turns, oldest first, for follow-up questions.
-  history: z.array(ChatTurnSchema).default([]),
-  // A retrieved chunk is relevant when it carries any of these keys.
-  relevantEntityKeys: z.array(nonBlank).min(1),
-  tags: z.array(nonBlank).default([]),
-});
+export const GoldenItemSchema = z
+  .strictObject({
+    id: nonBlank,
+    question: nonBlank,
+    // Earlier turns, oldest first, for follow-up questions.
+    history: z.array(ChatTurnSchema).default([]),
+    // How the chat should classify the question. Only `cv` items are scored for retrieval.
+    expectedScope: z.enum(["cv", "smalltalk", "off_topic"]).default("cv"),
+    // A retrieved chunk is relevant when it carries any of these keys.
+    relevantEntityKeys: z.array(nonBlank).default([]),
+    tags: z.array(nonBlank).default([]),
+  })
+  .superRefine((item, context) => {
+    if (item.expectedScope === "cv" && item.relevantEntityKeys.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "A cv question needs at least one relevant entity key.",
+        path: ["relevantEntityKeys"],
+      });
+    }
+  });
 
 export type GoldenItem = z.infer<typeof GoldenItemSchema>;
 

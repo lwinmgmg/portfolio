@@ -51,12 +51,15 @@ function rewriteInstructions(subjectName: string, multi: boolean): string {
 // What each scope means. The decision router (server/rag/route) asks the same question.
 export function scopeDefinitions(subjectName: string): Record<QueryScope, string> {
   return {
-    cv: `anything ${subjectName}'s CV could answer, including follow-ups and how to contact them.`,
+    cv:
+      `anything ${subjectName}'s CV could answer, including follow-ups, how to contact them, ` +
+      `and whether ${subjectName} can help with some work (their skills, services or availability).`,
     smalltalk:
       "greetings, thanks, or questions about this assistant, with no request for CV information.",
+    // "Can he set up X?" asks about the person; "set up X for me" asks the assistant to do it.
     off_topic:
-      "everything else, such as general knowledge, coding help, other people, or " +
-      "requests to write, translate or role-play.",
+      "everything else, such as general knowledge, other people, or asking this assistant itself " +
+      "to do a task: coding help, writing, translating or role-play.",
   };
 }
 

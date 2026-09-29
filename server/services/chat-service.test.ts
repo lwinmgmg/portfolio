@@ -242,7 +242,7 @@ function setup(options: SetupOptions = {}) {
           }
         }
         return {
-          chunks: scope === "off_topic" ? [] : (options.chunks ?? retrievedChunks),
+          chunks: scope === "cv" ? (options.chunks ?? retrievedChunks) : [],
           scope,
           queries: [request.message],
           trace: traceFor(request, id, recorded),
@@ -453,14 +453,6 @@ test("a CV question with no chunks gets the no-information reply without an LLM 
   expect(conversations.rows[0]?.messages[1]?.traceId).toBe("trace-1");
   expect(saved).toHaveLength(1);
   expect(saved[0]?.stages.map((stage) => stage.name)).not.toContain("generate");
-});
-
-test("small talk with no chunks still calls the answer model", async () => {
-  const { service, chat } = setup({ scope: "smalltalk", chunks: [], answer: { deltas: ["Hi!"] } });
-
-  await collect(service.reply({ ...ask, message: "Hello" }));
-
-  expect(chat.requests).toHaveLength(1);
 });
 
 test("steps are sent while the pipeline is still running", async () => {
@@ -698,7 +690,9 @@ test("an off-topic message gets the fixed reply without an LLM call", async () =
 
   const events = await collect(service.reply(ask));
 
-  const reply = "I can only answer questions about Jane Doe's experience, skills and background.";
+  const reply =
+    "I can only answer questions about Jane Doe's experience, skills and background. " +
+    "If you'd like Jane Doe's help with something, you can contact Jane Doe directly.";
   // Retrieval stops after rewrite, whose detail shows why; there is no generate step.
   expect(events).toEqual([
     { type: "meta", conversationId: "conv-1" },
@@ -721,32 +715,25 @@ test("an off-topic message gets the fixed reply without an LLM call", async () =
   expect(saved.map((trace) => trace.stages.map((stage) => stage.name))).toEqual([["rewrite"]]);
 });
 
-test("small talk calls the answer model without sources", async () => {
-  const { service, chat, saved } = setup({
-    scope: "smalltalk",
-    answer: { deltas: ["Hi! Ask me about Jane's work [S1]."] },
-  });
+test("small talk gets the fixed reply without an LLM call", async () => {
+  const { service, chat, conversations, saved } = setup({ scope: "smalltalk" });
 
   const events = await collect(service.reply({ ...ask, message: "Hello" }));
 
-  expect(stepLog(events)).toEqual([
-    "rewrite:running",
-    "rewrite:done",
-    "generate:running",
-    "generate:done",
+  const reply =
+    "Happy to help! I answer questions about Jane Doe's experience, projects, skills and " +
+    "education. What would you like to know?";
+  expect(events).toEqual([
+    { type: "meta", conversationId: "conv-1" },
+    running("rewrite", 0),
+    ended("rewrite", 0, 1, { kind: "rewrite", queries: ["Hello"], scope: "smalltalk", fallback: false }),
+    { type: "delta", text: reply },
+    { type: "sources", sources: [] },
+    { type: "done" },
   ]);
-  expect(events.at(-3)).toEqual(ended("generate", 15, 5, { kind: "generate", sources: 0 }));
-  expect(events.at(-2)).toEqual({ type: "sources", sources: [] });
-  const request = chat.requests[0];
-  expect(request?.messages.some((message) => String(message.content).includes("<source"))).toBe(
-    false,
-  );
-  expect(saved[0]?.stages[1]?.input).toEqual({
-    model: "answer-model",
-    mode: "smalltalk",
-    sources: 0,
-    historyTurns: 0,
-  });
+  expect(chat.requests).toHaveLength(0);
+  expect(conversations.rows[0]?.messages.map((message) => message.text)).toEqual(["Hello", reply]);
+  expect(saved.map((trace) => trace.stages.map((stage) => stage.name))).toEqual([["rewrite"]]);
 });
 
 test("a conversation continues only for the session that owns it", async () => {

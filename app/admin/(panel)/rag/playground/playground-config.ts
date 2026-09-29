@@ -15,6 +15,8 @@ const CONFIG_FIELDS = [
   "ignoreSubjectInLexical",
   "ignoreSubjectInRerank",
   "dropBelowMeanRerank",
+  "scopeRouter",
+  "minRouteConfidence",
 ] as const satisfies readonly (keyof RetrievalConfig)[];
 
 export function sameConfig(a: RetrievalConfig, b: RetrievalConfig): boolean {

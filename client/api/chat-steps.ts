@@ -15,6 +15,7 @@ type DetailKind = ChatStepDetail["kind"];
 
 // The detail kind each step reports. A detail of another kind is read as malformed.
 const DETAIL_KIND: Record<ChatStepName, DetailKind> = {
+  route: "route",
   rewrite: "rewrite",
   "embed-queries": "embed",
   "vector-search": "search",
@@ -30,6 +31,9 @@ const SCOPES: readonly QueryScope[] = ["cv", "smalltalk", "off_topic"];
 
 // Checks the fields of one detail kind; the kind itself is already known.
 const DETAIL_GUARDS: Record<DetailKind, (value: Record<string, unknown>) => boolean> = {
+  route: (value) =>
+    (value.scope === null || SCOPES.some((scope) => scope === value.scope)) &&
+    typeof value.fallback === "boolean",
   rewrite: (value) =>
     isArrayOf(value.queries, isString) &&
     SCOPES.some((scope) => scope === value.scope) &&

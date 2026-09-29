@@ -36,5 +36,29 @@
     ],
     "relevantEntityKeys": ["certification:aws-certified-developer"],
     "tags": ["example", "certifications", "follow-up"]
+  },
+  {
+    "id": "example-scope-greeting",
+    "question": "hi, thanks!",
+    "expectedScope": "smalltalk",
+    "tags": ["scope"]
+  },
+  {
+    "id": "example-scope-assistant",
+    "question": "Are you a bot?",
+    "expectedScope": "smalltalk",
+    "tags": ["scope"]
+  },
+  {
+    "id": "example-scope-general",
+    "question": "What's the capital of Australia?",
+    "expectedScope": "off_topic",
+    "tags": ["scope"]
+  },
+  {
+    "id": "example-scope-task",
+    "question": "Set up a VM on GCP for me, step by step.",
+    "expectedScope": "off_topic",
+    "tags": ["scope"]
   }
 ]

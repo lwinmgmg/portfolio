@@ -78,7 +78,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `LLM_ANSWER_MODEL` | yes | `nvidia/nemotron-3-ultra-550b-a55b:free` | chat answers |
 | `EMBEDDING_MODEL` | yes | `nvidia/nemotron-3-embed-1b:free` | embeddings |
 | `RERANK_MODEL` | yes | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranking |
-| `LLM_ROUTER_MODEL` | no | `respan/span-01-lite:free` | scope routing through the Decisions API (2.14); read only when a config sets `scopeRouter: "decision"` |
+| `LLM_ROUTER_MODEL` | no | `typesafe/jev-1.13` | scope routing through the Decisions API (2.14); asked only when a config sets `scopeRouter: "decision"`. Needs `choice` questions; `respan/span-01-lite:free` does not support them |
 | `CHAT_DAILY_MESSAGE_LIMIT` | no | `500` | global chat cost guard |
 | `LLM_ANSWER_REASONING` | no | `low` | `off` \| `low` \| `medium` \| `high`; answer-model reasoning shown as "Thinking" (Phase 3) |
 | `BLOB_READ_WRITE_TOKEN` | yes | — | `handleUpload` client tokens (pull with `vercel env pull`) |
@@ -1137,11 +1137,30 @@ sub-phase adds an optional `route` stage before the rewrite. It asks a *decision
 OpenRouter's Decisions API for the scope. A confident `smalltalk` or `off_topic` skips the rest of
 retrieval. Anything else goes on to the rewriter exactly as today.
 
+**Status:** Built. Not marked Done: the playground and chat done-when checks need a browser and a
+saved chat config, which only the owner can do.
+
+> **Since 2.14a** (owner decision, 2026-09-29), the rewriter path already stops after `rewrite`
+> for `smalltalk` as well as `off_topic`, and both scopes get a fixed reply. The router's only
+> remaining gain is skipping the rewrite call itself (about 0.55 s instead of 1–2 s per such turn
+> in the eval).
+>
+> **Router model (owner decision, 2026-09-29).** The step 2 probe was a no-go for
+> `respan/span-01-lite:free`: it accepts only `noul` questions and a string or `{ input, output }`
+> state. The owner chose `typesafe/jev-1.13`, which passed the probe (24/24 at cutoff 0.6, 23/24 at
+> 0.7–0.9, no CV question skipped, median 568 ms). `LLM_ROUTER_MODEL` now defaults to it.
+>
+> **Deviations.** `ScopeRouter` also exposes `readonly model` (the stage input records the model
+> asked). `RouteStageOutput` keeps `model`: the dated version that answered, e.g.
+> `typesafe/jev-1.13-20260917`. The eval's "cv skipped" counts every `cv` question that ended as
+> small talk or off topic, whether the router or the rewriter decided, so both rows compare.
+
 A decision model returns probabilities, not text. OpenRouter serves it at a separate alpha
 endpoint (`POST …/alpha/decisions`, body `{ model, state, questions }`), not chat completions. A
 `choice` question returns `{ choice, confidence, probabilities: { <option>: number } }`. The
-default model is `respan/span-01-lite:free` (Respan, released 2026-09-26). It is marketed for
-evaluation and guardrails, not routing, so step 2 is a go/no-go probe before the rest is built.
+default model was first `respan/span-01-lite:free` (Respan, released 2026-09-26). It is marketed for
+evaluation and guardrails, not routing, so step 2 is a go/no-go probe before the rest is built. It
+failed the probe; the default is now `typesafe/jev-1.13` (see above).
 
 **Files:** `server/domain/llm.ts`, `server/domain/rag.ts`, `server/domain/chat.ts`, `server/llm/openrouter-client.ts`, `server/llm/llm-env.ts`, `server/rag/route/*` (new), `server/rag/pipeline/retrieval-config-fields.ts`, `server/rag/pipeline/retrieval-config.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/pipeline/trace-stages.ts`, `server/rag/pipeline/trace-reader.ts`, `server/rag/progress/chat-steps.ts`, `server/rag/rag-composition.ts`, `server/rag/eval/*`, `app/admin/(panel)/rag/_components/trace-stage-panel.tsx`, `app/admin/(panel)/rag/playground/*`, `client/api/chat-steps.ts`, `app/(public)/_components/chat/chat-steps-text.ts`, `scripts/probe-scope-router.ts` (new), `evals/scope-probe.json` (new), `evals/cv-retrieval.golden.json`, `evals/README.md`, `.env.example`, tests.
 
@@ -1184,6 +1203,24 @@ evaluation and guardrails, not routing, so step 2 is a go/no-go probe before the
 - With that config saved through "Use for chat", "hi, thanks!" in the chat gets a small-talk answer, and its steps show only the route step before the answer.
 - With the router model set to a bad slug, a chat turn still answers through the rewriter and the trace's `route` stage shows the fallback and its error.
 - `bun run eval:rag -- --presets hybrid-rerank-rewrite,hybrid-rerank-rewrite-route` prints both rows with scope accuracy and the count of misrouted CV questions.
+
+## Phase 2.14a: Fixed replies for small talk and off topic
+
+**Status:** Built. Not marked Done: the chat check below needs a live turn.
+
+The owner wants small talk answered with a default message, like off-topic messages, instead of an
+answer-model reply.
+
+**Files:** `server/rag/answer/answer-prompt.ts`, `server/services/chat-service.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/pipeline/trace-stages.ts` (comment only), `app/admin/(panel)/rag/_components/trace-view.tsx`, tests.
+
+**Fixed decisions**
+- The rewriter's scope decides, as before. `smalltalk` gets `smalltalkReply(subjectName)`: "Happy to help! I answer questions about <name>'s experience, projects, skills and education. What would you like to know?" `off_topic` keeps `offTopicReply`. Neither calls the answer model; both go through `ChatService.fixedReply` (stored turn, trace, no sources).
+- The pipeline stops after `rewrite` for any scope but `cv`, so a small-talk turn records only `rewrite`, like an off-topic one.
+- `buildSmalltalkMessages` and its instructions are removed. `GenerateStageInput.mode` keeps `smalltalk` in its schema so older traces still parse; new traces only write `cv`.
+- The admin trace view says "Small talk: retrieval was skipped." when a small-talk trace has no sources.
+
+**Done when**
+- "hi, thanks!" in the chat gets the fixed small-talk reply, and its steps show only the rewrite step before the answer.
 
 ---
 

@@ -8,6 +8,7 @@ import {
   type Chunk,
   type FusedHit,
   type QueryRewriter,
+  type QueryScope,
   type RagIndex,
   type RagIndexRepository,
   type RankedHit,
@@ -18,11 +19,14 @@ import {
   type RetrievedChunk,
   type Retriever,
   type RewriteResult,
+  type RouteDecision,
+  type ScopeRouter,
   type TraceSource,
 } from "@/server/domain/rag";
 import { embedInBatches } from "@/server/rag/embedding/embed-in-batches";
 import { reciprocalRankFusion } from "@/server/rag/fusion/reciprocal-rank-fusion";
 import { withoutName } from "@/server/rag/rerank/without-name";
+import { ROUTE_HISTORY_TURNS } from "@/server/rag/route/route-question";
 import { TraceRecorder } from "@/server/rag/pipeline/trace-recorder";
 import {
   hitListName,
@@ -33,6 +37,8 @@ import {
   type RerankStageOutput,
   type RewriteStageInput,
   type RewriteStageOutput,
+  type RouteStageInput,
+  type RouteStageOutput,
   type SearchStageOutput,
   type TracedHit,
 } from "@/server/rag/pipeline/trace-stages";
@@ -49,6 +55,8 @@ export type RetrievalPipelineDeps = {
   indexes: Pick<RagIndexRepository, "findById" | "findActive">;
   retriever: Retriever;
   rewriter: QueryRewriter;
+  // Asked first only when the config's `scopeRouter` is `decision`.
+  router: ScopeRouter;
   reranker: Reranker;
   // Queries are embedded with the searched index's model, never the env default.
   embeddings: EmbeddingClient;
@@ -57,7 +65,8 @@ export type RetrievalPipelineDeps = {
   newTraceId?: () => string;
 };
 
-// rewrite -> embed -> vector / lexical search -> RRF -> rerank -> filter, each stage traced.
+// [route] -> rewrite -> embed -> vector / lexical search -> RRF -> rerank -> filter, each stage
+// traced.
 export class RetrievalPipeline implements RetrievalRunner {
   constructor(private readonly deps: RetrievalPipelineDeps) {}
 
@@ -108,8 +117,15 @@ class PipelineRun {
   ) {}
 
   async execute(): Promise<RetrievalResult> {
+    if (this.request.config.scopeRouter === "decision") {
+      const route = await this.route();
+      // A confident small talk or off topic skips the rewrite too; the message is its own query.
+      if (route.scope !== null) return this.result(route.scope, [this.request.message], []);
+    }
+
     const rewrite = await this.rewrite();
-    if (rewrite.scope === "off_topic") return this.result(rewrite, []);
+    // Small talk and off-topic messages get a fixed reply, so their chunks would go unused.
+    if (rewrite.scope !== "cv") return this.result(rewrite.scope, rewrite.queries, []);
 
     const { queries } = rewrite;
     const lists = [...(await this.vectorLists(queries)), ...(await this.lexicalLists(queries))];
@@ -122,7 +138,30 @@ class PipelineRun {
           fusedScore: hit.score,
           rerankScore: null,
         }));
-    return this.result(rewrite, selected);
+    return this.result(rewrite.scope, rewrite.queries, selected);
+  }
+
+  private route(): Promise<RouteDecision> {
+    const { message, history, subjectName, config } = this.request;
+    const { router } = this.deps;
+    const input: RouteStageInput = {
+      model: router.model,
+      minConfidence: config.minRouteConfidence,
+      historyTurns: Math.min(history.length, ROUTE_HISTORY_TURNS),
+    };
+    return this.recorder.stage(
+      STAGE.route,
+      input,
+      () => router.route({ message, history, subjectName, minConfidence: config.minRouteConfidence }),
+      (decision): RouteStageOutput => ({
+        scope: decision.scope,
+        probabilities: decision.probabilities && { ...decision.probabilities },
+        choice: decision.choice,
+        model: decision.model,
+        fallback: decision.fallback,
+        error: decision.error,
+      }),
+    );
   }
 
   private rewrite(): Promise<RewriteResult> {
@@ -299,7 +338,7 @@ class PipelineRun {
     return kept;
   }
 
-  private result(rewrite: RewriteResult, selected: Selected[]): RetrievalResult {
+  private result(scope: QueryScope, queries: readonly string[], selected: Selected[]): RetrievalResult {
     const chunks: RetrievedChunk[] = selected.map((hit, index) => ({
       ...this.chunk(hit.chunkId),
       fusedScore: hit.fusedScore,
@@ -308,8 +347,8 @@ class PipelineRun {
     }));
     return {
       chunks,
-      scope: rewrite.scope,
-      queries: [...rewrite.queries],
+      scope,
+      queries: [...queries],
       trace: this.recorder.toTrace(chunks.map(toTraceSource)),
     };
   }

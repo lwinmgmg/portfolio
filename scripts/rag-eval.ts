@@ -94,7 +94,9 @@ async function main(args: EvalArgs): Promise<void> {
       const k = Math.max(...args.ks);
       const outcome = result.error
         ? `error at ${result.error.stage ?? "?"}`
-        : `hit@${k}=${result.metrics.hitAt[k]}`;
+        : result.metrics
+          ? `hit@${k}=${result.metrics.hitAt[k]}`
+          : `scope ${result.scope ?? "?"} (expected ${result.expectedScope})`;
       console.error(
         `[${done}/${total}] ${indexId.slice(-6)} ${preset} ${result.itemId}: ${outcome}, ${Math.round(result.totalMs)} ms`,
       );

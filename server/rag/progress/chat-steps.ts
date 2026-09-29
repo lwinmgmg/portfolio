@@ -16,6 +16,7 @@ import {
   GenerateStageInputSchema,
   RerankStageOutputSchema,
   RewriteStageOutputSchema,
+  RouteStageOutputSchema,
   SearchStageOutputSchema,
   STAGE,
   type TracedHit,
@@ -31,6 +32,13 @@ type StageName = (typeof STAGE)[keyof typeof STAGE];
 
 // Typed by both STAGE and ChatStepName, so a stage added to one and not the other fails to compile.
 const DETAIL_READERS: Record<StageName | "reasoning", DetailReader> = {
+  // No probabilities, model or error: only whether retrieval was skipped, and why not.
+  [STAGE.route]: (stage) =>
+    read(RouteStageOutputSchema, stage.output, ({ scope, fallback }) => ({
+      kind: "route",
+      scope,
+      fallback,
+    })),
   [STAGE.rewrite]: (stage) =>
     read(RewriteStageOutputSchema, stage.output, ({ queries, scope, raw }) => ({
       kind: "rewrite",

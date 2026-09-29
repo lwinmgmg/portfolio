@@ -19,7 +19,7 @@ test("applies defaults when only the key is set", () => {
     LLM_ANSWER_MODEL: "nvidia/nemotron-3-ultra-550b-a55b:free",
     EMBEDDING_MODEL: "nvidia/nemotron-3-embed-1b:free",
     RERANK_MODEL: "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
-    LLM_ROUTER_MODEL: "respan/span-01-lite:free",
+    LLM_ROUTER_MODEL: "typesafe/jev-1.13",
     CHAT_DAILY_MESSAGE_LIMIT: 500,
     LLM_ANSWER_REASONING: "low",
   });
@@ -89,7 +89,7 @@ test("treats blank optional values as unset", () => {
     LLM_ANSWER_MODEL: "nvidia/nemotron-3-ultra-550b-a55b:free",
     EMBEDDING_MODEL: "nvidia/nemotron-3-embed-1b:free",
     RERANK_MODEL: "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
-    LLM_ROUTER_MODEL: "respan/span-01-lite:free",
+    LLM_ROUTER_MODEL: "typesafe/jev-1.13",
     CHAT_DAILY_MESSAGE_LIMIT: 500,
     LLM_ANSWER_REASONING: "low",
   });

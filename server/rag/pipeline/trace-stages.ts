@@ -4,6 +4,8 @@ import { z } from "zod";
 // reader parses stored traces with the same schemas, so the two cannot drift apart.
 
 export const STAGE = {
+  // Only with `scopeRouter: "decision"`, before the rewrite.
+  route: "route",
   rewrite: "rewrite",
   embedQueries: "embed-queries",
   vectorSearch: "vector-search",
@@ -32,6 +34,25 @@ const TracedHitSchema = z.object({
 
 export type TracedHit = z.infer<typeof TracedHitSchema>;
 
+const ScopeSchema = z.enum(["cv", "smalltalk", "off_topic"]);
+
+export const RouteStageInputSchema = z.object({
+  // The model asked. The output names the one that answered.
+  model: z.string(),
+  minConfidence: z.number(),
+  historyTurns: z.number(),
+});
+
+export const RouteStageOutputSchema = z.object({
+  // Set only for a short-circuit; null means the rewriter decided.
+  scope: z.enum(["smalltalk", "off_topic"]).nullable(),
+  probabilities: z.object({ cv: z.number(), smalltalk: z.number(), off_topic: z.number() }).nullable(),
+  choice: ScopeSchema.nullable(),
+  model: z.string().nullable(),
+  fallback: z.boolean(),
+  error: z.string().nullable(),
+});
+
 export const RewriteStageInputSchema = z.object({
   message: z.string(),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string() })),
@@ -41,7 +62,7 @@ export const RewriteStageInputSchema = z.object({
 
 export const RewriteStageOutputSchema = z.object({
   queries: z.array(z.string()),
-  scope: z.enum(["cv", "smalltalk", "off_topic"]),
+  scope: ScopeSchema,
   raw: z.unknown(),
 });
 
@@ -92,7 +113,8 @@ export const FilterStageOutputSchema = z.object({
 
 export const GenerateStageInputSchema = z.object({
   model: z.string(),
-  // `cv` answers from sources; `smalltalk` replies without them.
+  // `cv` answers from sources. `smalltalk` is only in traces from before small talk got a fixed
+  // reply; it stays so those traces still parse.
   mode: z.enum(["cv", "smalltalk"]),
   sources: z.number(),
   historyTurns: z.number(),
@@ -112,6 +134,8 @@ export const GenerateStageOutputSchema = z.object({
   reasoning: z.string().nullable().optional(),
 });
 
+export type RouteStageInput = z.infer<typeof RouteStageInputSchema>;
+export type RouteStageOutput = z.infer<typeof RouteStageOutputSchema>;
 export type RewriteStageInput = z.infer<typeof RewriteStageInputSchema>;
 export type RewriteStageOutput = z.infer<typeof RewriteStageOutputSchema>;
 export type EmbedStageOutput = z.infer<typeof EmbedStageOutputSchema>;

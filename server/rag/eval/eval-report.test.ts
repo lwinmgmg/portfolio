@@ -59,14 +59,16 @@ test("renders one table row per index and preset", async () => {
   expect(markdown).toContain("4 questions tagged experience for Jane Doe");
   expect(markdown).toContain("(finalK 5)");
   expect(markdown).toContain(
-    "| Index | Preset | hit@1 | hit@3 | hit@5 | recall@5 | MRR | mean total ms | mean rerank ms | errors |",
+    "| Index | Preset | hit@1 | hit@3 | hit@5 | recall@5 | MRR | scope acc | cv skipped | router fallbacks " +
+      "| mean total ms | mean rerank ms | errors |",
   );
-  expect(markdown).toContain("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|");
+  expect(markdown).toContain("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+  // `hobby` ends as off topic (skipped) and `broken` fails, so 2 of 4 scopes match.
   expect(markdown).toContain(
-    "| structured, contextual (111111) | hybrid | 0.250 | 0.250 | 0.250 | 0.250 | 0.250 | 4 | — | 1 |",
+    "| structured, contextual (111111) | hybrid | 0.250 | 0.250 | 0.250 | 0.250 | 0.250 | 0.500 | 1/4 | 0 | 4 | — | 1 |",
   );
   expect(markdown).toContain(
-    "| token-window, plain (222222) | hybrid-rerank | 0.250 | 0.250 | 0.250 | 0.250 | 0.250 | 8 | 5 | 1 |",
+    "| token-window, plain (222222) | hybrid-rerank | 0.250 | 0.250 | 0.250 | 0.250 | 0.250 | 0.500 | 1/4 | 0 | 8 | 5 | 1 |",
   );
   expect(markdown).toContain("- token-window, plain (222222): `bbbbbb222222`, embeddings embed-model, built");
   expect(markdown).not.toContain("token-window, plain (222222): `bbbbbb222222`, embeddings embed-model, context");
@@ -88,6 +90,13 @@ test("lists golden keys missing from each index", async () => {
   expect(markdown).toContain("## Relevant keys missing from the index");
   expect(markdown).toContain("- structured, contextual (111111): `hobby` other:hobbies");
   expect(markdown).not.toContain("token-window, plain (222222): `hobby`");
+});
+
+test("lists scope mismatches, with a failed run as an error", async () => {
+  const markdown = renderEvalMarkdown(await report());
+  expect(markdown).toContain("## Scope mismatches");
+  expect(markdown).toContain("- `hobby` What are her hobbies? → expected cv, got off_topic");
+  expect(markdown).toContain("- `broken` Broken? → expected cv, got an error");
 });
 
 test("failedQuestions uses hit@k", async () => {

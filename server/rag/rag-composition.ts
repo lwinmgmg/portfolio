@@ -1,5 +1,5 @@
 import type { CvVersionRepository } from "@/server/domain/cv";
-import type { ChatClient, EmbeddingClient, RerankClient } from "@/server/domain/llm";
+import type { ChatClient, DecisionClient, EmbeddingClient, RerankClient } from "@/server/domain/llm";
 import type {
   Chunker,
   ChunkerKind,
@@ -13,6 +13,7 @@ import type {
   Reranker,
   RetrievalRunner,
   Retriever,
+  ScopeRouter,
 } from "@/server/domain/rag";
 import { AdaptiveChatClient } from "@/server/llm/adaptive-chat-client";
 import type { LlmEnv } from "@/server/llm/llm-env";
@@ -25,6 +26,7 @@ import { defaultIndexConfig } from "@/server/rag/indexing/index-config";
 import { RetrievalPipeline } from "@/server/rag/pipeline/retrieval-pipeline";
 import { LlmQueryRewriter } from "@/server/rag/query/llm-query-rewriter";
 import { ApiReranker } from "@/server/rag/rerank/api-reranker";
+import { DecisionScopeRouter } from "@/server/rag/route/decision-scope-router";
 import {
   InMemoryRetriever,
   sharedSearchIndexCache,
@@ -37,7 +39,7 @@ import { RetrievalPlaygroundService } from "@/server/services/retrieval-playgrou
 // Everything with I/O is passed in, so this module stays free of `server-only` and `next/*`
 // and scripts can compose the same pipeline as the app.
 export type RagDependencies = {
-  llm: ChatClient & EmbeddingClient & RerankClient;
+  llm: ChatClient & EmbeddingClient & RerankClient & DecisionClient;
   cvVersions: Pick<CvVersionRepository, "findPublished">;
   indexes: RagIndexRepository;
   chunks: RagChunkRepository;
@@ -57,6 +59,7 @@ export type Rag = {
   indexService: RagIndexService;
   retriever: Retriever;
   queryRewriter: QueryRewriter;
+  scopeRouter: ScopeRouter;
   reranker: Reranker;
   pipeline: RetrievalRunner;
   playground: RetrievalPlaygroundService;
@@ -97,11 +100,14 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     cache: deps.searchCache ?? sharedSearchIndexCache(),
   });
   const queryRewriter = new LlmQueryRewriter(utilityChat, env.LLM_UTILITY_MODEL);
+  // Only asked when a config sets `scopeRouter: "decision"`.
+  const scopeRouter = new DecisionScopeRouter(deps.llm, env.LLM_ROUTER_MODEL);
   const reranker = new ApiReranker(deps.llm, env.RERANK_MODEL);
   const pipeline = new RetrievalPipeline({
     indexes: deps.indexes,
     retriever,
     rewriter: queryRewriter,
+    router: scopeRouter,
     reranker,
     embeddings: deps.llm,
     now,
@@ -116,6 +122,7 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     indexService,
     retriever,
     queryRewriter,
+    scopeRouter,
     reranker,
     pipeline,
     playground,

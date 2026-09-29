@@ -16,6 +16,7 @@ const LOOSE_HIT: ChatStepHit = { ...HIT, rank: 2, score: 0.4, anchor: null };
 
 // One finished step of every kind, as the server sends them.
 const DETAILS: Record<ChatStepName, ChatStepDetail> = {
+  route: { kind: "route", scope: null, fallback: false },
   rewrite: { kind: "rewrite", queries: ["Jane backend work"], scope: "cv", fallback: false },
   "embed-queries": { kind: "embed", count: 1, dimensions: 1536 },
   "vector-search": {

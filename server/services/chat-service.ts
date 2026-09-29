@@ -31,9 +31,9 @@ import {
   ANSWER_TEMPERATURE,
   answerGenerationSettings,
   buildAnswerMessages,
-  buildSmalltalkMessages,
   noInformationReply,
   offTopicReply,
+  smalltalkReply,
 } from "@/server/rag/answer/answer-prompt";
 import { citedEntityKeys, extractCitations } from "@/server/rag/answer/citations";
 import { finishedStep, isChatStepName, runningStep } from "@/server/rag/progress/chat-steps";
@@ -184,6 +184,8 @@ export class ChatService {
     };
     if (retrieval.scope === "off_topic") {
       yield* this.fixedReply(turn, offTopicReply(subjectName));
+    } else if (retrieval.scope === "smalltalk") {
+      yield* this.fixedReply(turn, smalltalkReply(subjectName));
     } else if (retrieval.scope === "cv" && retrieval.chunks.length === 0) {
       // Nothing passed retrieval, e.g. every chunk scored below `minRerankScore`.
       yield* this.fixedReply(turn, noInformationReply(subjectName));
@@ -233,7 +235,8 @@ export class ChatService {
     return existing ?? conversations.create(request.sessionId);
   }
 
-  // Off-topic messages and CV questions with no sources get a fixed answer without an LLM call.
+  // Small talk, off-topic messages and CV questions with no sources get a fixed answer without an
+  // LLM call.
   private async *fixedReply(turn: Turn, text: string): AsyncGenerator<ChatEvent, void, undefined> {
     yield { type: "delta", text };
     await this.appendTurn(turn, text, []);
@@ -243,15 +246,16 @@ export class ChatService {
   }
 
   private async *generate(turn: Turn): AsyncGenerator<ChatEvent, void, undefined> {
-    const smalltalk = turn.retrieval.scope === "smalltalk";
-    const chunks: RetrievedChunk[] = smalltalk ? [] : turn.retrieval.chunks;
-    const prompt = { subjectName: turn.subjectName, history: turn.history, message: turn.userMessage.text };
-    const messages: ChatMessage[] = smalltalk
-      ? buildSmalltalkMessages(prompt)
-      : buildAnswerMessages({ ...prompt, chunks });
+    const chunks: RetrievedChunk[] = turn.retrieval.chunks;
+    const messages: ChatMessage[] = buildAnswerMessages({
+      subjectName: turn.subjectName,
+      history: turn.history,
+      message: turn.userMessage.text,
+      chunks,
+    });
     const input: GenerateStageInput = {
       model: this.deps.answerModel,
-      mode: smalltalk ? "smalltalk" : "cv",
+      mode: "cv",
       sources: chunks.length,
       historyTurns: Math.min(turn.history.length, ANSWER_HISTORY_TURNS),
     };

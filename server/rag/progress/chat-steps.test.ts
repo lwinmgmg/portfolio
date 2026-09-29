@@ -131,6 +131,12 @@ async function run(options: RunOptions = {}): Promise<{ steps: ChatStep[]; resul
     indexes,
     retriever: new InMemoryRetriever(chunks),
     rewriter: { rewrite: async () => rewrite },
+    router: {
+      model: "router-model",
+      route: async () => {
+        throw new Error("not asked with the rewriter as scope router");
+      },
+    },
     reranker: options.reranker ?? new ReversingReranker(),
     embeddings: options.embeddings ?? new FakeEmbeddings(),
     // Fractional milliseconds, like performance.now().
@@ -397,6 +403,33 @@ test("generate reads the source count from its input, and reasoning has an empty
 
   expect(generate?.detail).toEqual({ kind: "generate", sources: 4 });
   expect(finishedStep(stage("reasoning", null))?.detail).toEqual({ kind: "reasoning" });
+});
+
+test("the route step shows only the scope and whether the router fell back", () => {
+  const routed = finishedStep(
+    stage("route", {
+      scope: "off_topic",
+      probabilities: { cv: 0.01, smalltalk: 0.01, off_topic: 0.98 },
+      choice: "off_topic",
+      model: "typesafe/jev-1.13-20260917",
+      fallback: false,
+      error: null,
+    }),
+  );
+  const failed = finishedStep(
+    stage("route", {
+      scope: null,
+      probabilities: null,
+      choice: null,
+      model: null,
+      fallback: true,
+      error: "No endpoints found for secret/slug",
+    }),
+  );
+
+  expect(routed?.detail).toEqual({ kind: "route", scope: "off_topic", fallback: false });
+  expect(failed?.detail).toEqual({ kind: "route", scope: null, fallback: true });
+  expect(JSON.stringify(failed)).not.toContain("secret");
 });
 
 test("a stage that is not a chat step gives no step", () => {

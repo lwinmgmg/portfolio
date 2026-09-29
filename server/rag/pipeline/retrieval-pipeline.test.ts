@@ -18,6 +18,9 @@ import {
   type Retriever,
   type RewriteInput,
   type RewriteResult,
+  type RouteDecision,
+  type RouteInput,
+  type ScopeRouter,
 } from "@/server/domain/rag";
 import { MemoryRagIndexes } from "@/server/rag/__fixtures__/memory-rag-repositories";
 import { DEFAULT_RETRIEVAL_CONFIG, RETRIEVAL_PRESETS } from "@/server/rag/pipeline/retrieval-config";
@@ -26,6 +29,8 @@ import type {
   FilterStageOutput,
   FuseStageOutput,
   RerankStageOutput,
+  RouteStageInput,
+  RouteStageOutput,
   SearchStageOutput,
 } from "@/server/rag/pipeline/trace-stages";
 
@@ -108,6 +113,27 @@ class FakeRewriter {
   }
 }
 
+const DEFERRED: RouteDecision = {
+  scope: null,
+  probabilities: { cv: 0.97, smalltalk: 0.02, off_topic: 0.01 },
+  choice: "cv",
+  model: "router-model-20260917",
+  fallback: false,
+  error: null,
+};
+
+class FakeRouter implements ScopeRouter {
+  readonly model = "router-model";
+  inputs: RouteInput[] = [];
+
+  constructor(private readonly decision: RouteDecision = DEFERRED) {}
+
+  async route(input: RouteInput): Promise<RouteDecision> {
+    this.inputs.push(input);
+    return this.decision;
+  }
+}
+
 // Reverses the candidates and scores them 0.9, 0.8, ...
 class FakeReranker implements Reranker {
   calls: { query: string; candidates: readonly RerankCandidate[]; topN: number }[] = [];
@@ -142,6 +168,7 @@ function readyIndex(id: string, active: boolean, embeddingModel = "index-embed")
 function setup(
   options: {
     rewrite?: Omit<RewriteResult, "raw">;
+    route?: RouteDecision;
     reranker?: Reranker;
     retriever?: Retriever;
     embeddings?: EmbeddingClient;
@@ -158,18 +185,20 @@ function setup(
     options.rewrite ?? { queries: ["Where did Jane work?"], scope: "cv" },
   );
   const reranker = new FakeReranker();
+  const router = new FakeRouter(options.route);
   let tick = 0;
   const pipeline = new RetrievalPipeline({
     indexes,
     retriever: options.retriever ?? retriever,
     rewriter,
+    router,
     reranker: options.reranker ?? reranker,
     embeddings: options.embeddings ?? embeddings,
     now: () => new Date(at),
     clock: () => (tick += 5),
     newTraceId: () => "trace-1",
   });
-  return { pipeline, indexes, embeddings, retriever, rewriter, reranker };
+  return { pipeline, indexes, embeddings, retriever, rewriter, reranker, router };
 }
 
 function request(config: Partial<RetrievalConfig> = {}, extra: Partial<RetrievalRequest> = {}) {
@@ -532,14 +561,17 @@ test("an off-topic message stops after the rewrite and returns no chunks", async
   expect(embeddings.calls.length + retriever.calls.length + reranker.calls.length).toBe(0);
 });
 
-test("smalltalk still retrieves", async () => {
-  const { pipeline } = setup({ rewrite: { queries: ["Where did Jane work?"], scope: "smalltalk" } });
+test("small talk also stops after the rewrite and returns no chunks", async () => {
+  const { pipeline, embeddings, retriever, reranker } = setup({
+    rewrite: { queries: ["Hello"], scope: "smalltalk" },
+  });
 
   const result = await pipeline.run(request());
 
+  expect(stageNames(result)).toEqual(["rewrite"]);
+  expect(result.chunks).toEqual([]);
   expect(result.scope).toBe("smalltalk");
-  expect(result.chunks.length).toBeLessThanOrEqual(5);
-  expect(stageNames(result).length).toBe(7);
+  expect(embeddings.calls.length + retriever.calls.length + reranker.calls.length).toBe(0);
 });
 
 test("the trace timing comes from the injected clock", async () => {
@@ -638,4 +670,104 @@ test("the index must exist, be ready, and default to the active one", async () =
 
   for (const row of indexes.rows) row.active = false;
   expect((await rejection(pipeline.run(request()))) instanceof NoActiveRagIndexError).toBe(true);
+});
+
+test("with the rewriter as scope router, no route stage runs", async () => {
+  const { pipeline, router } = setup({ route: { ...DEFERRED, scope: "smalltalk" } });
+
+  const result = await pipeline.run(request());
+
+  expect(router.inputs).toHaveLength(0);
+  expect(stageNames(result)[0]).toBe("rewrite");
+  expect(result.scope).toBe("cv");
+});
+
+test("a routed small talk or off topic records only the route stage", async () => {
+  for (const scope of ["smalltalk", "off_topic"] as const) {
+    const decision: RouteDecision = {
+      ...DEFERRED,
+      scope,
+      choice: scope,
+      probabilities: { cv: 0.01, smalltalk: 0.01, off_topic: 0.01, [scope]: 0.98 },
+    };
+    const { pipeline, rewriter, embeddings, retriever, reranker } = setup({ route: decision });
+
+    const result = await pipeline.run(request({ scopeRouter: "decision", minRouteConfidence: 0.9 }));
+
+    expect(stageNames(result)).toEqual(["route"]);
+    expect(result.scope).toBe(scope);
+    expect(result.queries).toEqual(["Where did she work?"]);
+    expect(result.chunks).toEqual([]);
+    expect(rewriter.inputs.length + embeddings.calls.length + retriever.calls.length).toBe(0);
+    expect(reranker.calls).toHaveLength(0);
+  }
+});
+
+test("the route stage records the model, cutoff and history, and the decision", async () => {
+  const { pipeline, router } = setup({ route: { ...DEFERRED, scope: "smalltalk", choice: "smalltalk" } });
+
+  const result = await pipeline.run(request({ scopeRouter: "decision", minRouteConfidence: 0.75 }));
+
+  expect(router.inputs[0]).toEqual({
+    message: "Where did she work?",
+    history: [{ role: "user", text: "Tell me about Jane." }],
+    subjectName: "Jane Doe",
+    minConfidence: 0.75,
+  });
+  const stage = result.trace.stages[0];
+  expect(stage?.input as RouteStageInput).toEqual({ model: "router-model", minConfidence: 0.75, historyTurns: 1 });
+  expect(outputOf<RouteStageOutput>(result, "route")).toEqual({
+    scope: "smalltalk",
+    probabilities: { cv: 0.97, smalltalk: 0.02, off_topic: 0.01 },
+    choice: "smalltalk",
+    model: "router-model-20260917",
+    fallback: false,
+    error: null,
+  });
+});
+
+test("a deferral runs the full pipeline and the rewriter's scope wins", async () => {
+  const { pipeline, rewriter } = setup({
+    route: { ...DEFERRED, choice: "smalltalk", probabilities: { cv: 0.3, smalltalk: 0.6, off_topic: 0.1 } },
+    rewrite: { queries: ["Where did Jane work?"], scope: "cv" },
+  });
+
+  const result = await pipeline.run(request({ scopeRouter: "decision" }));
+
+  expect(stageNames(result)).toEqual([
+    "route",
+    "rewrite",
+    "embed-queries",
+    "vector-search",
+    "lexical-search",
+    "fuse",
+    "rerank",
+    "filter",
+  ]);
+  expect(rewriter.inputs).toHaveLength(1);
+  expect(result.scope).toBe("cv");
+  expect(result.chunks.length).toBeGreaterThan(0);
+});
+
+test("a router fallback is traced and the rewriter decides", async () => {
+  const { pipeline } = setup({
+    route: {
+      scope: null,
+      probabilities: null,
+      choice: null,
+      model: null,
+      fallback: true,
+      error: "No endpoints found for bad/slug",
+    },
+    rewrite: { queries: ["Hello"], scope: "smalltalk" },
+  });
+
+  const result = await pipeline.run(request({ scopeRouter: "decision" }));
+
+  expect(stageNames(result)).toEqual(["route", "rewrite"]);
+  expect(outputOf<RouteStageOutput>(result, "route")).toMatchObject({
+    fallback: true,
+    error: "No endpoints found for bad/slug",
+  });
+  expect(result.scope).toBe("smalltalk");
 });

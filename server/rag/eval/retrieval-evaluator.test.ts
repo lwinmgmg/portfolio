@@ -120,6 +120,7 @@ test("scores each question and averages metrics and stage timings per run", asyn
       recallAt: { 1: 0.25, 3: 0.75, 5: 0.75 },
       reciprocalRank: 0.75,
     },
+    scope: { correct: 2, cvSkipped: 0, routerFallbacks: 0 },
     meanTotalMs: 4,
     meanStageMs: { rewrite: 1, "lexical-search": 2 },
   });
@@ -143,7 +144,54 @@ test("a failed retrieval scores 0 and keeps the stage error and partial timings"
     error: { stage: "lexical-search", message: "rate limited" },
   });
   expect(run?.summary.errors).toBe(1);
-  expect(run?.summary.metrics.hitAt[5]).toBe(0.5);
+  expect(run?.summary.metrics?.hitAt[5]).toBe(0.5);
+});
+
+test("scores retrieval on cv questions only and counts scope accuracy, skips and fallbacks", async () => {
+  const items = parseGoldenSet([
+    { id: "work", question: "Where does she work?", relevantEntityKeys: ["experience:acme"] },
+    { id: "skills", question: "Which languages?", relevantEntityKeys: ["skills:languages"] },
+    { id: "hi", question: "hi!", expectedScope: "smalltalk", tags: ["scope"] },
+    { id: "joke", question: "Tell me a joke", expectedScope: "off_topic", tags: ["scope"] },
+  ]);
+  const runner = new FakeRetrievalRunner(
+    { ...ANSWERS, "Which languages?": [["skills:languages"]] },
+    {},
+    {
+      // A CV question misread as small talk, and small talk misread as off topic.
+      scopes: { "Which languages?": "smalltalk", "hi!": "off_topic", "Tell me a joke": "off_topic" },
+      routerFallbacks: ["Where does she work?"],
+    },
+  );
+
+  const report = await new RetrievalEvaluator({ runner, now }).evaluate(
+    input({ items, presets: ["hybrid-rerank-rewrite", "hybrid-rerank-rewrite-route"] }),
+  );
+  const [rewriter, routed] = report.runs;
+
+  expect(rewriter?.results.map((result) => [result.itemId, result.expectedScope, result.scope])).toEqual([
+    ["work", "cv", "cv"],
+    ["skills", "cv", "smalltalk"],
+    ["hi", "smalltalk", "off_topic"],
+    ["joke", "off_topic", "off_topic"],
+  ]);
+  expect(rewriter?.results.map((result) => result.metrics === null)).toEqual([false, false, true, true]);
+  // Two cv questions: one found at rank 2, one skipped retrieval.
+  expect(rewriter?.summary.metrics?.hitAt[5]).toBe(0.5);
+  expect(rewriter?.summary.scope).toEqual({ correct: 2, cvSkipped: 1, routerFallbacks: 0 });
+  expect(rewriter?.results[0]?.routerFallback).toBeNull();
+  expect(routed?.summary.scope).toEqual({ correct: 2, cvSkipped: 1, routerFallbacks: 1 });
+  expect(routed?.results.map((result) => result.routerFallback)).toEqual([true, false, false, false]);
+});
+
+test("a run with no cv question has no retrieval metrics", async () => {
+  const items = parseGoldenSet([{ id: "hi", question: "hi!", expectedScope: "smalltalk" }]);
+  const runner = new FakeRetrievalRunner({}, {}, { scopes: { "hi!": "smalltalk" } });
+
+  const report = await new RetrievalEvaluator({ runner, now }).evaluate(input({ items, presets: ["hybrid"] }));
+
+  expect(report.runs[0]?.summary.metrics).toBeNull();
+  expect(report.runs[0]?.summary.scope.correct).toBe(1);
 });
 
 test("errors outside a stage stop the evaluation", async () => {

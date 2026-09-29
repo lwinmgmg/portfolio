@@ -21,6 +21,8 @@ test("an empty config parses to the documented defaults", () => {
     ignoreSubjectInLexical: true,
     ignoreSubjectInRerank: true,
     dropBelowMeanRerank: true,
+    scopeRouter: "rewriter",
+    minRouteConfidence: 0.8,
   };
   expect(RetrievalConfigSchema.parse({})).toEqual(expected);
   expect(DEFAULT_RETRIEVAL_CONFIG).toEqual(expected);
@@ -89,15 +91,32 @@ test("dropBelowMeanRerank is on unless a stored config turns it off", () => {
   expect(RetrievalConfigSchema.safeParse({ dropBelowMeanRerank: "on" }).success).toBe(false);
 });
 
+test("a config saved before scope routing parses with the rewriter as router", () => {
+  const saved: Record<string, unknown> = { ...DEFAULT_RETRIEVAL_CONFIG };
+  delete saved.scopeRouter;
+  delete saved.minRouteConfidence;
+  expect(RetrievalConfigSchema.parse(saved)).toMatchObject({ scopeRouter: "rewriter", minRouteConfidence: 0.8 });
+  expect(RetrievalConfigSchema.parse({ scopeRouter: "decision" }).scopeRouter).toBe("decision");
+  expect(RetrievalConfigSchema.safeParse({ scopeRouter: "llm" }).success).toBe(false);
+});
+
+test("minRouteConfidence accepts 0.5..1", () => {
+  expect(RetrievalConfigSchema.safeParse({ minRouteConfidence: 0.5 }).success).toBe(true);
+  expect(RetrievalConfigSchema.safeParse({ minRouteConfidence: 0.87 }).success).toBe(true);
+  expect(RetrievalConfigSchema.safeParse({ minRouteConfidence: 1 }).success).toBe(true);
+  expect(RetrievalConfigSchema.safeParse({ minRouteConfidence: 0.49 }).success).toBe(false);
+  expect(RetrievalConfigSchema.safeParse({ minRouteConfidence: 1.01 }).success).toBe(false);
+});
+
 test("unknown modes and unknown keys are rejected", () => {
   expect(RetrievalConfigSchema.safeParse({ rewrite: "hyde" }).success).toBe(false);
   expect(RetrievalConfigSchema.safeParse({ search: "fuzzy" }).success).toBe(false);
   expect(RetrievalConfigSchema.safeParse({ topK: 5 }).success).toBe(false);
 });
 
-test("presets set rewriting, search and reranking on top of the defaults", () => {
+test("presets set rewriting, search, reranking and scope routing on top of the defaults", () => {
   const shapes = RETRIEVAL_PRESET_NAMES.map((name) => {
-    const { rewrite, search, rerank, ...rest } = RETRIEVAL_PRESETS[name];
+    const { rewrite, search, rerank, scopeRouter, ...rest } = RETRIEVAL_PRESETS[name];
     expect(rest).toEqual({
       candidatesPerSearch: 20,
       rrfK: 60,
@@ -107,16 +126,18 @@ test("presets set rewriting, search and reranking on top of the defaults", () =>
       ignoreSubjectInLexical: true,
       ignoreSubjectInRerank: true,
       dropBelowMeanRerank: true,
+      minRouteConfidence: 0.8,
     });
-    return [name, rewrite, search, rerank];
+    return [name, rewrite, search, rerank, scopeRouter];
   });
   expect(shapes).toEqual([
-    ["vector-only", "none", "vector", false],
-    ["lexical-only", "none", "lexical", false],
-    ["hybrid", "none", "hybrid", false],
-    ["hybrid-rerank", "none", "hybrid", true],
-    ["hybrid-rerank-rewrite", "standalone", "hybrid", true],
-    ["full", "multi", "hybrid", true],
+    ["vector-only", "none", "vector", false, "rewriter"],
+    ["lexical-only", "none", "lexical", false, "rewriter"],
+    ["hybrid", "none", "hybrid", false, "rewriter"],
+    ["hybrid-rerank", "none", "hybrid", true, "rewriter"],
+    ["hybrid-rerank-rewrite", "standalone", "hybrid", true, "rewriter"],
+    ["hybrid-rerank-rewrite-route", "standalone", "hybrid", true, "decision"],
+    ["full", "multi", "hybrid", true, "rewriter"],
   ]);
 });
 

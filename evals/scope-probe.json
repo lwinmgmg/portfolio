@@ -22,6 +22,7 @@
     { "id": "off-translate", "expected": "off_topic", "message": "Translate 'good morning' into French." },
     { "id": "off-roleplay", "expected": "off_topic", "message": "Pretend you are a pirate and tell me a joke." },
     { "id": "off-weather", "expected": "off_topic", "message": "What's the weather in Yangon today?" },
+    { "id": "off-do-task", "expected": "off_topic", "message": "Set up a VM on GCP for me, step by step." },
     {
       "id": "off-after-cv",
       "expected": "off_topic",
@@ -37,6 +38,7 @@
     { "id": "cv-languages", "expected": "cv", "message": "Which programming languages do you know?" },
     { "id": "cv-contact", "expected": "cv", "message": "How can I get in touch with him?" },
     { "id": "cv-certs", "expected": "cv", "message": "Does he have any cloud certifications?" },
+    { "id": "cv-can-help", "expected": "cv", "message": "Can LWIN MAUNG MAUNG help me set up a VM on GCP?" },
 
     { "id": "mixed-hi-stack", "expected": "cv", "message": "hi! what's his stack?" },
     { "id": "mixed-thanks-study", "expected": "cv", "message": "Thanks! And where did he study?" },

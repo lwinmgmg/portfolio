@@ -13,6 +13,7 @@ type StepWords = {
 };
 
 const STEP_WORDS: Record<ChatStepName, StepWords> = {
+  route: { active: "Reading your message", done: "Read your message" },
   rewrite: { active: "Understanding the question", done: "Understood the question" },
   "embed-queries": { active: "Preparing the search", done: "Prepared the search" },
   "vector-search": { active: "Searching the CV", done: "Semantic search" },
@@ -75,6 +76,9 @@ export function stepSummary(step: AnswerStep): string {
 
 function detailSummary(detail: ChatStepDetail): string {
   switch (detail.kind) {
+    // A deferral (or a router failure, which the visitor need not see) goes on to the rewrite.
+    case "route":
+      return detail.scope === null ? "Checking your question" : scopeLabel(detail.scope);
     case "rewrite":
       if (detail.scope !== "cv") return scopeLabel(detail.scope);
       return queriesSummary(detail.queries);

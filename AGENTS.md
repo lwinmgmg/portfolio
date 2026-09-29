@@ -109,11 +109,11 @@ server/                       All server logic. Layered: domain -> repositories/
     indexing/                 IndexBuilder, index config, chunker kinds.
     search/                   English analyzer, BM25, vector index, InMemoryRetriever, LRU cache.
     query/                    LlmQueryRewriter and its prompt (scopeDefinitions is shared with route/).
-    route/                    Scope routing on a decision model: route question, state, cutoff rule; probe scoring.
+    route/                    DecisionScopeRouter (optional `route` stage on a decision model), route question, state, cutoff rule; probe scoring.
     fusion/                   Reciprocal Rank Fusion.
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.
-    answer/                   Answer and small-talk prompts, off-topic reply, [S#] citation extraction.
+    answer/                   Answer prompt, fixed small-talk / off-topic / no-information replies, [S#] citation extraction.
     progress/                 Chat steps: projects trace stages into the public ChatStep shape (no chunk text or errors); EventChannel (push-to-pull queue).
     eval/                     Golden-set schema, retrieval metrics, CLI args, RetrievalEvaluator, markdown report.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.

@@ -8,6 +8,8 @@ import {
   RerankStageOutputSchema,
   RewriteStageInputSchema,
   RewriteStageOutputSchema,
+  RouteStageInputSchema,
+  RouteStageOutputSchema,
   SearchStageOutputSchema,
   STAGE,
   type EmbedStageOutput,
@@ -16,6 +18,8 @@ import {
   type RerankStageOutput,
   type RewriteStageInput,
   type RewriteStageOutput,
+  type RouteStageInput,
+  type RouteStageOutput,
   type SearchStageOutput,
 } from "@/server/rag/pipeline/trace-stages";
 
@@ -27,6 +31,7 @@ export type StageTiming = {
 };
 
 export type StageDetail =
+  | { kind: "route"; input: RouteStageInput; output: RouteStageOutput }
   | { kind: "rewrite"; input: RewriteStageInput; output: RewriteStageOutput }
   | { kind: "embed"; output: EmbedStageOutput }
   | { kind: "search"; output: SearchStageOutput }
@@ -62,6 +67,11 @@ function readStage(stage: TraceStage): StageView {
 
 function detailOf(stage: TraceStage): StageDetail | null {
   switch (stage.name) {
+    case STAGE.route: {
+      const input = parsed(RouteStageInputSchema, stage.input);
+      const output = parsed(RouteStageOutputSchema, stage.output);
+      return input && output ? { kind: "route", input, output } : null;
+    }
     case STAGE.rewrite: {
       const input = parsed(RewriteStageInputSchema, stage.input);
       const output = parsed(RewriteStageOutputSchema, stage.output);

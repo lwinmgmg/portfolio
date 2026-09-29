@@ -23,9 +23,14 @@ function deepestK(report: EvalReport): number {
   return Math.max(...report.ks);
 }
 
-// Questions with no relevant chunk in the top k.
+// CV questions with no relevant chunk in the top k.
 export function failedQuestions(run: EvalRun, k: number): QuestionResult[] {
-  return run.results.filter((result) => result.metrics.hitAt[k] === 0);
+  return run.results.filter((result) => result.metrics?.hitAt[k] === 0);
+}
+
+// Questions whose final scope differs from the golden one, failed runs included.
+export function misroutedQuestions(run: EvalRun): QuestionResult[] {
+  return run.results.filter((result) => result.scope !== result.expectedScope);
 }
 
 const metric = (value: number | undefined) => (value === undefined ? "—" : value.toFixed(3));
@@ -55,18 +60,34 @@ export function renderEvalMarkdown(report: EvalReport): string {
   );
 
   const hitColumns = report.ks.map((cutoff) => `hit@${cutoff}`);
-  const header = ["Index", "Preset", ...hitColumns, `recall@${k}`, "MRR", "mean total ms", "mean rerank ms", "errors"];
+  const header = [
+    "Index",
+    "Preset",
+    ...hitColumns,
+    `recall@${k}`,
+    "MRR",
+    "scope acc",
+    "cv skipped",
+    "router fallbacks",
+    "mean total ms",
+    "mean rerank ms",
+    "errors",
+  ];
   lines.push(
     `| ${header.join(" | ")} |`,
     `|${header.map((_, column) => (column < 2 ? "---" : "---:")).join("|")}|`,
     ...report.runs.map((run) => {
-      const { metrics, meanTotalMs, meanStageMs, errors } = run.summary;
+      const { metrics, scope, questions, meanTotalMs, meanStageMs, errors } = run.summary;
+      const cvQuestions = run.results.filter((result) => result.expectedScope === "cv").length;
       const cells = [
         label(run.indexId),
         run.preset,
-        ...report.ks.map((cutoff) => metric(metrics.hitAt[cutoff])),
-        metric(metrics.recallAt[k]),
-        metric(metrics.reciprocalRank),
+        ...report.ks.map((cutoff) => metric(metrics?.hitAt[cutoff])),
+        metric(metrics?.recallAt[k]),
+        metric(metrics?.reciprocalRank),
+        metric(scope.correct / questions),
+        `${scope.cvSkipped}/${cvQuestions}`,
+        String(scope.routerFallbacks),
         millis(meanTotalMs),
         millis(meanStageMs[STAGE.rerank]),
         String(errors),
@@ -84,6 +105,23 @@ export function renderEvalMarkdown(report: EvalReport): string {
   for (const { run, failed } of failedRuns) {
     lines.push(`### ${label(run.indexId)} · ${run.preset}`, "");
     lines.push(...failed.map((result) => `- \`${result.itemId}\` ${oneLine(result.question)} → ${outcome(result)}`));
+    lines.push("");
+  }
+
+  lines.push("## Scope mismatches", "");
+  const misroutedRuns = report.runs
+    .map((run) => ({ run, misrouted: misroutedQuestions(run) }))
+    .filter(({ misrouted }) => misrouted.length > 0);
+  if (misroutedRuns.length === 0) lines.push("None.", "");
+  for (const { run, misrouted } of misroutedRuns) {
+    lines.push(`### ${label(run.indexId)} · ${run.preset}`, "");
+    lines.push(
+      ...misrouted.map(
+        (result) =>
+          `- \`${result.itemId}\` ${oneLine(result.question)} → expected ${result.expectedScope}, ` +
+          `got ${result.scope ?? "an error"}`,
+      ),
+    );
     lines.push("");
   }
 

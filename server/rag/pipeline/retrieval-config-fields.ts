@@ -1,4 +1,9 @@
-import type { QueryRewriteMode, RetrievalConfig, SearchMode } from "@/server/domain/rag";
+import type {
+  QueryRewriteMode,
+  RetrievalConfig,
+  ScopeRouterKind,
+  SearchMode,
+} from "@/server/domain/rag";
 
 // The retrieval config's choices and bounds, without zod, so the client playground form can
 // import them. `retrieval-config.ts` builds its schema from the same values.
@@ -6,6 +11,8 @@ import type { QueryRewriteMode, RetrievalConfig, SearchMode } from "@/server/dom
 export const QUERY_REWRITE_MODES = ["none", "standalone", "multi"] as const satisfies readonly QueryRewriteMode[];
 
 export const SEARCH_MODES = ["vector", "lexical", "hybrid"] as const satisfies readonly SearchMode[];
+
+export const SCOPE_ROUTERS = ["rewriter", "decision"] as const satisfies readonly ScopeRouterKind[];
 
 export type NumberField = { min: number; max: number; step: number; default: number };
 
@@ -19,6 +26,8 @@ export const RETRIEVAL_NUMBER_FIELDS: Readonly<Record<RetrievalNumberFieldName, 
   fusedLimit: { min: 1, max: 50, step: 1, default: 20 },
   finalK: { min: 1, max: 10, step: 1, default: 5 },
   minRerankScore: { min: 0, max: 1, step: 0.01, default: 0 },
+  // Below 0.5 a choice need not be the most likely option.
+  minRouteConfidence: { min: 0.5, max: 1, step: 0.01, default: 0.8 },
 };
 
 export const RETRIEVAL_FIELD_LABELS: Readonly<Record<keyof RetrievalConfig, string>> = {
@@ -33,4 +42,6 @@ export const RETRIEVAL_FIELD_LABELS: Readonly<Record<keyof RetrievalConfig, stri
   ignoreSubjectInLexical: "Ignore name in BM25",
   ignoreSubjectInRerank: "Ignore name in rerank",
   dropBelowMeanRerank: "Drop below mean rerank",
+  scopeRouter: "Scope router",
+  minRouteConfidence: "Min route confidence",
 };
