@@ -45,6 +45,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 - `bunx tsc --noEmit` passes.
 - `bun run build` passes.
 - New pure modules have unit tests.
+- `AGENTS.md` still matches the code (see its "Keeping this file current" section).
 
 ---
 
