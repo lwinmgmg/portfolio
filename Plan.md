@@ -56,7 +56,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | Hosting | Vercel |
 | Database | Existing MongoDB Atlas (replica set; transactions available) |
 | File storage | Vercel Blob, **private** store. Browser → Blob client upload (bypasses the 4.5 MB function body limit). |
-| LLM gateway | OpenRouter only (chat, embeddings, rerank), through one hand-written client |
+| LLM gateway | OpenRouter only (chat, embeddings, rerank, decisions from 2.14), through one hand-written client |
 | CV source of truth | Structured `CvData` JSON, reviewed and published by the admin. The original PDF is kept for download only. |
 | CV extraction | Convert the PDF to Markdown locally, then send the text to an LLM with JSON-schema structured output, validate with zod, and require admin review |
 | Public CV page | Server-rendered from the published `CvData` |
@@ -78,6 +78,7 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `LLM_ANSWER_MODEL` | yes | `nvidia/nemotron-3-ultra-550b-a55b:free` | chat answers |
 | `EMBEDDING_MODEL` | yes | `nvidia/nemotron-3-embed-1b:free` | embeddings |
 | `RERANK_MODEL` | yes | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranking |
+| `LLM_ROUTER_MODEL` | no | `respan/span-01-lite:free` | scope routing through the Decisions API (2.14); read only when a config sets `scopeRouter: "decision"` |
 | `CHAT_DAILY_MESSAGE_LIMIT` | no | `500` | global chat cost guard |
 | `LLM_ANSWER_REASONING` | no | `low` | `off` \| `low` \| `medium` \| `high`; answer-model reasoning shown as "Thinking" (Phase 3) |
 | `BLOB_READ_WRITE_TOKEN` | yes | — | `handleUpload` client tokens (pull with `vercel env pull`) |
@@ -155,6 +156,8 @@ server/
     rerank/api-reranker.ts                   (+ test)
     rerank/passthrough-reranker.ts
     query/llm-query-rewriter.ts              (+ test)
+    route/decision-scope-router.ts           (+ test) decision-model scope routing (2.14)
+    route/route-question.ts                  (+ test)
     pipeline/retrieval-config.ts             (+ test)
     pipeline/trace-recorder.ts               (+ test)
     pipeline/retrieval-pipeline.ts           (+ test)
@@ -173,9 +176,11 @@ app/
   (public)/_components/chat/... chat widget
 client/api/chat.ts
 scripts/rag-eval.ts
+scripts/probe-scope-router.ts
 scripts/gmail-refresh-token.ts
 scripts/send-test-email.ts
 evals/cv-retrieval.golden.json
+evals/scope-probe.json
 ```
 
 ---
@@ -1123,6 +1128,63 @@ reranked hit whose score is below the mean of that turn's reranked scores.
 **Done when**
 - Playground and eval can switch backends, and the eval prints both.
 
+## Phase 2.14: Scope routing with a decision model
+
+Today the rewriter decides the scope (`cv` / `smalltalk` / `off_topic`) in the same call that
+rewrites the query, and only `off_topic` skips retrieval. A small-talk message still runs the
+rewrite, embedding, both searches and rerank, then `ChatService` throws the chunks away. This
+sub-phase adds an optional `route` stage before the rewrite. It asks a *decision model* on
+OpenRouter's Decisions API for the scope. A confident `smalltalk` or `off_topic` skips the rest of
+retrieval. Anything else goes on to the rewriter exactly as today.
+
+A decision model returns probabilities, not text. OpenRouter serves it at a separate alpha
+endpoint (`POST …/alpha/decisions`, body `{ model, state, questions }`), not chat completions. A
+`choice` question returns `{ choice, confidence, probabilities: { <option>: number } }`. The
+default model is `respan/span-01-lite:free` (Respan, released 2026-09-26). It is marketed for
+evaluation and guardrails, not routing, so step 2 is a go/no-go probe before the rest is built.
+
+**Files:** `server/domain/llm.ts`, `server/domain/rag.ts`, `server/domain/chat.ts`, `server/llm/openrouter-client.ts`, `server/llm/llm-env.ts`, `server/rag/route/*` (new), `server/rag/pipeline/retrieval-config-fields.ts`, `server/rag/pipeline/retrieval-config.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/pipeline/trace-stages.ts`, `server/rag/pipeline/trace-reader.ts`, `server/rag/progress/chat-steps.ts`, `server/rag/rag-composition.ts`, `server/rag/eval/*`, `app/admin/(panel)/rag/_components/trace-stage-panel.tsx`, `app/admin/(panel)/rag/playground/*`, `client/api/chat-steps.ts`, `app/(public)/_components/chat/chat-steps-text.ts`, `scripts/probe-scope-router.ts` (new), `evals/scope-probe.json` (new), `evals/cv-retrieval.golden.json`, `evals/README.md`, `.env.example`, tests.
+
+**Fixed decisions**
+- **Opt-in.** `RetrievalConfig.scopeRouter: "rewriter" | "decision"`, default `rewriter`. With `rewriter`, no `route` stage runs and every turn behaves exactly as before 2.14. The owner switches the chat to `decision` through "Use for chat" once the eval supports it. A saved chat config without the field parses with the default.
+- **Only the short-circuit is new.** The router may answer `smalltalk` or `off_topic` on its own. It never answers `cv`: a `cv` choice, a low confidence or an error all go on to the rewriter, and the rewriter's scope decides, as today. So the worst a wrong route can do is skip retrieval for a real CV question. The cutoff guards against that.
+- **Cutoff.** `RetrievalConfig.minRouteConfidence`, range 0.5–1, step 0.01, default 0.8. The router short-circuits only when the chosen option is `smalltalk` or `off_topic` **and** that option's probability is ≥ the cutoff. It reads the probability from `probabilities`, not the top-level `confidence`, so the rule does not depend on how the provider defines `confidence`.
+- **A router error never fails the turn.** Provider errors, a 429, a timeout, a missing or unknown answer, or probabilities that do not parse: the stage records `fallback: true` and the error, and the pipeline runs the rewriter. Like `Reranker` and `QueryRewriter`, `ScopeRouter.route` never throws for these.
+- **One attempt, 5 s timeout.** The route sits in front of every turn and the rewriter can still classify, so the router does not retry.
+- **State.** `state` is `{ subject: subjectName, history: <last 6 turns, as the rewriter reads>, message }`, so follow-ups ("and before that?") are classified with their context.
+- **Skipped stages.** A short-circuited `smalltalk` or `off_topic` turn records only `route`: no `rewrite`, embed, search, fuse, rerank or filter stage. `RetrievalResult.queries` is `[message]` and `chunks` is empty. `ChatService` needs no change: it already answers `smalltalk` without chunks and `off_topic` with the fixed reply.
+- **Model.** `LLM_ROUTER_MODEL`, default `respan/span-01-lite:free`. It is read only when a config uses `scopeRouter: "decision"`. The trace stores the model that answered, so a model change stays visible.
+- **No new dependency.** `decide()` is added to the hand-written `OpenRouterClient`.
+
+**Steps**
+1. **Decisions client.**
+   - `server/domain/llm.ts`: `DecisionQuestion` (only the `choice` type is needed: `{ type: "choice"; instructions: string; criteria: Record<string, string> }`), `DecisionRequest = { model; state: unknown; questions: Record<string, DecisionQuestion>; signal? }`, `ChoiceAnswer = { choice: string; confidence: number; probabilities: Record<string, number> }`, `DecisionResult = { answers: Record<string, ChoiceAnswer>; model: string; usage: Usage | null }`, and `interface DecisionClient { decide(request): Promise<DecisionResult> }`.
+   - `OpenRouterClient implements DecisionClient`: POST to the Decisions endpoint with the same auth and app headers, a zod-parsed response, errors mapped to `LlmProviderError` like the other methods, and no retry loop. The docs page shows `https://openrouter.ai/api/v1/api/alpha/decisions`, which looks like a doubled prefix. Step 2 confirms the real path. The path is one constant.
+   - Tests with a fake `fetch`: request body, parsed answer, `usage` mapping, HTTP error mapping, a malformed body.
+2. **Probe, then stop.** `scripts/probe-scope-router.ts` (no DB, no `next/*`, `bun --env-file=.env.local`) sends every item of `evals/scope-probe.json` to `LLM_ROUTER_MODEL` with the question from step 3. The file holds about 20 labelled messages: greetings, thanks, questions about the assistant, off-topic questions, plain CV questions, mixed messages ("hi! what's his stack?") and follow-ups with history. For each item it prints the expected scope, the three probabilities, the latency and the error, if any. At the end it prints the accuracy at cutoffs 0.6 / 0.7 / 0.8 / 0.9 and how many CV questions each cutoff would have skipped. **Report the output to the owner and wait.** Go: continue with step 3. No-go: the owner picks another decision model (for example TypeSafe's `typesafe/jev-*`) and the probe runs again, or the phase stops.
+3. **Router** (`server/rag/route/`):
+   - `server/domain/rag.ts`: `RouteDecision = { scope: "smalltalk" | "off_topic" | null /* null = ask the rewriter */; probabilities: Record<QueryScope, number> | null; choice: QueryScope | null; model: string | null; fallback: boolean; error: string | null }` and `interface ScopeRouter { route(input: { message; history; subjectName; minConfidence }): Promise<RouteDecision> }`.
+   - `route-question.ts`: the `scope` choice question (instructions plus one description per scope, the same definitions as `rewrite-prompt.ts`) and the `state` builder.
+   - `DecisionScopeRouter(DecisionClient, model)`: builds the request, reads `answers.scope`, and applies the cutoff rule. An unknown option key or missing probabilities count as a fallback.
+   - Tests with a fake `DecisionClient`: a confident small talk and off topic short-circuit; a confident `cv` defers; a value just below the cutoff defers; exactly at the cutoff short-circuits; an error, a 429 and an unknown option all defer with `fallback: true`; history is cut to 6 turns.
+4. **Config.** Add `scopeRouter` (`SCOPE_ROUTERS` in `retrieval-config-fields.ts`) and `minRouteConfidence` (a number field) with labels "Scope router" and "Min route confidence". Add the preset `hybrid-rerank-rewrite-route` (= `hybrid-rerank-rewrite` + `scopeRouter: "decision"`). The existing presets keep `rewriter`.
+5. **Pipeline.** `RetrievalPipelineDeps` gains `router: ScopeRouter`. With `scopeRouter: "decision"`, a `route` stage (`STAGE.route`) runs first. A short-circuit returns `this.result(...)` with the router's scope and no chunks. Otherwise the pipeline continues with `rewrite`. `createRag` builds `DecisionScopeRouter` with `LLM_ROUTER_MODEL` (added to `llm-env.ts` and `.env.example`). Tests: `rewriter` mode records no `route` stage and is otherwise unchanged; each short-circuit records only `route`; a deferral runs the full pipeline and the rewriter's scope wins.
+6. **Trace.** `RouteStageInput` (model, cutoff, history turns) and `RouteStageOutput` (`RouteDecision` without `model`) in `trace-stages.ts`, a `route` case in `readTrace`, and a panel in `trace-stage-panel.tsx`: the three probabilities as bars with the cutoff marked, the outcome ("Short-circuit: small talk" / "Deferred to rewriter"), and the error after a fallback.
+7. **Public chat step.** `route` becomes a `ChatStepName`. The detail is `{ kind: "route"; scope: QueryScope | null; fallback: boolean }`: no probabilities, model or error. Add a guard case in `client/api/chat-steps.ts` and the texts in `chat-steps-text.ts` ("Understood your message as small talk", "Checking your question", …).
+8. **Playground.** A select for `scopeRouter` and a number input for `minRouteConfidence`, with a hint ("Small talk and off-topic messages at or above this confidence skip retrieval"). Add both to the "Chat uses" rows.
+9. **Eval.**
+   - `GoldenItemSchema` gains `expectedScope: QueryScope`, default `cv`. `relevantEntityKeys` may be empty only when `expectedScope` is not `cv`. The retrieval metrics count only `cv` items.
+   - The report gains, per preset: scope accuracy, the number of `cv` items routed away from retrieval (the costly mistake), and the number of router fallbacks.
+   - Add example small-talk and off-topic items (tag `scope`) to `evals/cv-retrieval.golden.json`, then update `evals/README.md`.
+   - Tests: schema rules, metrics that skip non-`cv` items, scope counts.
+
+**Done when**
+- Step 2's probe output is reported to the owner and the owner said go.
+- In the playground with `scopeRouter: "decision"`: "hi, thanks!" shows only a `route` stage with its probabilities, and "What does he do at Clinics Medical Group?" shows `route` (deferred), then the full pipeline. With `rewriter`, neither message shows a `route` stage.
+- With that config saved through "Use for chat", "hi, thanks!" in the chat gets a small-talk answer, and its steps show only the route step before the answer.
+- With the router model set to a bad slug, a chat turn still answers through the rewriter and the trace's `route` stage shows the fallback and its error.
+- `bun run eval:rag -- --presets hybrid-rerank-rewrite,hybrid-rerank-rewrite-route` prints both rows with scope accuracy and the count of misrouted CV questions.
+
 ---
 
 # PHASE 3: Visible chat workflow
@@ -1516,6 +1578,8 @@ mistake cannot send mail by itself.
 | 2.3 | Inspect the chunks and contexts in `/admin/rag/[indexId]`. |
 | 2.8 | Write the 40 golden questions, run the eval, pick default presets. |
 | 2.10 | Test the chat end to end on a Vercel preview deployment. |
+| 2.14 step 2 | Read the router probe output; say go or no-go and confirm the router model. |
+| 2.14 | Compare the two eval rows; decide whether to save `scopeRouter: "decision"` for the chat, and at which cutoff. |
 | 3.1 | Confirm the Phase 3 fixed decisions, the `LLM_ANSWER_REASONING` level, and the fix for the utility model (if it is needed). |
 | 3.5 | Check the workflow panel on a phone and on desktop. |
 | 4.1 | Confirm the Phase 4 fixed decisions (draft-then-Send, limits, Gmail API over SMTP). |
@@ -1531,4 +1595,5 @@ mistake cannot send mail by itself.
 - **Gmail refresh token lifetime (Phase 4).** While the Google OAuth app is in *Testing* status, refresh tokens expire after 7 days and the email tool stops working. Set the app to *In production* (an unverified app is fine for the owner's own account; Google shows a warning on the consent screen). Changing the Google password or revoking access also revokes the token.
 - **Email abuse (Phase 4).** Anyone can draft and send up to the limits, and the text is visitor-written. The fixed recipient, the Send click, the per-session and daily caps, and the public-session gate bound it; spam can still reach the owner's inbox up to `CONTACT_EMAIL_DAILY_LIMIT` a day.
 - **Tool-calling reliability (Phase 4).** The free answer model lists `tools`, but it may call the tool too eagerly or not at all. 4.1 records how it behaves. Changing the model is the owner's decision.
+- **Decisions API is alpha (2.14).** The endpoint, request and response shapes may change without notice, and the default router model is new and free-tier (tight rate limits). The router is opt-in and every failure falls back to the rewriter, so a break costs the short-circuit, not the turn. Visitor messages and recent history go to that provider, like the rewriter's.
 - **Public session gate.** The home page redirects cookie-less clients to session issuance; crawlers that drop cookies may not index the CV page. Out of scope; do not change it without asking.

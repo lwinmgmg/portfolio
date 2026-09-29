@@ -7,6 +7,7 @@ const DEFAULT_UTILITY_MODEL = "nvidia/nemotron-3.5-lightning";
 const DEFAULT_ANSWER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const DEFAULT_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b:free";
 const DEFAULT_RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2:free";
+const DEFAULT_ROUTER_MODEL = "respan/span-01-lite:free";
 const DEFAULT_CHAT_DAILY_MESSAGE_LIMIT = 500;
 const DEFAULT_ANSWER_REASONING = "low";
 
@@ -45,6 +46,7 @@ export const LlmEnvSchema = z.object({
   LLM_ANSWER_MODEL: stringWithDefault(DEFAULT_ANSWER_MODEL),
   EMBEDDING_MODEL: stringWithDefault(DEFAULT_EMBEDDING_MODEL),
   RERANK_MODEL: stringWithDefault(DEFAULT_RERANK_MODEL),
+  LLM_ROUTER_MODEL: stringWithDefault(DEFAULT_ROUTER_MODEL),
   CHAT_DAILY_MESSAGE_LIMIT: DailyMessageLimitSchema,
   LLM_ANSWER_REASONING: z.preprocess(
     blankToUndefined,
@@ -67,6 +69,7 @@ export function readLlmEnv(
     LLM_ANSWER_MODEL: env.LLM_ANSWER_MODEL,
     EMBEDDING_MODEL: env.EMBEDDING_MODEL,
     RERANK_MODEL: env.RERANK_MODEL,
+    LLM_ROUTER_MODEL: env.LLM_ROUTER_MODEL,
     CHAT_DAILY_MESSAGE_LIMIT: env.CHAT_DAILY_MESSAGE_LIMIT,
     LLM_ANSWER_REASONING: env.LLM_ANSWER_REASONING,
   });

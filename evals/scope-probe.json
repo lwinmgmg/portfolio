@@ -1,0 +1,63 @@
+{
+  "subject": "Lwin Maung Maung",
+  "items": [
+    { "id": "greet-hi", "expected": "smalltalk", "message": "hi!" },
+    { "id": "greet-how-are-you", "expected": "smalltalk", "message": "Hello there, how are you today?" },
+    { "id": "thanks", "expected": "smalltalk", "message": "thanks, that was helpful" },
+    { "id": "assistant-bot", "expected": "smalltalk", "message": "Are you a bot or the real person?" },
+    { "id": "assistant-help", "expected": "smalltalk", "message": "What can you help me with?" },
+    {
+      "id": "thanks-after-answer",
+      "expected": "smalltalk",
+      "message": "great, thank you!",
+      "history": [
+        { "role": "user", "text": "Where does he work now?" },
+        { "role": "assistant", "text": "He is a Lead Software & AI Engineer at Clinics Medical Group [S1]." }
+      ]
+    },
+
+    { "id": "off-capital", "expected": "off_topic", "message": "What's the capital of Australia?" },
+    { "id": "off-coding", "expected": "off_topic", "message": "Can you write me a Python function that reverses a linked list?" },
+    { "id": "off-other-person", "expected": "off_topic", "message": "Who is the CEO of Microsoft?" },
+    { "id": "off-translate", "expected": "off_topic", "message": "Translate 'good morning' into French." },
+    { "id": "off-roleplay", "expected": "off_topic", "message": "Pretend you are a pirate and tell me a joke." },
+    { "id": "off-weather", "expected": "off_topic", "message": "What's the weather in Yangon today?" },
+    {
+      "id": "off-after-cv",
+      "expected": "off_topic",
+      "message": "ok, now tell me a joke about cats",
+      "history": [
+        { "role": "user", "text": "What does he do at Clinics Medical Group?" },
+        { "role": "assistant", "text": "He leads software and AI engineering there [S1]." }
+      ]
+    },
+
+    { "id": "cv-role", "expected": "cv", "message": "What's his current role?" },
+    { "id": "cv-company", "expected": "cv", "message": "What does he do at Clinics Medical Group?" },
+    { "id": "cv-languages", "expected": "cv", "message": "Which programming languages do you know?" },
+    { "id": "cv-contact", "expected": "cv", "message": "How can I get in touch with him?" },
+    { "id": "cv-certs", "expected": "cv", "message": "Does he have any cloud certifications?" },
+
+    { "id": "mixed-hi-stack", "expected": "cv", "message": "hi! what's his stack?" },
+    { "id": "mixed-thanks-study", "expected": "cv", "message": "Thanks! And where did he study?" },
+
+    {
+      "id": "follow-before-that",
+      "expected": "cv",
+      "message": "and before that?",
+      "history": [
+        { "role": "user", "text": "Where does he work now?" },
+        { "role": "assistant", "text": "He is a Lead Software & AI Engineer at Clinics Medical Group [S1]." }
+      ]
+    },
+    {
+      "id": "follow-which-one",
+      "expected": "cv",
+      "message": "which one used Next.js?",
+      "history": [
+        { "role": "user", "text": "What projects has he built?" },
+        { "role": "assistant", "text": "He built this portfolio with its chat assistant, among other projects [S1][S2]." }
+      ]
+    }
+  ]
+}

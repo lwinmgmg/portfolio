@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.10b (subject name out of BM25) on `master`.
+Last updated after Phase 2.14 steps 1–2 (Decisions client and scope-router probe; probe is a no-go for the default model) on `master`.
 
 ## How to work
 
@@ -25,6 +25,7 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
+| (next) | Phase 2.14 steps 1–2. `OpenRouterClient.decide` (Decisions API), `LLM_ROUTER_MODEL`, route question and cutoff rule, `scripts/probe-scope-router.ts`. Probe: no-go for `respan/span-01-lite:free`; waiting on the owner. |
 | (next) | Phase 2.10d. `dropBelowMeanRerank` config toggle (default on): the filter also drops reranked hits below the turn's mean rerank score. Built, not live-checked. |
 | (next) | Phase 2.10c. `ignoreSubjectInRerank` config toggle (default on): the subject's name is removed from the rerank query and candidate texts. Built, not live-checked. |
 | (next) | Phase 2.10b. `ignoreSubjectInLexical` config toggle (default on): BM25 drops the published name's terms from queries. Built, not live-checked. |
@@ -64,6 +65,8 @@ Newest first:
 | `1676201` | Mongo project layer and admin projects page. |
 
 Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). By 2026-09-29 the owner had an active index (a chat turn showed its steps), but no agent has rerun the 2.8–2.10 checks. Phase 2.10a (chat retrieval settings) is built but not Done: its done-when needs the playground in a browser, a live chat turn and a paid eval run. Phase 2.10b (subject name out of BM25) is built but not Done for the same reason (playground in a browser, paid eval run). Next: those checks, then Phase 2.11.
+
+Phase 2.14 (scope routing) is started, not Done: steps 1–2 are built and the step 2 probe was run. It is a no-go for the default router model (see the Phase 2.14 section). Steps 3–9 wait for the owner's go/no-go and model choice.
 
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check, then Phase 4.1 when the owner asks. Restart `next dev` first so it runs the post-3.1 LLM client (see Phase 3.3).
 
@@ -412,6 +415,16 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 - **Scores.** Cosine, BM25 and rerank to 2 decimals, RRF to 4. Each list has a one-line hint. A rerank fallback shows no scores (they are 1 / rank). Fusion's summary is "N chunks combined", because the event has no count after the cut.
 - **Accessibility.** A hidden `role="status"` in `chat-messages.tsx`, outside the `aria-busy` log, announces step changes only. Icons have hidden status text. The spinner is `motion-reduce:animate-none`.
 - **Not checked.** There was no browser. A static render, the built CSS and a 200 for `/` from the owner's dev server were checked. Live streaming, reload, 375 px and 1440 px, dark mode and keyboard use were not.
+
+## Scope routing with a decision model (Phase 2.14, steps 1–2)
+
+- **Endpoint.** `POST https://openrouter.ai/api/alpha/decisions`, beside `/api/v1`, not under it (the Plan's doubled-prefix suspicion was right). `DECISIONS_PATH = "/api/alpha/decisions"` is resolved against the base URL's origin in `OpenRouterClient.endpoint`. Confirmed live on 2026-09-29: requests reached Respan and came back with provider 400s.
+- **`decide()`.** One attempt (no `execute` retry loop), the client's per-attempt timeout plus the caller's signal, same headers and `mapTransportError`. The body is `{ model, state, questions }`. The response is zod-parsed (`answers.<key>.{ choice, confidence, probabilities }`; `type` and other keys are dropped). Usage is `input_tokens` / `output_tokens` / `cost`, mapped to `Usage`. A missing `model` falls back to the requested one. The domain types (`DecisionQuestion`, `DecisionRequest`, `ChoiceAnswer`, `DecisionResult`, `DecisionClient`) only model `choice` questions.
+- **`LLM_ROUTER_MODEL`** is in `llm-env.ts` (default `respan/span-01-lite:free`) and `.env.example`. Nothing in the app reads it yet; only the probe does.
+- **Route question** (`server/rag/route/route-question.ts`): `buildRouteQuestion` (a `choice` over `scopeDefinitions`, now exported from `rewrite-prompt.ts` and shared, so both classifiers use the same definitions; the rewrite prompt text is byte-identical to before), `buildRouteState` (`{ subject, history: last 6 turns, message }`), `readScopeAnswer` (unknown option, extra key, missing or out-of-range probability → `{ ok: false }`), `shortCircuitScope` (the cutoff rule on `probabilities[choice]`), `ROUTE_TIMEOUT_MS = 5_000`. Step 3's `DecisionScopeRouter` should reuse these.
+- **Probe.** `scripts/probe-scope-router.ts` (`--model`, `--file`), scoring in `server/rag/route/scope-probe.ts`, 22 labelled items in `evals/scope-probe.json` (6 small talk, 7 off topic, 9 cv including mixed and follow-ups). Usage in `evals/README.md`.
+- **Probe result, 2026-09-29: no-go for `respan/span-01-lite:free`.** All 22 calls failed with provider 400s before any classification. (1) The Plan's state `{ subject, history, message }` is refused: "Respan state must be a string or an object with only input (a message array) and output (a message) … and the output role is assistant". (2) With a plain-string state (3 throwaway calls), it refuses the question: "Respan only accepts noul questions whose instructions and criteria are plain strings". Span-01 is a yes/no behaviour scorer for conversation spans, not a `choice` classifier. The 22nd call also hit `429 Rate limit exceeded: free-models-per-min`. Latency of the rejections was about 0.3 s.
+- **Waiting on the owner.** Options: probe `typesafe/jev-1.13` (documented to take object state and `choice`; paid, billed on input tokens) with `--model`; or change the Plan to two `noul` questions on Respan with a string or `{ input, output }` state; or stop the phase. No agent has run the probe against Jev.
 
 ## Scaffold removal
 

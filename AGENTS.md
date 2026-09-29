@@ -49,8 +49,9 @@ Tests are colocated as `*.test.ts`. Shared test fakes live in `__fixtures__/`.
 proxy.ts                      Optimistic /admin redirect only. No server-only, Mongo or limiter imports.
 scripts/hash-admin-password.ts  Produces ADMIN_PASSWORD_HASH for .env.local.
 scripts/rag-eval.ts           `bun run eval:rag`: retrieval eval against the real DB, wired from rag-composition.
+scripts/probe-scope-router.ts `bun --env-file=.env.local`: go/no-go probe of the decision model on evals/scope-probe.json. No DB.
 scripts/bun-v8-snapshot-shim.ts  Preload for Bun scripts that use Mongo (BSON's v8 probe throws in Bun).
-evals/                        Golden set (cv-retrieval.golden.json), usage README; reports/ is git-ignored.
+evals/                        Golden set (cv-retrieval.golden.json), scope probe set (scope-probe.json), usage README; reports/ is git-ignored.
 
 app/                          Routes. Keep them thin: parse input, call a service or runtime, render.
   layout.tsx, globals.css     Root layout, Tailwind 4.
@@ -98,7 +99,7 @@ server/                       All server logic. Layered: domain -> repositories/
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
   http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers.
   storage/                    VercelBlobStore implements the BlobStore interface.
-  llm/                        OpenRouter client (chat, embeddings, rerank), SSE parser, usage meter, adaptive chat client (drops options an endpoint refuses), llm-env, PDF-to-Markdown, llm-runtime (getLlm).
+  llm/                        OpenRouter client (chat, embeddings, rerank, decisions), SSE parser, usage meter, adaptive chat client (drops options an endpoint refuses), llm-env, PDF-to-Markdown, llm-runtime (getLlm).
   cv/                         CV zod schema, ids, markdown rendering, LLM extractor and prompt, issues, legacy migration, download.
   rag/                        Contextual RAG pipeline. Pure; I/O is injected.
     corpus/                   CvCorpusSource: published CV as the corpus.
@@ -107,7 +108,8 @@ server/                       All server logic. Layered: domain -> repositories/
     embedding/                Batched embedding, L2 normalization.
     indexing/                 IndexBuilder, index config, chunker kinds.
     search/                   English analyzer, BM25, vector index, InMemoryRetriever, LRU cache.
-    query/                    LlmQueryRewriter and its prompt.
+    query/                    LlmQueryRewriter and its prompt (scopeDefinitions is shared with route/).
+    route/                    Scope routing on a decision model: route question, state, cutoff rule; probe scoring.
     fusion/                   Reciprocal Rank Fusion.
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.

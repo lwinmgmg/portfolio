@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   LlmProviderError,
   type ChatClient,
@@ -6,6 +8,9 @@ import {
   type ChatResult,
   type ChatStreamEvent,
   type ContentPart,
+  type DecisionClient,
+  type DecisionRequest,
+  type DecisionResult,
   type EmbeddingClient,
   type PdfEngine,
   type ReasoningEffort,
@@ -21,6 +26,8 @@ import { convertPdfToMarkdown, type PdfToMarkdown } from "@/server/llm/pdf-to-ma
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RETRIES = 2;
+// The alpha Decisions API sits beside `/api/v1`, not under it, so it resolves against the origin.
+const DECISIONS_PATH = "/api/alpha/decisions";
 
 export type OpenRouterFetch = (
   input: RequestInfo | URL,
@@ -80,9 +87,11 @@ type ChatBody = {
   reasoning?: { effort: ReasoningEffort } | { enabled: false };
 };
 
-type OpenRouterPath = "/chat/completions" | "/embeddings" | "/rerank";
+type OpenRouterPath = "/chat/completions" | "/embeddings" | "/rerank" | typeof DECISIONS_PATH;
 
-export class OpenRouterClient implements ChatClient, EmbeddingClient, RerankClient {
+export class OpenRouterClient
+  implements ChatClient, EmbeddingClient, RerankClient, DecisionClient
+{
   private readonly apiKey: string;
   private readonly appUrl: string | undefined;
   private readonly appName: string | undefined;
@@ -181,6 +190,26 @@ export class OpenRouterClient implements ChatClient, EmbeddingClient, RerankClie
     return parseRerank(payload);
   }
 
+  // One attempt, no retry loop: callers put a decision in front of every turn and fall back on
+  // failure, so a retry would only add latency.
+  async decide(request: DecisionRequest): Promise<DecisionResult> {
+    throwIfAborted(request.signal);
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const signal = combineSignals(request.signal, timeoutSignal);
+    let payload: unknown;
+    try {
+      const response = await this.fetchOnce(
+        DECISIONS_PATH,
+        { model: request.model, state: request.state, questions: request.questions },
+        signal,
+      );
+      payload = await readJson(response);
+    } catch (error) {
+      throw mapTransportError(error, request.signal, timeoutSignal);
+    }
+    return parseDecision(payload, request.model);
+  }
+
   private async execute<T>(
     outerSignal: AbortSignal | undefined,
     operation: (signal: AbortSignal) => Promise<T>,
@@ -249,6 +278,7 @@ export class OpenRouterClient implements ChatClient, EmbeddingClient, RerankClie
   }
 
   private endpoint(path: OpenRouterPath): string {
+    if (path === DECISIONS_PATH) return new URL(path, this.baseUrl).href;
     return `${this.baseUrl}${path}`;
   }
 
@@ -429,6 +459,52 @@ function parseRerank(payload: unknown): RerankResult[] {
 
   results.sort((left, right) => right.score - left.score);
   return results;
+}
+
+const ChoiceAnswerSchema = z.object({
+  choice: z.string(),
+  confidence: z.number(),
+  probabilities: z.record(z.string(), z.number()),
+});
+
+const DecisionPayloadSchema = z.object({
+  model: z.string().optional(),
+  answers: z.record(z.string(), ChoiceAnswerSchema),
+});
+
+function parseDecision(payload: unknown, fallbackModel: string): DecisionResult {
+  const record = objectPayload(payload, "OpenRouter decision response was not an object");
+  const failure = readFailure(record);
+  if (failure) throw failure;
+
+  const parsed = DecisionPayloadSchema.safeParse(record);
+  if (!parsed.success) {
+    throw new LlmProviderError("OpenRouter decision response is invalid", {
+      status: null,
+      retryable: false,
+      cause: parsed.error,
+    });
+  }
+  const model = parsed.data.model;
+  return {
+    answers: parsed.data.answers,
+    model: model !== undefined && model.length > 0 ? model : fallbackModel,
+    usage: readDecisionUsage(record),
+  };
+}
+
+// The Decisions API names its counts `input_tokens` / `output_tokens`, unlike chat completions.
+function readDecisionUsage(payload: Record<string, unknown>): Usage | null {
+  if (!isRecord(payload.usage)) return null;
+  const input = payload.usage.input_tokens;
+  if (typeof input !== "number" || !Number.isFinite(input)) return null;
+  const output = payload.usage.output_tokens;
+  const cost = payload.usage.cost;
+  return {
+    promptTokens: input,
+    completionTokens: typeof output === "number" && Number.isFinite(output) ? output : 0,
+    cost: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+  };
 }
 
 type StreamChunk = {

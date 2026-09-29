@@ -82,6 +82,40 @@ export interface RerankClient {
   }): Promise<RerankResult[]>;
 }
 
+/** A Decisions API `choice` question: the model picks one key of `criteria`. */
+export type DecisionQuestion = {
+  type: "choice";
+  instructions: string;
+  /** Option key -> what that option means. */
+  criteria: Record<string, string>;
+};
+
+export type DecisionRequest = {
+  model: string;
+  /** Any JSON value; the model reads it as the facts to decide on. */
+  state: unknown;
+  questions: Record<string, DecisionQuestion>;
+  signal?: AbortSignal;
+};
+
+export type ChoiceAnswer = {
+  choice: string;
+  confidence: number;
+  /** One probability per option key. */
+  probabilities: Record<string, number>;
+};
+
+export type DecisionResult = {
+  /** Keyed like the request's `questions`. */
+  answers: Record<string, ChoiceAnswer>;
+  model: string;
+  usage: Usage | null;
+};
+
+export interface DecisionClient {
+  decide(request: DecisionRequest): Promise<DecisionResult>;
+}
+
 export class LlmProviderError extends Error {
   readonly status: number | null;
   readonly retryable: boolean;

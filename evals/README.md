@@ -82,3 +82,25 @@ count as missed.
 - MRR: mean of 1 / rank of the first relevant chunk (0 when none is in the top 10).
 
 A question whose retrieval failed scores 0 and is counted under errors.
+
+# Scope-router probe (Plan.md 2.14)
+
+A go/no-go check of a decision model before scope routing is built on it. It sends every message in
+`evals/scope-probe.json` to OpenRouter's alpha Decisions API with the route question, one at a
+time, one attempt each with a 5 s timeout, and prints per message the label, the model's choice,
+the three scope probabilities, the latency and any error. Then it prints, at cutoffs 0.6 / 0.7 /
+0.8 / 0.9, how many answers were right, how many CV questions would have skipped retrieval, how
+many small-talk or off-topic messages would still go to the rewriter, and how many short-circuited
+to the wrong scope. No database.
+
+```sh
+bun --env-file=.env.local scripts/probe-scope-router.ts
+bun --env-file=.env.local scripts/probe-scope-router.ts --model typesafe/jev-1.13
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--model <slug>` | `LLM_ROUTER_MODEL` | Decision model to probe. |
+| `--file <path>` | `evals/scope-probe.json` | Probe file: `{ "subject", "items": [{ "id", "expected", "message", "history"? }] }`, `expected` one of `cv`, `smalltalk`, `off_topic`. |
+
+Free models allow about 20 requests a minute, so the last items of a full run can return 429.

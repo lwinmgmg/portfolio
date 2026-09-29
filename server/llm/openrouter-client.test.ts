@@ -4,6 +4,7 @@ import {
   LlmProviderError,
   type ChatRequest,
   type ChatStreamEvent,
+  type DecisionRequest,
 } from "@/server/domain/llm";
 import {
   OpenRouterClient,
@@ -812,5 +813,145 @@ test("does not retry an invalid completion payload", async () => {
   expect(error.message).toBe("OpenRouter chat response is missing a message");
   expect(error.retryable).toBe(false);
   expect(requests.length).toBe(1);
+  expect(delays).toEqual([]);
+});
+
+function decisionRequest(overrides: Partial<DecisionRequest> = {}): DecisionRequest {
+  return {
+    model: "router/model",
+    state: { subject: "Ada", history: [], message: "hi" },
+    questions: {
+      scope: {
+        type: "choice",
+        instructions: "Classify the message.",
+        criteria: { cv: "About the CV.", smalltalk: "A greeting." },
+      },
+    },
+    ...overrides,
+  };
+}
+
+function decision() {
+  return {
+    id: "gen-dec-1",
+    model: "router/model-20260926",
+    provider: "Respan",
+    answers: {
+      scope: {
+        type: "choice",
+        choice: "smalltalk",
+        confidence: 0.8,
+        probabilities: { cv: 0.1, smalltalk: 0.9 },
+      },
+    },
+    usage: { input_tokens: 120, output_tokens: 3, cost: 0.00001 },
+  };
+}
+
+test("posts a decision beside /api/v1 and reads the answer, model and usage", async () => {
+  const { fetch, requests } = createFetch([jsonResult(200, decision())]);
+  const { client } = createClient(fetch);
+
+  const result = await client.decide(decisionRequest());
+
+  const request = requireRequest(requests);
+  expect(request.url).toBe("https://openrouter.test/api/alpha/decisions");
+  expect(request.method).toBe("POST");
+  expect(request.headers.get("authorization")).toBe(`Bearer ${API_KEY}`);
+  expect(request.headers.get("x-title")).toBe("portfolio");
+  expect(request.body).toEqual({
+    model: "router/model",
+    state: { subject: "Ada", history: [], message: "hi" },
+    questions: {
+      scope: {
+        type: "choice",
+        instructions: "Classify the message.",
+        criteria: { cv: "About the CV.", smalltalk: "A greeting." },
+      },
+    },
+  });
+  expect(result).toEqual({
+    answers: {
+      scope: { choice: "smalltalk", confidence: 0.8, probabilities: { cv: 0.1, smalltalk: 0.9 } },
+    },
+    model: "router/model-20260926",
+    usage: { promptTokens: 120, completionTokens: 3, cost: 0.00001 },
+  });
+});
+
+test("falls back to the requested model and null usage when they are missing", async () => {
+  const { answers } = decision();
+  const { fetch } = createFetch([jsonResult(200, { answers })]);
+  const { client } = createClient(fetch);
+
+  const result = await client.decide(decisionRequest());
+
+  expect(result.model).toBe("router/model");
+  expect(result.usage).toBeNull();
+});
+
+test("does not retry a 429 decision", async () => {
+  const { fetch, requests } = createFetch([
+    jsonResult(429, { error: { message: "rate limited", code: 429 } }),
+    jsonResult(200, decision()),
+  ]);
+  const { client, delays } = createClient(fetch);
+
+  const error = await capture(() => client.decide(decisionRequest()));
+
+  expect(error.status).toBe(429);
+  expect(error.message).toBe("rate limited");
+  expect(requests.length).toBe(1);
+  expect(delays).toEqual([]);
+});
+
+test("maps an error inside a 200 decision body", async () => {
+  const { fetch } = createFetch([
+    jsonResult(200, { error: { message: "question type not supported", code: 400 } }),
+  ]);
+  const { client } = createClient(fetch);
+
+  const error = await capture(() => client.decide(decisionRequest()));
+
+  expect(error.status).toBe(400);
+  expect(error.message).toBe("question type not supported");
+});
+
+test("rejects a malformed decision body", async () => {
+  const { fetch } = createFetch([
+    jsonResult(200, { answers: { scope: { choice: "smalltalk", confidence: 0.8 } } }),
+  ]);
+  const { client } = createClient(fetch);
+
+  const error = await capture(() => client.decide(decisionRequest()));
+
+  expect(error.message).toBe("OpenRouter decision response is invalid");
+  expect(error.retryable).toBe(false);
+});
+
+test("maps a decision timeout without retrying", async () => {
+  let calls = 0;
+  const fetch: OpenRouterFetch = (_input, init) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) {
+        reject(new Error("missing signal"));
+        return;
+      }
+      signal.addEventListener(
+        "abort",
+        () => reject(new DOMException("timed out", "TimeoutError")),
+        { once: true },
+      );
+    });
+  };
+  const { client, delays } = createClient(fetch, { timeoutMs: 20 });
+
+  const error = await capture(() => client.decide(decisionRequest()));
+
+  expect(error.message).toBe("OpenRouter request timed out");
+  expect(error.status).toBe(408);
+  expect(calls).toBe(1);
   expect(delays).toEqual([]);
 });
