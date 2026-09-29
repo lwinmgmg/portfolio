@@ -1,9 +1,12 @@
 import {
   CHAT_MESSAGE_MAX_CHARS,
+  CHAT_REASONING_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
   type ChatEvent,
   type ChatLimitCode,
   type ChatSource,
+  type ChatStep,
+  type ChatStepName,
   type ChatTurn,
   type Conversation,
   type ConversationRepository,
@@ -20,6 +23,7 @@ import {
   type RetrievalRunner,
   type RetrievalTrace,
   type RetrievedChunk,
+  type TraceObserver,
 } from "@/server/domain/rag";
 import {
   ANSWER_HISTORY_TURNS,
@@ -31,6 +35,8 @@ import {
 } from "@/server/rag/answer/answer-prompt";
 import { citedEntityKeys, extractCitations } from "@/server/rag/answer/citations";
 import { DEFAULT_RETRIEVAL_CONFIG } from "@/server/rag/pipeline/retrieval-config";
+import { finishedStep, isChatStepName, runningStep } from "@/server/rag/progress/chat-steps";
+import { EventChannel } from "@/server/rag/progress/event-channel";
 import {
   STAGE,
   type GenerateStageInput,
@@ -125,23 +131,41 @@ export class ChatService {
 
     const history = conversation.messages.map(({ role, text }): ChatTurn => ({ role, text }));
     const userMessage = this.stored("user", message, [], null);
-    let retrieval: RetrievalResult;
+    const progress = new EventChannel<ChatStep>();
+    const run = this.deps.pipeline.run({
+      message,
+      history,
+      config: DEFAULT_RETRIEVAL_CONFIG,
+      subjectName,
+      kind: "chat",
+      observer: stepObserver(progress),
+    });
+    // The steps end when the pipeline settles, either way; `settleRetrieval` reads the outcome.
+    void run.then(
+      () => progress.close(),
+      () => progress.close(),
+    );
+
+    let watching = true;
     try {
-      retrieval = await this.deps.pipeline.run({
-        message,
-        history,
-        config: DEFAULT_RETRIEVAL_CONFIG,
-        subjectName,
-        kind: "chat",
-      });
-    } catch (error) {
-      if (error instanceof RetrievalError) {
-        this.log("Chat retrieval failed.", error.cause);
-        await this.saveTrace(error.trace);
-      } else if (!(error instanceof RagError)) {
-        throw error;
+      for await (const step of progress) yield { type: "step", step };
+      watching = false;
+    } finally {
+      // The visitor left during retrieval: nothing is stored, but the trace is saved once it ends.
+      if (watching) {
+        const stopped = await this.settleRetrieval(run);
+        if (stopped) await this.saveTrace(stopped.trace);
       }
+    }
+
+    const retrieval = await this.settleRetrieval(run);
+    if (retrieval === null) {
       yield { type: "error", code: "unavailable" };
+      return;
+    }
+    // Stopped while retrieval ran, but between steps: the same as leaving during retrieval.
+    if (request.signal?.aborted) {
+      await this.saveTrace(retrieval.trace);
       return;
     }
 
@@ -158,6 +182,21 @@ export class ChatService {
       yield* this.fixedReply(turn, offTopicReply(subjectName));
     } else {
       yield* this.generate(turn);
+    }
+  }
+
+  // Null when retrieval failed. A failed stage's partial trace is saved here.
+  private async settleRetrieval(run: Promise<RetrievalResult>): Promise<RetrievalResult | null> {
+    try {
+      return await run;
+    } catch (error) {
+      if (error instanceof RetrievalError) {
+        this.log("Chat retrieval failed.", error.cause);
+        await this.saveTrace(error.trace);
+        return null;
+      }
+      if (error instanceof RagError) return null;
+      throw error;
     }
   }
 
@@ -211,11 +250,14 @@ export class ChatService {
     };
 
     const started = this.clock();
+    const steps = new AnswerSteps(input, started, (t) => onTraceTimeline(turn, t));
     let text = "";
+    let reasoning = "";
     let usage: Usage | null = null;
     let outcome: Outcome = "streaming";
     let error: string | null = null;
     let sources: ChatSource[] = [];
+    let ended = started;
     try {
       try {
         const stream = this.deps.chat.stream({
@@ -230,11 +272,19 @@ export class ChatService {
             usage = event.usage;
             continue;
           }
-          // Phase 3.3 streams reasoning to the visitor; until then it is not part of the answer.
-          if (event.type === "reasoning") continue;
+          // Reasoning is shown to the visitor but is not part of the answer.
+          if (event.type === "reasoning") {
+            yield* steps.reasoningText();
+            reasoning += event.text;
+            yield { type: "reasoning", text: event.text };
+            continue;
+          }
+          yield* steps.answerText(() => this.clock());
           text += event.text;
           yield { type: "delta", text: event.text };
         }
+        // An answer with no text still has a generate step to finish.
+        yield* steps.answerText(() => this.clock());
         outcome = "complete";
       } catch (failure) {
         if (turn.signal?.aborted) {
@@ -256,8 +306,10 @@ export class ChatService {
         answer: text,
         stopped,
         citedSourceIds: sources.map((source) => source.sourceId),
+        reasoning: reasoning ? reasoning.slice(0, CHAT_REASONING_MAX_CHARS) : null,
       };
-      const trace = withGenerateStage(turn, input, output, error, started, this.clock());
+      ended = this.clock();
+      const trace = withGenerateStage(turn, input, output, error, started, ended);
       // A failed answer is not stored, so it does not count toward the limits.
       if (outcome !== "failed") {
         await this.appendTurn(turn, stopped ? stoppedText(text) : text, sources, trace.id);
@@ -266,10 +318,12 @@ export class ChatService {
     }
 
     if (outcome === "failed") {
+      yield* steps.end(ended, error ?? "failed");
       yield { type: "error", code: "unavailable" };
       return;
     }
     if (outcome === "stopped") return;
+    yield* steps.end(ended, null);
     yield { type: "sources", sources };
     yield { type: "done" };
   }
@@ -314,7 +368,87 @@ function stoppedText(text: string): string {
   return partial ? `${partial} ${STOPPED_SUFFIX}` : STOPPED_SUFFIX;
 }
 
-// The pipeline's trace ends when retrieval returns; generation is placed after it on the same timeline.
+// Pushes a step when each retrieval stage starts and ends.
+function stepObserver(progress: EventChannel<ChatStep>): TraceObserver {
+  return {
+    stageStarted: (name, startedAt) => {
+      if (isChatStepName(name)) progress.push(runningStep(name, startedAt));
+    },
+    stageEnded: (stage) => {
+      const step = finishedStep(stage);
+      if (step) progress.push(step);
+    },
+  };
+}
+
+// The pipeline's trace ends when retrieval returns; generation is placed after it on the same
+// timeline, so a clock reading `t` is at `totalMs + (t - retrievedAt)`.
+function onTraceTimeline(turn: Turn, t: number): number {
+  return turn.retrieval.trace.totalMs + (t - turn.retrievedAt);
+}
+
+function stepEvents(step: ChatStep | null): ChatEvent[] {
+  return step ? [{ type: "step", step }] : [];
+}
+
+type AnswerStepName = Extract<ChatStepName, "reasoning" | "generate">;
+
+// The visitor's steps for the answer: `reasoning` while the model thinks, then `generate` from
+// the first answer text. Each method returns the step events to send; times are clock readings.
+class AnswerSteps {
+  private current: { name: AnswerStepName; startedAt: number } | null = null;
+
+  constructor(
+    private readonly input: GenerateStageInput,
+    // When the model was asked. Its reasoning, or else its answer, is timed from here.
+    private readonly started: number,
+    private readonly onTimeline: (t: number) => number,
+  ) {}
+
+  // Before each reasoning text. Only the first, before any answer text, starts the step.
+  reasoningText(): ChatEvent[] {
+    if (this.current) return [];
+    return this.start("reasoning", this.started);
+  }
+
+  // Before each answer text. The first ends `reasoning`, if it ran, and starts `generate`.
+  answerText(clock: () => number): ChatEvent[] {
+    if (this.current?.name === "generate") return [];
+    if (this.current === null) return this.start("generate", this.started);
+    const now = clock();
+    return [...this.finish(now, null), ...this.start("generate", now)];
+  }
+
+  // Finishes the running step, or fails it with `error`. A failure before any step started is
+  // the generate step's.
+  end(ended: number, error: string | null): ChatEvent[] {
+    this.current ??= { name: "generate", startedAt: this.started };
+    return this.finish(ended, error);
+  }
+
+  private start(name: AnswerStepName, startedAt: number): ChatEvent[] {
+    this.current = { name, startedAt };
+    return stepEvents(runningStep(name, this.onTimeline(startedAt)));
+  }
+
+  // Projected like the retrieval stages, so the detail comes from the same readers.
+  private finish(ended: number, error: string | null): ChatEvent[] {
+    const { current } = this;
+    if (current === null) return [];
+    this.current = null;
+    return stepEvents(
+      finishedStep({
+        name: current.name,
+        input: this.input,
+        output: null,
+        startedAt: this.onTimeline(current.startedAt),
+        durationMs: ended - current.startedAt,
+        error,
+      }),
+    );
+  }
+}
+
 function withGenerateStage(
   turn: Turn,
   input: GenerateStageInput,
@@ -324,7 +458,7 @@ function withGenerateStage(
   ended: number,
 ): RetrievalTrace {
   const { trace } = turn.retrieval;
-  const startedAt = trace.totalMs + (started - turn.retrievedAt);
+  const startedAt = onTraceTimeline(turn, started);
   const durationMs = ended - started;
   return {
     ...trace,

@@ -55,6 +55,9 @@ export type ChatSource = {
 // Most hits a step lists per result list. The list's `total` keeps the full count.
 export const CHAT_STEP_HITS = 10;
 
+// Longest reasoning text kept after the turn (in the trace, and later in the browser transcript).
+export const CHAT_REASONING_MAX_CHARS = 8_000;
+
 // The retrieval stage names (STAGE in trace-stages.ts), plus the answer model's reasoning.
 export type ChatStepName =
   | "rewrite"

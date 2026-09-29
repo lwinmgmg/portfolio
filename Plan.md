@@ -1122,6 +1122,20 @@ reasoning text.
 5. `GenerateStageOutputSchema` gains `reasoning: z.string().nullable().optional()` (older traces have no key), capped at 8,000 characters when saved.
 6. Tests with fakes: full event order (`meta`, the step pairs in pipeline order, `reasoning`, `delta`s, `sources`, `done`); no reasoning → no `reasoning` step; off-topic; retrieval failure (failed step, then `error unavailable`, trace saved); answer failure (failed `generate`); stop mid-retrieval and mid-reasoning; reasoning stored in the trace and capped. Update the existing event-order tests.
 
+**Status:** Done
+
+**As built**
+- `EventChannel<T>` (`event-channel.ts`) is a class: `push`, `close`, `fail`, and an async iterator. Buffered items are read before the end. A failure is thrown once. A reader that stops early (`return()`) drops the buffer and later pushes. The service uses only `close` (on either outcome of `pipeline.run`) and then awaits the run itself, so a retrieval error is handled in one place (`settleRetrieval`).
+- **Step timing.** `reasoning` starts when the model is asked, not at its first reasoning chunk. `generate` starts at the first answer text when reasoning ran, and otherwise also when the model is asked. The two steps then cover generation with no gap, and the trace's `generate` stage covers both. The running step is sent on the first chunk as the plan says, carrying the earlier `startedAt`.
+- **Answer steps are projected with `finishedStep`** from a `TraceStage`-shaped entry, so their details come from the same readers as the retrieval stages.
+- **Failures and stops.** A failure before any output sends a failed `generate` step, with no running one before it. A model that reasons but sends no answer text still gets `generate` running and done. A stop (abort or reader gone) sends no step events: the last running step is left for the client to mark stopped (3.4).
+- **Stop during retrieval.** When the reader leaves while retrieval is pending, the generator's `finally` awaits the pipeline and saves its trace, or the partial trace if a stage then fails. An abort seen after retrieval but before generation also stores nothing, saves the trace and ends; otherwise it would have called the model only to be stopped.
+- `CHAT_REASONING_MAX_CHARS = 8_000` is in `server/domain/chat.ts`, so 3.4 can reuse it. The trace keeps `reasoning: null` when the model sent none. The visitor's stream is not capped.
+- **Done-when.**
+  - **Retrieval steps:** `curl -N` against `/api/public/chat` on the owner's `next dev` (2026-09-29) showed a running and a finished `step` for all seven retrieval stages and for `generate`, and ended in `done`.
+  - **No reasoning through the dev server:** no `reasoning` lines came through it, because `getLlm()` keeps the `OpenRouterClient` instance on `globalThis` across hot reloads, so that process still ran the pre-3.1 client. Its first turn's rewrite also fell back, as 3.1 found for that client. Restart `next dev` to load the current client.
+  - **Reasoning in the service:** the same turn through `ChatService` and `ndjsonStream`, wired like `chat-runtime.ts` outside Next, streamed the seven step pairs, then `reasoning` running, 66 `reasoning` lines, `reasoning` done, `generate` running, 44 `delta`s, `generate` done, `sources` and `done`. It saved 816 reasoning characters on the trace. The free answer endpoint returned 503 `provider_overloaded` for a few minutes during the check.
+
 **Done when**
 - `curl -N` against `/api/public/chat` shows `step` events for every stage and `reasoning` lines before the first `delta`, and the stream still ends in `done`.
 

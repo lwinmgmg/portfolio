@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 3.2 (stage progress from the pipeline) on `master`.
+Last updated after Phase 3.3 (chat service and API events) on `master`.
 
 ## How to work
 
@@ -25,7 +25,9 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 3.2. `TraceObserver` on the recorder and pipeline, public `ChatStep` types and events, `chat-steps.ts` projection. |
+| (next) | Phase 3.3. `ChatService` streams `step` and `reasoning` events (`EventChannel`), reasoning saved on the trace's `generate` stage. |
+| `c4fa917` | Owner: answer Markdown rendering (`chat-markdown.ts`, split out of `chat-text.ts`). |
+| `386739a` | Phase 3.2. `TraceObserver` on the recorder and pipeline, public `ChatStep` types and events, `chat-steps.ts` projection. |
 | `6d8b82e` | Phase 3.1. OpenRouter `reasoning` request field and stream events, `LLM_ANSWER_REASONING`, reasoning off for utility calls. |
 | `1bca9f1` | Phase 2.10. Chat widget on `/`, `streamChat`, `postPublicStream`. |
 | `a0e6c32` | Phase 2.9. `ChatService`, answer prompt, citations, conversations, `POST /api/public/chat`. |
@@ -57,7 +59,7 @@ Newest first:
 
 Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, check the chat in a browser (375 px, keyboard only, source chips), then Phase 2.10a (chat retrieval settings, added by the owner), then Phase 2.11.
 
-Phases 3.1 and 3.2 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Next in that track: Phase 3.3 (chat service and API events), when the owner asks.
+Phases 3.1, 3.2 and 3.3 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Next in that track: Phase 3.4 (client events, state and storage), when the owner asks.
 
 ## Environment
 
@@ -303,6 +305,23 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
 - The readers map is typed by both `STAGE` values and `ChatStepName`, so adding a stage to one and not the other fails to compile.
 - `generate` reads `sources` from the stage **input** (`GenerateStageInputSchema`), not the output. `reasoning` always has `{ kind: "reasoning" }`.
 - `entityAnchor(entityKeys)` is now exported from `citations.ts` and shared by citations and steps.
+
+## Chat service and API events (Phase 3.3)
+
+- **Event order** for a CV question: `meta`, then a `running` and a finished `step` per retrieval stage as it happens, then:
+  - with reasoning: `reasoning` running, the `reasoning` text events, `reasoning` done, `generate` running;
+  - without: `generate` running only.
+  After that come the `delta`s, `generate` done, `sources` and `done`.
+  - Off-topic: only the `rewrite` pair, then the fixed reply (no `generate`).
+  - Small talk: `rewrite`, then the answer steps with `sources: 0`.
+- **Retrieval steps.** `ChatService.reply` passes a `TraceObserver` that pushes `runningStep` / `finishedStep` into an `EventChannel` (`server/rag/progress/event-channel.ts`). It yields them while `pipeline.run` is pending, then awaits the run in `settleRetrieval`. That one place logs and saves a `RetrievalError`'s partial trace and maps `RagError` to `unavailable`.
+- **Answer steps.** A private `AnswerSteps` class in `chat-service.ts` sends them and projects them with `finishedStep`, like the retrieval stages. `reasoning` is timed from when the model was asked. `generate` is timed from the first answer text, or from the ask when there was no reasoning. Step times use the trace timeline: `totalMs + (t − retrievedAt)`.
+- **Failures and stops.**
+  - A failure sends the running step as `failed` (with no detail or message), then `error`. A failure before any output fails `generate`.
+  - A stop sends no step event; the client marks the running step stopped (3.4).
+  - A reader that leaves during retrieval stores nothing; the generator's `finally` awaits the pipeline and saves the trace. An abort noticed between retrieval and generation does the same, without calling the model.
+- **Trace.** The trace's `generate` stage output has `reasoning` (string or null, capped at `CHAT_REASONING_MAX_CHARS` = 8,000, in `domain/chat.ts`). Older traces have no key, so the schema has it `.optional()`. The stream to the visitor is not capped.
+- **Dev server caveat.** `getLlm()` keeps the `OpenRouterClient` instance on `globalThis`, so hot reloads do not replace it. After a change to `openrouter-client.ts`, restart `next dev`. On 2026-09-29 the running dev server still had the pre-3.1 client: no `reasoning` events, and the rewriter fell back.
 
 ## Scaffold removal
 

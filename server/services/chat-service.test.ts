@@ -2,8 +2,13 @@ import { expect, test } from "bun:test";
 
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
 import {
+  CHAT_REASONING_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
   type ChatEvent,
+  type ChatSource,
+  type ChatStepDetail,
+  type ChatStepName,
+  type ChatStepStatus,
   type Conversation,
   type ConversationRepository,
   type StoredMessage,
@@ -26,6 +31,7 @@ import {
   type RetrievalResult,
   type RetrievalTrace,
   type RetrievedChunk,
+  type TraceStage,
 } from "@/server/domain/rag";
 import { readyIndex } from "@/server/rag/__fixtures__/fake-retrieval-runner";
 import { DEFAULT_RETRIEVAL_CONFIG } from "@/server/rag/pipeline/retrieval-config";
@@ -147,15 +153,36 @@ const retrievedChunks = [
   chunk("S2", "project:portfolio", "Portfolio"),
 ];
 
-function traceFor(request: RetrievalRequest, id: string): RetrievalTrace {
+// Stage outputs as the pipeline records them. Off-topic and small talk stop after rewrite.
+function stagesFor(message: string, scope: QueryScope): TraceStage[] {
+  const outputs: [string, unknown][] = [
+    ["rewrite", { queries: [message], scope, raw: null }],
+    ["embed-queries", { model: "embed-model", count: 1, dimensions: 4 }],
+    ["vector-search", { lists: [] }],
+    ["lexical-search", { lists: [] }],
+    ["fuse", { total: 2, hits: [] }],
+    ["rerank", { fallback: false, error: null, hits: [] }],
+    ["filter", { minRerankScore: 0.1, kept: 2, dropped: [] }],
+  ];
+  const run = scope === "cv" ? outputs : outputs.slice(0, 1);
+  // Each stage takes 1 ms, one after another.
+  return run.map(([name, output], index) => ({
+    name,
+    input: null,
+    output,
+    startedAt: index,
+    durationMs: 1,
+    error: null,
+  }));
+}
+
+function traceFor(request: RetrievalRequest, id: string, stages: TraceStage[]): RetrievalTrace {
   return {
     id,
     kind: request.kind,
     indexId: "index-1",
     config: request.config,
-    stages: [
-      { name: "rewrite", input: null, output: null, startedAt: 0, durationMs: 4, error: null },
-    ],
+    stages,
     sources: [],
     totalMs: 10,
     createdAt: at,
@@ -165,8 +192,10 @@ function traceFor(request: RetrievalRequest, id: string): RetrievalTrace {
 type SetupOptions = {
   scope?: QueryScope;
   answer?: ScriptedAnswer;
-  // `stage`: a pipeline stage fails; `no-index`: the active index is gone by the time it runs.
+  // `stage`: the embed stage fails; `no-index`: the active index is gone by the time it runs.
   retrievalFails?: "stage" | "no-index";
+  // Awaited before each stage starts, e.g. to hold the pipeline mid-run.
+  beforeStage?: (name: string) => Promise<void> | void;
   activeIndex?: RagIndex | null;
   published?: CvVersion | null;
   dailyMessageLimit?: number;
@@ -190,17 +219,29 @@ function setup(options: SetupOptions = {}) {
     pipeline: {
       run: async (request): Promise<RetrievalResult> => {
         retrievals.push(request);
-        const trace = traceFor(request, `trace-${retrievals.length}`);
-        if (options.retrievalFails === "stage") {
-          throw new RetrievalError(trace, new Error("embedding provider down"));
-        }
+        const id = `trace-${retrievals.length}`;
         if (options.retrievalFails === "no-index") throw new NoActiveRagIndexError();
         const scope = options.scope ?? "cv";
+        const recorded: TraceStage[] = [];
+        for (const stage of stagesFor(request.message, scope)) {
+          await options.beforeStage?.(stage.name);
+          request.observer?.stageStarted(stage.name, stage.startedAt);
+          const fails = options.retrievalFails === "stage" && stage.name === "embed-queries";
+          const ended = fails ? { ...stage, output: null, error: "embedding provider down" } : stage;
+          recorded.push(ended);
+          request.observer?.stageEnded(ended);
+          if (fails) {
+            throw new RetrievalError(
+              traceFor(request, id, recorded),
+              new Error("embedding provider down"),
+            );
+          }
+        }
         return {
           chunks: scope === "off_topic" ? [] : retrievedChunks,
           scope,
           queries: [request.message],
-          trace,
+          trace: traceFor(request, id, recorded),
         };
       },
     },
@@ -257,31 +298,86 @@ async function collect(events: AsyncIterable<ChatEvent>): Promise<ChatEvent[]> {
   return all;
 }
 
+function running(name: ChatStepName, startedAt: number): ChatEvent {
+  return { type: "step", step: { name, status: "running", startedAt, durationMs: null, detail: null } };
+}
+
+function ended(
+  name: ChatStepName,
+  startedAt: number,
+  durationMs: number,
+  detail: ChatStepDetail | null,
+  status: ChatStepStatus = "done",
+): ChatEvent {
+  return { type: "step", step: { name, status, startedAt, durationMs, detail } };
+}
+
+// Steps as `name:status`, in the order they were sent.
+function stepLog(events: readonly ChatEvent[]): string[] {
+  return events.flatMap((event) =>
+    event.type === "step" ? [`${event.step.name}:${event.step.status}`] : [],
+  );
+}
+
+function withoutSteps(events: readonly ChatEvent[]): ChatEvent[] {
+  return events.filter((event) => event.type !== "step");
+}
+
+const citedAcme: ChatSource = {
+  sourceId: "S1",
+  entityKeys: ["experience:acme"],
+  title: "Engineer at Acme",
+  section: "experience",
+  anchor: "#experience-acme",
+};
+
+// The fake pipeline's steps for a CV question, one stage per millisecond.
+const cvRetrievalSteps: ChatEvent[] = [
+  running("rewrite", 0),
+  ended("rewrite", 0, 1, {
+    kind: "rewrite",
+    queries: ["Where did she work?"],
+    scope: "cv",
+    fallback: false,
+  }),
+  running("embed-queries", 1),
+  ended("embed-queries", 1, 1, { kind: "embed", count: 1, dimensions: 4 }),
+  running("vector-search", 2),
+  ended("vector-search", 2, 1, { kind: "search", method: "vector", lists: [] }),
+  running("lexical-search", 3),
+  ended("lexical-search", 3, 1, { kind: "search", method: "bm25", lists: [] }),
+  running("fuse", 4),
+  ended("fuse", 4, 1, { kind: "fuse", total: 2, hits: [] }),
+  running("rerank", 5),
+  ended("rerank", 5, 1, { kind: "rerank", fallback: false, hits: [] }),
+  running("filter", 6),
+  ended("filter", 6, 1, { kind: "filter", minScore: 0.1, kept: 2, dropped: [] }),
+];
+
 function messageText(request: ChatRequest | undefined, index: number): string {
   const content = request?.messages[index]?.content;
   if (typeof content !== "string") throw new Error("expected text content");
   return content;
 }
 
-test("a CV question streams meta, deltas, cited sources and done", async () => {
+test("a CV question streams meta, the retrieval steps, the answer step, deltas, sources and done", async () => {
   const { service } = setup();
 
   const events = await collect(service.reply(ask));
 
+  // Clock: retrieval returned at 5 and generation ran from 10 to 15, so on the trace timeline
+  // (totalMs 10) the answer starts at 15. No reasoning arrived, so there is no reasoning step.
   expect(events).toEqual([
     { type: "meta", conversationId: "conv-1" },
+    ...cvRetrievalSteps,
+    running("generate", 15),
     { type: "delta", text: "She built billing at Acme [S1]" },
     { type: "delta", text: " and this site [S2][S9]." },
+    ended("generate", 15, 5, { kind: "generate", sources: 2 }),
     {
       type: "sources",
       sources: [
-        {
-          sourceId: "S1",
-          entityKeys: ["experience:acme"],
-          title: "Engineer at Acme",
-          section: "experience",
-          anchor: "#experience-acme",
-        },
+        citedAcme,
         {
           sourceId: "S2",
           entityKeys: ["project:portfolio"],
@@ -295,20 +391,38 @@ test("a CV question streams meta, deltas, cited sources and done", async () => {
   ]);
 });
 
-test("retrieval runs with the default config, a chat trace and the trimmed message", async () => {
+test("retrieval runs with the default config, a chat trace, the trimmed message and an observer", async () => {
   const { service, retrievals } = setup();
 
   await collect(service.reply(ask));
 
-  expect(retrievals).toEqual([
-    {
-      message: "Where did she work?",
-      history: [],
-      config: DEFAULT_RETRIEVAL_CONFIG,
-      subjectName: "Jane Doe",
-      kind: "chat",
-    },
-  ]);
+  expect(retrievals).toHaveLength(1);
+  const { observer, ...request } = retrievals[0] ?? {};
+  expect(request).toEqual({
+    message: "Where did she work?",
+    history: [],
+    config: DEFAULT_RETRIEVAL_CONFIG,
+    subjectName: "Jane Doe",
+    kind: "chat",
+  });
+  expect(observer === undefined).toBe(false);
+});
+
+test("steps are sent while the pipeline is still running", async () => {
+  const hold = Promise.withResolvers<void>();
+  const { service } = setup({
+    beforeStage: (name) => (name === "embed-queries" ? hold.promise : undefined),
+  });
+  const events = service.reply(ask);
+
+  expect((await events.next()).value).toMatchObject({ type: "meta" });
+  expect((await events.next()).value).toEqual(cvRetrievalSteps[0]);
+  expect((await events.next()).value).toEqual(cvRetrievalSteps[1]);
+  hold.resolve();
+  const rest = await collect({ [Symbol.asyncIterator]: () => events });
+
+  expect(stepLog(rest).slice(0, 2)).toEqual(["embed-queries:running", "embed-queries:done"]);
+  expect(rest.at(-1)).toEqual({ type: "done" });
 });
 
 test("the answer model gets the answer settings and the sources in the final turn", async () => {
@@ -335,17 +449,70 @@ test("answer reasoning off disables reasoning and keeps the answer budget", asyn
   expect(chat.requests[0]?.maxTokens).toBe(600);
 });
 
-test("reasoning from the answer model is not part of the answer", async () => {
-  const { service, conversations } = setup({
-    answer: { reasoning: ["Sources say Acme."], deltas: ["She worked at Acme [S1]."] },
+test("reasoning streams in its own step before the answer and is not part of the answer", async () => {
+  const { service, conversations, saved } = setup({
+    answer: { reasoning: ["Sources say", " Acme."], deltas: ["She worked at Acme [S1]."] },
   });
 
   const events = await collect(service.reply(ask));
 
-  expect(events.filter((event) => event.type === "delta")).toEqual([
+  // Clock: asked at 10 (15 on the timeline); the first delta at 15 ends reasoning; done at 20.
+  expect(events.slice(1 + cvRetrievalSteps.length)).toEqual([
+    running("reasoning", 15),
+    { type: "reasoning", text: "Sources say" },
+    { type: "reasoning", text: " Acme." },
+    ended("reasoning", 15, 5, { kind: "reasoning" }),
+    running("generate", 20),
     { type: "delta", text: "She worked at Acme [S1]." },
+    ended("generate", 20, 5, { kind: "generate", sources: 2 }),
+    { type: "sources", sources: [citedAcme] },
+    { type: "done" },
   ]);
   expect(conversations.rows[0]?.messages[1]?.text).toBe("She worked at Acme [S1].");
+  // The trace's generate stage covers the reasoning too.
+  expect(saved[0]?.stages.at(-1)).toMatchObject({
+    name: "generate",
+    output: { answer: "She worked at Acme [S1].", reasoning: "Sources say Acme." },
+    startedAt: 15,
+    durationMs: 10,
+  });
+});
+
+test("an answer without reasoning has no reasoning step and stores null reasoning", async () => {
+  const { service, saved } = setup();
+
+  const events = await collect(service.reply(ask));
+
+  expect(events.some((event) => event.type === "reasoning")).toBe(false);
+  expect(stepLog(events)).not.toContain("reasoning:running");
+  expect(saved[0]?.stages.at(-1)?.output).toMatchObject({ reasoning: null });
+});
+
+test("the trace keeps at most CHAT_REASONING_MAX_CHARS of reasoning; the visitor gets it all", async () => {
+  const long = "r".repeat(CHAT_REASONING_MAX_CHARS);
+  const { service, saved } = setup({
+    answer: { reasoning: [long, "tail"], deltas: ["Acme [S1]."] },
+  });
+
+  const events = await collect(service.reply(ask));
+
+  const streamed = events.flatMap((event) => (event.type === "reasoning" ? [event.text] : []));
+  expect(streamed.join("")).toBe(`${long}tail`);
+  expect(saved[0]?.stages.at(-1)?.output).toMatchObject({ reasoning: long });
+});
+
+test("reasoning with no answer text still ends in a finished generate step", async () => {
+  const { service } = setup({ answer: { reasoning: ["Nothing to say."], deltas: [] } });
+
+  const events = await collect(service.reply(ask));
+
+  expect(stepLog(events).slice(-4)).toEqual([
+    "reasoning:running",
+    "reasoning:done",
+    "generate:running",
+    "generate:done",
+  ]);
+  expect(events.at(-1)).toEqual({ type: "done" });
 });
 
 test("the turn is stored with cited entity keys and the trace id", async () => {
@@ -379,9 +546,18 @@ test("the saved trace gains a generate stage after retrieval", async () => {
   expect(saved).toHaveLength(1);
   const trace = saved[0];
   expect(trace?.kind).toBe("chat");
-  expect(trace?.stages.map((stage) => stage.name)).toEqual(["rewrite", "generate"]);
+  expect(trace?.stages.map((stage) => stage.name)).toEqual([
+    "rewrite",
+    "embed-queries",
+    "vector-search",
+    "lexical-search",
+    "fuse",
+    "rerank",
+    "filter",
+    "generate",
+  ]);
   // Clock: retrieval returned at 5, generation ran from 10 to 15; the pipeline's total was 10.
-  expect(trace?.stages[1]).toEqual({
+  expect(trace?.stages.at(-1)).toEqual({
     name: "generate",
     input: { model: "answer-model", mode: "cv", sources: 2, historyTurns: 0 },
     output: {
@@ -390,6 +566,7 @@ test("the saved trace gains a generate stage after retrieval", async () => {
       answer: "She built billing at Acme [S1] and this site [S2][S9].",
       stopped: false,
       citedSourceIds: ["S1", "S2"],
+      reasoning: null,
     },
     startedAt: 15,
     durationMs: 5,
@@ -467,8 +644,16 @@ test("an off-topic message gets the fixed reply without an LLM call", async () =
   const events = await collect(service.reply(ask));
 
   const reply = "I can only answer questions about Jane Doe's experience, skills and background.";
+  // Retrieval stops after rewrite, whose detail shows why; there is no generate step.
   expect(events).toEqual([
     { type: "meta", conversationId: "conv-1" },
+    running("rewrite", 0),
+    ended("rewrite", 0, 1, {
+      kind: "rewrite",
+      queries: ["Where did she work?"],
+      scope: "off_topic",
+      fallback: false,
+    }),
     { type: "delta", text: reply },
     { type: "sources", sources: [] },
     { type: "done" },
@@ -489,6 +674,13 @@ test("small talk calls the answer model without sources", async () => {
 
   const events = await collect(service.reply({ ...ask, message: "Hello" }));
 
+  expect(stepLog(events)).toEqual([
+    "rewrite:running",
+    "rewrite:done",
+    "generate:running",
+    "generate:done",
+  ]);
+  expect(events.at(-3)).toEqual(ended("generate", 15, 5, { kind: "generate", sources: 0 }));
   expect(events.at(-2)).toEqual({ type: "sources", sources: [] });
   const request = chat.requests[0];
   expect(request?.messages.some((message) => String(message.content).includes("<source"))).toBe(
@@ -534,16 +726,21 @@ test("a conversation continues only for the session that owns it", async () => {
   expect(messageText(chat.requests[1], 1)).toBe("Where did she work?");
 });
 
-test("a retrieval failure saves the partial trace and stores no messages", async () => {
+test("a retrieval failure sends the failed step, saves the partial trace and stores no messages", async () => {
   const { service, conversations, saved, chat, logged } = setup({ retrievalFails: "stage" });
 
   const events = await collect(service.reply(ask));
 
   expect(events).toEqual([
     { type: "meta", conversationId: "conv-1" },
+    ...cvRetrievalSteps.slice(0, 3),
+    ended("embed-queries", 1, 1, null, "failed"),
     { type: "error", code: "unavailable" },
   ]);
-  expect(saved).toHaveLength(1);
+  expect(JSON.stringify(events)).not.toContain("embedding provider down");
+  expect(saved.map((trace) => trace.stages.map((stage) => stage.error))).toEqual([
+    [null, "embedding provider down"],
+  ]);
   expect(conversations.rows[0]?.messages).toEqual([]);
   expect(chat.requests).toHaveLength(0);
   expect(logged).toEqual(["Chat retrieval failed."]);
@@ -559,19 +756,51 @@ test("an index that disappears after the check is unavailable, not a crash", asy
   expect(saved).toHaveLength(0);
 });
 
-test("a provider failure ends with an error and records it on the generate stage", async () => {
+test("a provider failure fails the generate step, then errors, and records it on the stage", async () => {
   const { service, conversations, saved, logged } = setup({
     answer: { deltas: ["Partial", " answer"], failAt: 1 },
   });
 
   const events = await collect(service.reply(ask));
 
-  expect(events.map((event) => event.type)).toEqual(["meta", "delta", "error"]);
-  expect(events.at(-1)).toEqual({ type: "error", code: "unavailable" });
+  expect(events.slice(1 + cvRetrievalSteps.length)).toEqual([
+    running("generate", 15),
+    { type: "delta", text: "Partial" },
+    ended("generate", 15, 5, null, "failed"),
+    { type: "error", code: "unavailable" },
+  ]);
+  expect(JSON.stringify(events)).not.toContain("provider exploded");
   expect(conversations.rows[0]?.messages).toEqual([]);
-  expect(saved[0]?.stages[1]?.error).toBe("provider exploded");
-  expect(saved[0]?.stages[1]?.output).toMatchObject({ answer: "Partial", stopped: false });
+  expect(saved[0]?.stages.at(-1)?.error).toBe("provider exploded");
+  expect(saved[0]?.stages.at(-1)?.output).toMatchObject({ answer: "Partial", stopped: false });
   expect(logged).toEqual(["Chat answer failed."]);
+});
+
+test("a provider failure while reasoning fails the reasoning step", async () => {
+  const { service, saved } = setup({
+    answer: { reasoning: ["Let me see."], deltas: ["Never sent"], failAt: 0 },
+  });
+
+  const events = await collect(service.reply(ask));
+
+  expect(events.slice(1 + cvRetrievalSteps.length)).toEqual([
+    running("reasoning", 15),
+    { type: "reasoning", text: "Let me see." },
+    ended("reasoning", 15, 5, null, "failed"),
+    { type: "error", code: "unavailable" },
+  ]);
+  expect(saved[0]?.stages.at(-1)?.output).toMatchObject({ answer: "", reasoning: "Let me see." });
+});
+
+test("a provider failure before any output still reports a failed generate step", async () => {
+  const { service } = setup({ answer: { deltas: ["Never sent"], failAt: 0 } });
+
+  const events = await collect(service.reply(ask));
+
+  expect(events.slice(1 + cvRetrievalSteps.length)).toEqual([
+    ended("generate", 15, 5, null, "failed"),
+    { type: "error", code: "unavailable" },
+  ]);
 });
 
 test("an aborted request stores the partial answer with the stopped suffix", async () => {
@@ -587,28 +816,107 @@ test("an aborted request stores the partial answer with the stopped suffix", asy
 
   const events = await collect(service.reply({ ...ask, signal: controller.signal }));
 
-  expect(events.map((event) => event.type)).toEqual(["meta", "delta"]);
+  // The running generate step is left as it is; the client marks it stopped.
+  expect(withoutSteps(events).map((event) => event.type)).toEqual(["meta", "delta"]);
+  expect(stepLog(events).at(-1)).toBe("generate:running");
   expect(conversations.rows[0]?.messages[1]).toMatchObject({
     role: "assistant",
     text: `She worked at Acme [S1] ${STOPPED_SUFFIX}`,
     citedEntityKeys: ["experience:acme"],
     traceId: "trace-1",
   });
-  expect(saved[0]?.stages[1]?.output).toMatchObject({ stopped: true });
-  expect(saved[0]?.stages[1]?.error).toBeNull();
+  expect(saved[0]?.stages.at(-1)?.output).toMatchObject({ stopped: true });
+  expect(saved[0]?.stages.at(-1)?.error).toBeNull();
 });
+
+// Reads events up to and including the first one of `type`.
+async function readUntil(events: AsyncGenerator<ChatEvent>, type: ChatEvent["type"]) {
+  for (;;) {
+    const next = await events.next();
+    if (next.done) throw new Error(`the stream ended before a ${type} event`);
+    if (next.value.type === type) return next.value;
+  }
+}
 
 test("a reader that stops mid-answer still gets the partial answer stored", async () => {
   const { service, conversations, saved } = setup();
   const events = service.reply(ask);
 
-  expect((await events.next()).value).toMatchObject({ type: "meta" });
-  expect((await events.next()).value).toMatchObject({ type: "delta" });
+  await readUntil(events, "delta");
   await events.return();
 
   expect(conversations.rows[0]?.messages[1]?.text).toBe(
     `She built billing at Acme [S1] ${STOPPED_SUFFIX}`,
   );
+  expect(saved).toHaveLength(1);
+});
+
+test("a reader that stops mid-reasoning stores a stopped turn and the reasoning so far", async () => {
+  const { service, conversations, saved } = setup({
+    answer: { reasoning: ["First thought.", " Second."], deltas: ["Acme [S1]."] },
+  });
+  const events = service.reply(ask);
+
+  expect(await readUntil(events, "reasoning")).toEqual({ type: "reasoning", text: "First thought." });
+  await events.return();
+
+  expect(conversations.rows[0]?.messages[1]?.text).toBe(STOPPED_SUFFIX);
+  expect(saved[0]?.stages.at(-1)?.output).toMatchObject({
+    answer: "",
+    stopped: true,
+    reasoning: "First thought.",
+  });
+});
+
+test("a reader that stops mid-retrieval stores nothing, waits for the pipeline and saves its trace", async () => {
+  const hold = Promise.withResolvers<void>();
+  const { service, conversations, saved, chat } = setup({
+    beforeStage: (name) => (name === "fuse" ? hold.promise : undefined),
+  });
+  const events = service.reply(ask);
+
+  await readUntil(events, "step");
+  const closing = events.return();
+  hold.resolve();
+  await closing;
+
+  expect(conversations.rows[0]?.messages).toEqual([]);
+  expect(chat.requests).toHaveLength(0);
+  expect(saved.map((trace) => trace.stages.length)).toEqual([7]);
+});
+
+test("a reader that stops mid-retrieval before a stage fails still saves the partial trace", async () => {
+  const hold = Promise.withResolvers<void>();
+  const { service, saved, logged } = setup({
+    retrievalFails: "stage",
+    beforeStage: (name) => (name === "embed-queries" ? hold.promise : undefined),
+  });
+  const events = service.reply(ask);
+
+  await readUntil(events, "step");
+  const closing = events.return();
+  hold.resolve();
+  await closing;
+
+  expect(saved.map((trace) => trace.stages.map((stage) => stage.name))).toEqual([
+    ["rewrite", "embed-queries"],
+  ]);
+  expect(logged).toEqual(["Chat retrieval failed."]);
+});
+
+test("a request aborted during retrieval ends after the steps, stores nothing and saves the trace", async () => {
+  const controller = new AbortController();
+  const { service, conversations, saved, chat } = setup({
+    beforeStage: (name) => {
+      if (name === "filter") controller.abort();
+    },
+  });
+
+  const events = await collect(service.reply({ ...ask, signal: controller.signal }));
+
+  expect(events).toEqual([{ type: "meta", conversationId: "conv-1" }, ...cvRetrievalSteps]);
+  expect(conversations.rows[0]?.messages).toEqual([]);
+  expect(chat.requests).toHaveLength(0);
   expect(saved).toHaveLength(1);
 });
 

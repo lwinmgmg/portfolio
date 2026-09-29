@@ -92,7 +92,7 @@ server/                       All server logic. Layered: domain -> repositories/
     rag-index-service.ts      RAG index lifecycle.
     retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
-    chat-service.ts           Chat turn: limits, conversation, retrieval, streamed answer, stored turn and trace.
+    chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, streamed answer, stored turn and trace.
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
   http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers.
@@ -111,7 +111,7 @@ server/                       All server logic. Layered: domain -> repositories/
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.
     answer/                   Answer and small-talk prompts, off-topic reply, [S#] citation extraction.
-    progress/                 Chat steps: projects trace stages into the public ChatStep shape (no chunk text or errors).
+    progress/                 Chat steps: projects trace stages into the public ChatStep shape (no chunk text or errors); EventChannel (push-to-pull queue).
     eval/                     Golden-set schema, retrieval metrics, CLI args, RetrievalEvaluator, markdown report.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.
     rag-runtime.ts            server-only; builds the RAG components lazily on first use.

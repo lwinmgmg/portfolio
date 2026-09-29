@@ -98,6 +98,9 @@ export const GenerateStageOutputSchema = z.object({
   answer: z.string(),
   stopped: z.boolean(),
   citedSourceIds: z.array(z.string()),
+  // The model's reasoning, capped at CHAT_REASONING_MAX_CHARS. Null when it sent none; older
+  // traces have no key.
+  reasoning: z.string().nullable().optional(),
 });
 
 export type RewriteStageInput = z.infer<typeof RewriteStageInputSchema>;
