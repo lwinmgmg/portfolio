@@ -239,8 +239,11 @@ export type RetrievalConfig = {
   ignoreSubjectInLexical: boolean;
   // Remove the subject's name from the rerank query and candidate texts.
   ignoreSubjectInRerank: boolean;
-  // Also drop reranked hits scoring below the mean of that turn's reranked scores.
+  // Also drop reranked hits scoring below `meanCutoffFactor` times the mean of that turn's
+  // reranked scores.
   dropBelowMeanRerank: boolean;
+  // Unused with `dropBelowMeanRerank` off. 1 cuts at the full mean.
+  meanCutoffFactor: number;
   // `decision` asks a decision model for the scope before the rewrite.
   scopeRouter: ScopeRouterKind;
   // The router's short-circuit cutoff. Unused with `rewriter`.

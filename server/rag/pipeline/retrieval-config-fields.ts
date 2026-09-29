@@ -26,6 +26,7 @@ export const RETRIEVAL_NUMBER_FIELDS: Readonly<Record<RetrievalNumberFieldName, 
   fusedLimit: { min: 1, max: 50, step: 1, default: 20 },
   finalK: { min: 1, max: 10, step: 1, default: 5 },
   minRerankScore: { min: 0, max: 1, step: 0.01, default: 0 },
+  meanCutoffFactor: { min: 0, max: 1, step: 0.05, default: 0.5 },
   // Below 0.5 a choice need not be the most likely option.
   minRouteConfidence: { min: 0.5, max: 1, step: 0.01, default: 0.8 },
 };
@@ -42,6 +43,7 @@ export const RETRIEVAL_FIELD_LABELS: Readonly<Record<keyof RetrievalConfig, stri
   ignoreSubjectInLexical: "Ignore name in BM25",
   ignoreSubjectInRerank: "Ignore name in rerank",
   dropBelowMeanRerank: "Drop below mean rerank",
+  meanCutoffFactor: "Mean cutoff factor",
   scopeRouter: "Scope router",
   minRouteConfidence: "Min route confidence",
 };

@@ -75,8 +75,11 @@ const HINTS: Partial<Record<keyof RetrievalConfig, string>> = {
     "Removes the name from the query and each chunk before reranking, so chunks whose context " +
     "mentions the name score no higher for it.",
   dropBelowMeanRerank:
-    "Also drops reranked chunks scoring below half the mean of this question's rerank scores. " +
-    "Can drop a weakly matching chunk.",
+    "Also drops reranked chunks scoring below the mean cutoff factor times the mean of this " +
+    "question's rerank scores. Can drop a weakly matching chunk.",
+  meanCutoffFactor:
+    "Used only with Drop below mean rerank. 0.5 drops chunks below half the mean; 1 drops " +
+    "everything below the mean; 0 drops nothing.",
   scopeRouter:
     "decision asks a decision model first; confident small talk and off-topic messages skip the " +
     "rewrite and retrieval.",
@@ -114,6 +117,7 @@ function fromForm(form: FormConfig): RetrievalConfig {
     ignoreSubjectInLexical: form.ignoreSubjectInLexical,
     ignoreSubjectInRerank: form.ignoreSubjectInRerank,
     dropBelowMeanRerank: form.dropBelowMeanRerank,
+    meanCutoffFactor: Number(form.meanCutoffFactor),
     scopeRouter: form.scopeRouter,
     minRouteConfidence: Number(form.minRouteConfidence),
   };

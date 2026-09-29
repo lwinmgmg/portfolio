@@ -1070,7 +1070,7 @@ reranked hit whose score is below the mean of that turn's reranked scores.
 
 **Fixed decisions**
 - The mean is taken over the reranked hits the reranker returned (at most `finalK`), before any hit is dropped.
-- A hit is dropped when its score is below half the mean (owner change: the cutoff was the full mean). Scores are non-negative, so equal scores are all kept and the top hit always passes; this cut alone never empties the list.
+- A hit is dropped when its score is below `meanCutoffFactor` times the mean (owner change: the cutoff was the full mean; the factor is a `RetrievalConfig` number, 0..1, default 0.5, label "Mean cutoff factor"). Equal scores are all kept (1e-9 tolerance for the float mean) and the top hit always passes; this cut alone never empties the list.
 - It combines with `minRerankScore`: a hit must pass both.
 - Like the floor, it runs only when rerank ran without falling back (fallback scores are 1 / rank).
 - It is a `RetrievalConfig` toggle, `dropBelowMeanRerank`, on by default, label "Drop below mean rerank". The presets inherit it. A saved chat config without the field parses with the default.

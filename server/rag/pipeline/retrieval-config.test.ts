@@ -21,6 +21,7 @@ test("an empty config parses to the documented defaults", () => {
     ignoreSubjectInLexical: true,
     ignoreSubjectInRerank: true,
     dropBelowMeanRerank: true,
+    meanCutoffFactor: 0.5,
     scopeRouter: "rewriter",
     minRouteConfidence: 0.8,
   };
@@ -58,6 +59,14 @@ test("minRerankScore accepts 0..1", () => {
   expect(RetrievalConfigSchema.safeParse({ minRerankScore: 1 }).success).toBe(true);
   expect(RetrievalConfigSchema.safeParse({ minRerankScore: -0.01 }).success).toBe(false);
   expect(RetrievalConfigSchema.safeParse({ minRerankScore: 1.01 }).success).toBe(false);
+});
+
+test("meanCutoffFactor accepts 0..1 and defaults to 0.5 for a stored config without it", () => {
+  expect(RetrievalConfigSchema.parse({}).meanCutoffFactor).toBe(0.5);
+  expect(RetrievalConfigSchema.safeParse({ meanCutoffFactor: 0 }).success).toBe(true);
+  expect(RetrievalConfigSchema.safeParse({ meanCutoffFactor: 1 }).success).toBe(true);
+  expect(RetrievalConfigSchema.safeParse({ meanCutoffFactor: -0.01 }).success).toBe(false);
+  expect(RetrievalConfigSchema.safeParse({ meanCutoffFactor: 1.01 }).success).toBe(false);
 });
 
 test("ignoreSubjectInLexical is on unless a stored config turns it off", () => {
@@ -126,6 +135,7 @@ test("presets set rewriting, search, reranking and scope routing on top of the d
       ignoreSubjectInLexical: true,
       ignoreSubjectInRerank: true,
       dropBelowMeanRerank: true,
+      meanCutoffFactor: 0.5,
       minRouteConfidence: 0.8,
     });
     return [name, rewrite, search, rerank, scopeRouter];

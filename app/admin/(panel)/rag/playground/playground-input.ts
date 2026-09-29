@@ -46,6 +46,7 @@ export function parseRetrievalConfig(form: FormData): Parsed<RetrievalConfig> {
     ignoreSubjectInLexical: form.get("ignoreSubjectInLexical") === "on",
     ignoreSubjectInRerank: form.get("ignoreSubjectInRerank") === "on",
     dropBelowMeanRerank: form.get("dropBelowMeanRerank") === "on",
+    meanCutoffFactor: numberField(form, "meanCutoffFactor"),
     scopeRouter: form.get("scopeRouter"),
     minRouteConfidence: numberField(form, "minRouteConfidence"),
   });

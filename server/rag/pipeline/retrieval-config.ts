@@ -31,6 +31,7 @@ export const RetrievalConfigSchema = z.strictObject({
   ignoreSubjectInLexical: z.boolean().default(true),
   ignoreSubjectInRerank: z.boolean().default(true),
   dropBelowMeanRerank: z.boolean().default(true),
+  meanCutoffFactor: boundedNumber(fields.meanCutoffFactor),
   // A saved chat config from before Phase 2.14 has neither field and parses with these defaults.
   scopeRouter: z.enum(SCOPE_ROUTERS).default("rewriter"),
   minRouteConfidence: boundedNumber(fields.minRouteConfidence),

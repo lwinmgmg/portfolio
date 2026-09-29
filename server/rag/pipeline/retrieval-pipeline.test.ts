@@ -510,6 +510,20 @@ test("hits scoring below half the mean are dropped", async () => {
   expect(outputOf<FilterStageOutput>(result, "filter").dropped.map((hit) => hit.score)).toEqual([0.1]);
 });
 
+test("meanCutoffFactor sets where the mean cut falls", async () => {
+  const scores = [0.9, 0.8, 0.7, 0.6];
+  const rerankWith = (meanCutoffFactor: number) => {
+    const reranker = new FakeReranker({
+      hits: ["c1", "c2", "c3", "c5"].map((chunkId, index) => ({ chunkId, score: scores[index] ?? 0 })),
+    });
+    return setup({ reranker }).pipeline.run(request({ meanCutoffFactor }));
+  };
+
+  // Mean 0.75: a factor of 1 cuts at 0.75, a factor of 0 keeps everything.
+  expect((await rerankWith(1)).chunks.map((entry) => entry.rerankScore)).toEqual([0.9, 0.8]);
+  expect((await rerankWith(0)).chunks.length).toBe(4);
+});
+
 test("a hit must pass both the mean cut and minRerankScore", async () => {
   const { pipeline } = setup();
 

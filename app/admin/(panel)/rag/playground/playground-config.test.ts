@@ -16,6 +16,7 @@ test("configRows lists every field by its label", () => {
     { label: "Ignore name in BM25", value: "on" },
     { label: "Ignore name in rerank", value: "on" },
     { label: "Drop below mean rerank", value: "on" },
+    { label: "Mean cutoff factor", value: "0.5" },
     { label: "Scope router", value: "rewriter" },
     { label: "Min route confidence", value: "0.8" },
   ]);

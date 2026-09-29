@@ -15,6 +15,7 @@ const CONFIG_FIELDS = [
   "ignoreSubjectInLexical",
   "ignoreSubjectInRerank",
   "dropBelowMeanRerank",
+  "meanCutoffFactor",
   "scopeRouter",
   "minRouteConfidence",
 ] as const satisfies readonly (keyof RetrievalConfig)[];

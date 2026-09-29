@@ -29,6 +29,7 @@ const defaultFields = {
   ignoreSubjectInLexical: "on",
   ignoreSubjectInRerank: "on",
   dropBelowMeanRerank: "on",
+  meanCutoffFactor: "0.5",
   scopeRouter: "rewriter",
   minRouteConfidence: "0.8",
 };
@@ -88,6 +89,13 @@ test("the scope router and its cutoff are read from the form", () => {
   const low = parseRetrievalConfig(formWith({ ...defaultFields, minRouteConfidence: "0.3" }));
   if (low.ok) throw new Error("expected a cutoff below 0.5 to fail");
   expect(low.message.startsWith("Min route confidence:")).toBe(true);
+});
+
+test("the mean cutoff factor is read from the form", () => {
+  expect(parseRetrievalConfig(formWith({ ...defaultFields, meanCutoffFactor: "0.8" }))).toEqual({
+    ok: true,
+    value: { ...DEFAULT_RETRIEVAL_CONFIG, meanCutoffFactor: 0.8 },
+  });
 });
 
 test("an out-of-range or missing config field names the field", () => {
