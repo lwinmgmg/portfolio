@@ -23,7 +23,7 @@ export function extractCitations(text: string, chunks: readonly CitableChunk[]):
       entityKeys: [...chunk.entityKeys],
       title: chunk.title,
       section: chunk.section,
-      anchor: anchorOf(chunk.entityKeys),
+      anchor: entityAnchor(chunk.entityKeys),
     });
   }
   return sources;
@@ -45,7 +45,8 @@ function citedIds(text: string): string[] {
   );
 }
 
-function anchorOf(entityKeys: readonly string[]): string | null {
+// The CV page fragment for a chunk, from its first entity key: `#experience-acme`, or null.
+export function entityAnchor(entityKeys: readonly string[]): string | null {
   const first = entityKeys[0];
   const anchor = first === undefined ? null : anchorForEntityKey(first);
   return anchor === null ? null : `#${anchor}`;

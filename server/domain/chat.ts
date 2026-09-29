@@ -1,3 +1,5 @@
+import type { QueryScope } from "@/server/domain/rag";
+
 // One message of a visitor conversation, without sources or metadata.
 export type ChatTurn = { role: "user" | "assistant"; text: string };
 
@@ -48,6 +50,66 @@ export type ChatSource = {
   anchor: string | null;
 };
 
+// ---- Steps: the work behind an answer, shown to the visitor as it happens ----
+
+// Most hits a step lists per result list. The list's `total` keeps the full count.
+export const CHAT_STEP_HITS = 10;
+
+// The retrieval stage names (STAGE in trace-stages.ts), plus the answer model's reasoning.
+export type ChatStepName =
+  | "rewrite"
+  | "embed-queries"
+  | "vector-search"
+  | "lexical-search"
+  | "fuse"
+  | "rerank"
+  | "filter"
+  | "reasoning"
+  | "generate";
+
+export type ChatStepStatus = "running" | "done" | "failed";
+
+// A search result without its chunk text. `anchor` is as in ChatSource.
+export type ChatStepHit = {
+  rank: number;
+  score: number;
+  title: string;
+  section: string;
+  anchor: string | null;
+};
+
+export type ChatStepDetail =
+  // `fallback`: the rewriter failed and the message was searched as written.
+  | { kind: "rewrite"; queries: string[]; scope: QueryScope; fallback: boolean }
+  | { kind: "embed"; count: number; dimensions: number }
+  | {
+      kind: "search";
+      method: "vector" | "bm25";
+      lists: { query: string; total: number; hits: ChatStepHit[] }[];
+    }
+  | {
+      kind: "fuse";
+      // Chunks fused, before the cut to the fused limit.
+      total: number;
+      hits: (ChatStepHit & { contributions: { list: string; rank: number }[] })[];
+    }
+  // `fallback`: the reranker failed and the fused order was kept.
+  | { kind: "rerank"; fallback: boolean; hits: (ChatStepHit & { fusedRank: number })[] }
+  | { kind: "filter"; minScore: number; kept: number; dropped: ChatStepHit[] }
+  | { kind: "reasoning" }
+  | { kind: "generate"; sources: number };
+
+export type ChatStep = {
+  name: ChatStepName;
+  status: ChatStepStatus;
+  // Milliseconds from the start of the turn.
+  startedAt: number;
+  // Null while running.
+  durationMs: number | null;
+  // Null while running, when the step failed, or when its result could not be read.
+  detail: ChatStepDetail | null;
+};
+
 export type ChatLimitCode = "session_limit" | "daily_limit";
 
 export type ChatErrorCode = "invalid_message" | "unavailable";
@@ -55,6 +117,10 @@ export type ChatErrorCode = "invalid_message" | "unavailable";
 // What the chat API streams, one JSON object per line.
 export type ChatEvent =
   | { type: "meta"; conversationId: string }
+  // A step started (`running`) or ended. The ended one replaces the running one of that name.
+  | { type: "step"; step: ChatStep }
+  // The answer model's reasoning, streamed before the answer.
+  | { type: "reasoning"; text: string }
   | { type: "delta"; text: string }
   | { type: "sources"; sources: ChatSource[] }
   | { type: "done" }

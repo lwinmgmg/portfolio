@@ -206,6 +206,8 @@ export type RetrievalRequest = {
   indexId?: string;
   subjectName: string;
   kind: RetrievalTraceKind;
+  // Told about each stage as it runs, e.g. to stream chat progress.
+  observer?: TraceObserver;
 };
 
 export type RetrievalResult = {
@@ -234,6 +236,15 @@ export type TraceStage = {
   durationMs: number;
   error: string | null;
 };
+
+// Watches a trace while it is recorded. The recorder catches and logs what these throw, so an
+// observer can never fail a stage.
+export interface TraceObserver {
+  // `startedAt` is milliseconds from the start of the trace, as in TraceStage.
+  stageStarted(name: string, startedAt: number): void;
+  // A copy of the finished entry: its summarized output, or `error` set.
+  stageEnded(stage: TraceStage): void;
+}
 
 // A final source as the trace keeps it, so the trace still reads after its index is deleted.
 export type TraceSource = {

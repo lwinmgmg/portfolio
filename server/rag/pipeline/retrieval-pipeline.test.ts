@@ -465,6 +465,56 @@ test("a failing stage throws RetrievalError with the partial trace", async () =>
   expect(error.trace.sources).toEqual([]);
 });
 
+test("the request's observer hears each executed stage start and end, in pipeline order", async () => {
+  const { pipeline } = setup();
+  const calls: string[] = [];
+
+  const result = await pipeline.run(
+    request(RETRIEVAL_PRESETS["lexical-only"], {
+      observer: {
+        stageStarted: (name, startedAt) => calls.push(`start:${name}@${startedAt}`),
+        stageEnded: (stage) => calls.push(`end:${stage.name}+${stage.durationMs}`),
+      },
+    }),
+  );
+
+  expect(calls).toEqual([
+    "start:rewrite@5",
+    "end:rewrite+5",
+    "start:lexical-search@15",
+    "end:lexical-search+5",
+    "start:fuse@25",
+    "end:fuse+5",
+  ]);
+  expect(stageNames(result)).toEqual(["rewrite", "lexical-search", "fuse"]);
+});
+
+test("the observer hears a failed stage end before the run throws", async () => {
+  const failing: EmbeddingClient = {
+    embed: async () => {
+      throw new Error("embedding provider down");
+    },
+  };
+  const { pipeline } = setup({ embeddings: failing });
+  const ended: [string, string | null][] = [];
+
+  await rejection(
+    pipeline.run(
+      request({}, {
+        observer: {
+          stageStarted: () => undefined,
+          stageEnded: (stage) => ended.push([stage.name, stage.error]),
+        },
+      }),
+    ),
+  );
+
+  expect(ended).toEqual([
+    ["rewrite", null],
+    ["embed-queries", "embedding provider down"],
+  ]);
+});
+
 test("the index must exist, be ready, and default to the active one", async () => {
   const { pipeline, indexes } = setup();
 

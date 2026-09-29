@@ -111,6 +111,7 @@ server/                       All server logic. Layered: domain -> repositories/
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.
     answer/                   Answer and small-talk prompts, off-topic reply, [S#] citation extraction.
+    progress/                 Chat steps: projects trace stages into the public ChatStep shape (no chunk text or errors).
     eval/                     Golden-set schema, retrieval metrics, CLI args, RetrievalEvaluator, markdown report.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.
     rag-runtime.ts            server-only; builds the RAG components lazily on first use.

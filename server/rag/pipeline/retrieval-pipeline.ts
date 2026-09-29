@@ -69,6 +69,7 @@ export class RetrievalPipeline implements RetrievalRunner {
       id: this.deps.newTraceId?.(),
       now: this.deps.now,
       clock: this.deps.clock,
+      observer: request.observer,
     });
     try {
       return await new PipelineRun(this.deps, index, request, recorder).execute();

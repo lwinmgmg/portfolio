@@ -1091,6 +1091,18 @@ reasoning text.
 4. `server/rag/progress/chat-steps.ts` (pure): `runningStep(name, startedAt)` and `finishedStep(stage: TraceStage): ChatStep`. Parse `stage.output` with the `trace-stages.ts` schemas. A failed stage, or an output that does not parse, gives `status: "failed"` or `detail: null`, and never exposes a message. Rewrite `fallback` = `typeof raw === "string"`. Hits are cut to `CHAT_STEP_HITS`, `total` keeps the full count, and `anchor` comes from `anchorForEntityKey` on the first entity key (as `citations.ts` does). The rerank error text is dropped; only `fallback` is kept.
 5. Tests: recorder observer order (start → end, including a failing stage and a throwing observer); every stage kind projected from real pipeline output over the sample CV; the hit cap and `total`; that no chunk text, context, `raw`, model or error text reaches a `ChatStep` (assert on its JSON).
 
+**Status:** Done
+
+**As built**
+- `TraceObserver` is an `interface` (like the other domain behaviours). The recorder calls `stageEnded` from a `finally`, so a failed stage ends before its error is rethrown. It takes a `log` option for observer failures (default `console.error`).
+- `finishedStep(stage)` returns `ChatStep | null`: null for a stage whose name is not a `ChatStepName`, because `TraceStage.name` is a plain string. `runningStep` takes a `ChatStepName`; `isChatStepName(name)` narrows the observer's string. 3.3 uses the guard before `runningStep`.
+- `CHAT_STEP_HITS` is in `server/domain/chat.ts`, beside the other public chat limits.
+- `startedAt` and `durationMs` are rounded to whole milliseconds.
+- `generate` gets `sources` from the stage input (`GenerateStageInputSchema.sources`: the sources sent to the model). `finishedStep` of a stage named `reasoning` gives `{ kind: "reasoning" }`, so 3.3 can finish either step the same way.
+- The readers map is typed as `Record<STAGE value | "reasoning", …>` and `satisfies Record<ChatStepName, …>`, so the two name lists cannot drift.
+- Outside the listed files: `citations.ts` exports its anchor helper as `entityAnchor` for reuse. `chat-state.ts` ignores `step` and `reasoning` events until 3.4, because its `switch` must stay exhaustive.
+- Done-when: `chat-steps.test.ts` runs the real `RetrievalPipeline` over the sample CV (`StructuredCvChunker`, `InMemoryRetriever`, fake embeddings and reranker) with an observer, and gets one running and one finished step per stage, in pipeline order. The same file covers the failed stage, off-topic, fallbacks, the cap, and a JSON check for leaks.
+
 **Done when**
 - A faked pipeline run with an observer produces one running and one finished step per executed stage, in pipeline order.
 

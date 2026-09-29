@@ -98,6 +98,10 @@ function applyEvent(state: ChatState, event: ChatEvent): ChatState {
       return state.conversationId === null || state.conversationId === event.conversationId
         ? { ...state, conversationId: event.conversationId }
         : { ...state, conversationId: event.conversationId, entries: state.entries.slice(-2) };
+    case "step":
+    case "reasoning":
+      // Not shown yet: Phase 3.4 keeps these on the entry.
+      return state;
     case "delta":
       return updatePending(state, (entry) => ({ ...entry, text: entry.text + event.text }));
     case "sources":

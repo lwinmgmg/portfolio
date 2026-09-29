@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 3.1 (reasoning in the LLM client) on `master`.
+Last updated after Phase 3.2 (stage progress from the pipeline) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 3.1. OpenRouter `reasoning` request field and stream events, `LLM_ANSWER_REASONING`, reasoning off for utility calls. |
+| (next) | Phase 3.2. `TraceObserver` on the recorder and pipeline, public `ChatStep` types and events, `chat-steps.ts` projection. |
+| `6d8b82e` | Phase 3.1. OpenRouter `reasoning` request field and stream events, `LLM_ANSWER_REASONING`, reasoning off for utility calls. |
 | `1bca9f1` | Phase 2.10. Chat widget on `/`, `streamChat`, `postPublicStream`. |
 | `a0e6c32` | Phase 2.9. `ChatService`, answer prompt, citations, conversations, `POST /api/public/chat`. |
 | `ddafbbb` | Phase 2.8. Golden set, retrieval metrics, `RetrievalEvaluator`, `scripts/rag-eval.ts`. |
@@ -56,7 +57,7 @@ Newest first:
 
 Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, check the chat in a browser (375 px, keyboard only, source chips), then Phase 2.11.
 
-Phase 3.1 is **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Next in that track: Phase 3.2 (stage progress from the pipeline), when the owner asks.
+Phases 3.1 and 3.2 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Next in that track: Phase 3.3 (chat service and API events), when the owner asks.
 
 ## Environment
 
@@ -293,6 +294,15 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
 - `answerGenerationSettings(level)` (`answer-prompt.ts`): `off` → `{ enabled: false }`, 600 tokens. Any effort → `{ effort }`, 1,600 tokens (`ANSWER_MAX_TOKENS` 600 + `ANSWER_REASONING_TOKENS` 1,000). `ChatService` takes `answerReasoning` and, until Phase 3.3, drops `reasoning` events.
 - Measured live on 2026-09-29. The answer model used 270–365 reasoning tokens at every effort, so `effort` has no measurable effect; `off` works. Reasoning makes answers slower: 8–29 s against 4–9 s. The free endpoint can return 503 `provider_overloaded`.
 - `LlmContextualizer` and `LlmQueryRewriter` send `reasoning: { enabled: false }`. Without it the utility model returned blank content at `finish_reason: length`. That caused the active index's `contextFailures: 11/11` and the rewriter fallbacks. That index still has no contexts; rebuilding it from `/admin/rag` fixes that. Keep reasoning off for any new short utility call.
+
+## Stage progress from the pipeline (Phase 3.2)
+
+- `TraceObserver` (`server/domain/rag.ts`): `stageStarted(name, startedAt)` after the recorder reserves the stage slot, then `stageEnded(copy)` from a `finally`, so a failed stage ends with `error` set before the error is rethrown. Observer throws are caught and logged through the recorder's `log` option (default `console.error`). `RetrievalRequest.observer` is passed to the recorder; playground and eval pass none.
+- Public step types (`ChatStep`, `ChatStepDetail`, `ChatStepHit`, `CHAT_STEP_HITS = 10`) and the `step` / `reasoning` `ChatEvent`s are in `server/domain/chat.ts`. The client imports them from there. Nothing emits them until 3.3. `chat-state.ts` ignores both events until 3.4.
+- `server/rag/progress/chat-steps.ts` is pure. `runningStep(name, startedAt)`, `finishedStep(stage)` (null for a stage that is not a chat step) and `isChatStepName`. Each detail is built field by field from the `trace-stages.ts` schema parse, so no chunk text, context, `raw`, model or error text can pass through. A failed stage gives `status: "failed"` and `detail: null`; an unparseable output gives `detail: null`. `startedAt` and `durationMs` are rounded to whole ms.
+- The readers map is typed by both `STAGE` values and `ChatStepName`, so adding a stage to one and not the other fails to compile.
+- `generate` reads `sources` from the stage **input** (`GenerateStageInputSchema`), not the output. `reasoning` always has `{ kind: "reasoning" }`.
+- `entityAnchor(entityKeys)` is now exported from `citations.ts` and shared by citations and steps.
 
 ## Scaffold removal
 

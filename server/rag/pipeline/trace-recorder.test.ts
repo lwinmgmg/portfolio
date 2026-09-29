@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import type { TraceSource } from "@/server/domain/rag";
+import type { TraceObserver, TraceSource, TraceStage } from "@/server/domain/rag";
 import { DEFAULT_RETRIEVAL_CONFIG } from "@/server/rag/pipeline/retrieval-config";
-import { TraceRecorder } from "@/server/rag/pipeline/trace-recorder";
+import { TraceRecorder, type TraceRecorderOptions } from "@/server/rag/pipeline/trace-recorder";
 
 // A clock that reads 100, then advances by `step` on each later read.
 function steppingClock(step = 10) {
@@ -10,7 +10,7 @@ function steppingClock(step = 10) {
   return () => (time += step);
 }
 
-function recorder(clock = steppingClock()) {
+function recorder(clock = steppingClock(), extra: Partial<TraceRecorderOptions> = {}) {
   return new TraceRecorder({
     kind: "playground",
     indexId: "index-1",
@@ -18,7 +18,21 @@ function recorder(clock = steppingClock()) {
     id: "trace-1",
     now: () => new Date("2026-09-29T08:00:00.000Z"),
     clock,
+    ...extra,
   });
+}
+
+// Records each call as `start:<name>@<startedAt>` or the ended entry.
+class RecordingObserver implements TraceObserver {
+  calls: (string | TraceStage)[] = [];
+
+  stageStarted(name: string, startedAt: number): void {
+    this.calls.push(`start:${name}@${startedAt}`);
+  }
+
+  stageEnded(stage: TraceStage): void {
+    this.calls.push(stage);
+  }
 }
 
 test("a stage records its input, output and timing relative to the trace start", async () => {
@@ -121,6 +135,97 @@ test("toTrace copies the sources and later stages do not change an earlier trace
 
   expect(first.sources[0]?.entityKeys).toEqual(["experience:acme"]);
   expect(first.stages.length).toBe(0);
+});
+
+test("the observer hears each stage start, then its finished entry", async () => {
+  const observer = new RecordingObserver();
+  const trace = recorder(steppingClock(), { observer });
+
+  await trace.stage("rewrite", { message: "hi" }, async () => {
+    observer.calls.push("running");
+    return ["hi", "hello"];
+  }, (queries) => ({ count: queries.length }));
+  await trace.stage("fuse", null, async () => null);
+
+  expect(observer.calls).toEqual([
+    "start:rewrite@10",
+    "running",
+    {
+      name: "rewrite",
+      input: { message: "hi" },
+      output: { count: 2 },
+      startedAt: 10,
+      durationMs: 10,
+      error: null,
+    },
+    "start:fuse@30",
+    { name: "fuse", input: null, output: null, startedAt: 30, durationMs: 10, error: null },
+  ]);
+});
+
+test("a failed stage ends with its error before the error is rethrown", async () => {
+  const observer = new RecordingObserver();
+  const trace = recorder(steppingClock(), { observer });
+
+  const thrown = await trace
+    .stage("embed-queries", null, async () => {
+      throw new Error("provider down");
+    })
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+  expect(thrown instanceof Error).toBe(true);
+  expect(observer.calls).toEqual([
+    "start:embed-queries@10",
+    {
+      name: "embed-queries",
+      input: null,
+      output: null,
+      startedAt: 10,
+      durationMs: 10,
+      error: "provider down",
+    },
+  ]);
+});
+
+test("the observer gets a copy, so changing it does not change the trace", async () => {
+  const observer = new RecordingObserver();
+  const trace = recorder(steppingClock(), { observer });
+
+  await trace.stage("rewrite", null, async () => "q");
+  const ended = observer.calls[1];
+  if (typeof ended !== "object") throw new Error("expected the ended entry");
+  ended.error = "changed";
+
+  expect(trace.toTrace().stages[0]?.error).toBe(null);
+});
+
+test("an observer that throws is logged and never fails the stage", async () => {
+  const logged: [string, unknown][] = [];
+  const failure = new Error("observer bug");
+  const throwing: TraceObserver = {
+    stageStarted: () => {
+      throw failure;
+    },
+    stageEnded: () => {
+      throw failure;
+    },
+  };
+  const trace = recorder(steppingClock(), {
+    observer: throwing,
+    log: (message, error) => logged.push([message, error]),
+  });
+
+  const result = await trace.stage("rerank", null, async () => "ranked");
+
+  expect(result).toBe("ranked");
+  expect(trace.toTrace().stages[0]).toMatchObject({ output: "ranked", error: null });
+  expect(logged).toEqual([
+    ["A trace observer failed.", failure],
+    ["A trace observer failed.", failure],
+  ]);
 });
 
 test("the trace id defaults to a random UUID", () => {
