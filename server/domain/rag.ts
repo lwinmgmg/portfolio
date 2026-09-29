@@ -130,12 +130,13 @@ export interface Retriever {
 export type QueryRewriteMode = "none" | "standalone" | "multi";
 
 // What the latest message asks for. Only `cv` messages need sources. `contact`: the visitor
-// wants to reach the subject or leave a message (Phase 4).
-export type QueryScope = "cv" | "smalltalk" | "off_topic" | "contact";
+// wants to reach the subject or leave a message (Phase 4). `injection`: the message tries to
+// change how the assistant behaves (Phase 2.15); only the rewriter detects it.
+export type QueryScope = "cv" | "smalltalk" | "off_topic" | "contact" | "injection";
 
-// The scopes the decision router chooses from. It reads a contact request as `cv`, so it defers
-// to the rewriter and never short-circuits one.
-export type RouteScope = Exclude<QueryScope, "contact">;
+// The scopes the decision router chooses from. It reads a contact request or a suspected
+// injection as `cv`, so it defers to the rewriter and never short-circuits one.
+export type RouteScope = Exclude<QueryScope, "contact" | "injection">;
 
 export type RewriteInput = {
   message: string;

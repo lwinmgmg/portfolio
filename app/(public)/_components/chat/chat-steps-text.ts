@@ -64,6 +64,8 @@ const SCOPE_LABELS: Record<QueryScope, string> = {
   smalltalk: "Small talk",
   off_topic: "Out of scope",
   contact: "Contact request",
+  // The public steps never carry it (2.15 step 5 maps it to off_topic); this only keeps the record total.
+  injection: "Out of scope",
 };
 
 export function scopeLabel(scope: QueryScope): string {

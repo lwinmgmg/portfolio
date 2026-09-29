@@ -49,7 +49,7 @@ Tests are colocated as `*.test.ts`. Shared test fakes live in `__fixtures__/`.
 proxy.ts                      Optimistic /admin redirect only. No server-only, Mongo or limiter imports.
 scripts/hash-admin-password.ts  Produces ADMIN_PASSWORD_HASH for .env.local.
 scripts/rag-eval.ts           `bun run eval:rag`: retrieval eval against the real DB, wired from rag-composition.
-scripts/probe-scope-router.ts `bun --env-file=.env.local`: go/no-go probe of the decision model on evals/scope-probe.json. No DB.
+scripts/probe-scope-router.ts `bun --env-file=.env.local`: go/no-go probe of the decision model (or `--rewriter`, the rewriter's injection labels) on evals/scope-probe.json. No DB.
 scripts/bun-v8-snapshot-shim.ts  Preload for Bun scripts that use Mongo (BSON's v8 probe throws in Bun).
 evals/                        Golden set (cv-retrieval.golden.json), scope probe set (scope-probe.json), usage README; reports/ is git-ignored.
 

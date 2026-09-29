@@ -14,13 +14,16 @@ function answer(choice: string, probabilities: Record<string, number>): ChoiceAn
   return { choice, confidence: 0.5, probabilities };
 }
 
-test("the route question is a choice over the rewriter's scope definitions, contact folded into cv", () => {
+test("the route question is a choice over the rewriter's scope definitions, contact and injection folded into cv", () => {
   const question = buildRouteQuestion("Ada Lovelace");
   const definitions = scopeDefinitions("Ada Lovelace");
 
   expect(question.type).toBe("choice");
   expect(Object.keys(question.criteria)).toEqual(["cv", "smalltalk", "off_topic"]);
-  expect(question.criteria.cv).toBe(`${definitions.cv} Also when ${definitions.contact}`);
+  expect(question.criteria.cv).toBe(
+    `${definitions.cv} Also when ${definitions.contact} Also when ${definitions.injection}`,
+  );
+  expect(question.criteria.cv).toContain("override");
   expect(question.criteria.smalltalk).toBe(definitions.smalltalk);
   expect(question.criteria.off_topic).toBe(definitions.off_topic);
   expect(question.instructions).toContain("Ada Lovelace");

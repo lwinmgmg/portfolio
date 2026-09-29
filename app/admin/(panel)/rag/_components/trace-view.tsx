@@ -83,6 +83,7 @@ const SKIPPED_NOTES: Record<QueryScope, string> = {
   smalltalk: "Small talk: retrieval was skipped.",
   off_topic: "Off-topic message: retrieval was skipped.",
   contact: "Contact request: retrieval was skipped.",
+  injection: "Prompt injection suspected: retrieval was skipped.",
 };
 
 function FinalSources({

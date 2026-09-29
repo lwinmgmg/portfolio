@@ -212,6 +212,7 @@ const scopeTone = {
   smalltalk: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   off_topic: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
   contact: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
+  injection: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
 } as const;
 
 function ScopeBadge({ scope }: { scope: keyof typeof scopeTone }) {

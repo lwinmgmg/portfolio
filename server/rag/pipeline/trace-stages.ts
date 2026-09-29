@@ -39,7 +39,7 @@ const TracedHitSchema = z.object({
 
 export type TracedHit = z.infer<typeof TracedHitSchema>;
 
-const ScopeSchema = z.enum(["cv", "smalltalk", "off_topic", "contact"]) satisfies z.ZodType<QueryScope>;
+const ScopeSchema = z.enum(["cv", "smalltalk", "off_topic", "contact", "injection"]) satisfies z.ZodType<QueryScope>;
 const RouteScopeSchema = z.enum(["cv", "smalltalk", "off_topic"]) satisfies z.ZodType<RouteScope>;
 
 export const RouteStageInputSchema = z.object({

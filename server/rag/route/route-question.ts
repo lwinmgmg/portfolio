@@ -51,12 +51,12 @@ export function buildRouteQuestion(subjectName: string): DecisionQuestion {
   };
 }
 
-// The rewriter's definitions with `contact` folded into `cv`: a contact request then defers to
-// the rewriter, which can offer the email tool, instead of risking a small-talk short-circuit.
-// The router keeps the three options it was probed with (Phase 2.14).
+// The rewriter's definitions with `contact` and `injection` folded into `cv`: both then defer to
+// the rewriter, which can offer the email tool or flag the injection, instead of risking a
+// short-circuit. The router keeps the three options it was probed with (Phase 2.14, 2.15).
 export function routeCriteria(subjectName: string): Record<RouteScope, string> {
-  const { cv, smalltalk, off_topic, contact } = scopeDefinitions(subjectName);
-  return { cv: `${cv} Also when ${contact}`, smalltalk, off_topic };
+  const { cv, smalltalk, off_topic, contact, injection } = scopeDefinitions(subjectName);
+  return { cv: `${cv} Also when ${contact} Also when ${injection}`, smalltalk, off_topic };
 }
 
 export type ScopeReading =
