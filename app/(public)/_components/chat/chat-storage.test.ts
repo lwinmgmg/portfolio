@@ -9,9 +9,12 @@ import {
   CONVERSATION_ID_KEY,
   GREETED_KEY,
   MESSAGES_KEY,
+  REMARKED_KEY,
   readGreeted,
+  readRemarked,
   readStoredChat,
   writeGreeted,
+  writeRemarked,
   writeStoredChat,
 } from "@/app/(public)/_components/chat/chat-storage";
 
@@ -221,4 +224,26 @@ test("works without storage, or when it throws", () => {
   expect(readGreeted(throwing)).toBe(false);
   writeGreeted(throwing);
   writeGreeted(null);
+
+  expect(readRemarked(null)).toEqual([]);
+  expect(readRemarked(throwing)).toEqual([]);
+  writeRemarked(throwing, "skills");
+  writeRemarked(null, "skills");
+});
+
+test("remarked sections accumulate once each and drop unknown values", () => {
+  const storage = new MemoryStorage();
+  expect(readRemarked(storage)).toEqual([]);
+  writeRemarked(storage, "projects");
+  writeRemarked(storage, "skills");
+  writeRemarked(storage, "projects");
+  expect(readRemarked(storage)).toEqual(["projects", "skills"]);
+  expect(storage.getItem(REMARKED_KEY)).toBe('["projects","skills"]');
+
+  storage.setItem(REMARKED_KEY, '["experience","education",3]');
+  expect(readRemarked(storage)).toEqual(["experience"]);
+  storage.setItem(REMARKED_KEY, "{not json");
+  expect(readRemarked(storage)).toEqual([]);
+  storage.setItem(REMARKED_KEY, '{"projects":true}');
+  expect(readRemarked(storage)).toEqual([]);
 });

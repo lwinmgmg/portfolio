@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import type { RefObject } from "react";
 
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
 import type {
@@ -10,25 +10,43 @@ import type {
 import { ROBOT_NAME } from "@/app/(public)/_components/robot/robot-mood";
 import styles from "@/app/(public)/_components/robot/robot.module.css";
 
-// What the robot says. The greeting, before or after its target link was used, or the start of
-// an answer that finished while the chat was closed.
+// What the robot says. The greeting, before or after its target link was used, the start of an
+// answer that finished while the chat was closed, or a line about the section on screen.
 export type BubbleContent =
   | { kind: "greeting"; lines: GreetingLines; target: GreetingTarget | null; followed: boolean }
-  | { kind: "answer"; preview: string };
+  | { kind: "answer"; preview: string }
+  | { kind: "remark"; text: string };
+
+const NAMES: Record<BubbleContent["kind"], { label: string; close: string; action: string }> = {
+  greeting: {
+    label: `Greeting from ${ROBOT_NAME}`,
+    close: "Close greeting",
+    action: "Ask me a question",
+  },
+  answer: {
+    label: `Answer from ${ROBOT_NAME}`,
+    close: "Close answer preview",
+    action: "Read the full answer",
+  },
+  remark: { label: `Note from ${ROBOT_NAME}`, close: "Close note", action: "Ask me a question" },
+};
 
 const button = `${focusRing} rounded-md px-3 py-1.5 text-sm font-medium transition-colors motion-reduce:transition-none`;
 const primary = `${button} bg-accent text-accent-foreground hover:opacity-90`;
 const secondary = `${button} border border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800`;
 
 // The speech bubble above the robot. It is not modal, never takes focus, and stays until the
-// visitor acts on it. It is always rendered, empty and visually hidden while closed, so its status
+// visitor acts on it (a remark also closes when its section scrolls away). It is always rendered, empty and visually hidden while closed, so its status
 // line is tracked before the text arrives and a screen reader announces it.
 export function RobotBubble({
+  ref: bubble,
   content,
   onFollow,
   onOpenChat,
   onClose,
 }: {
+  // The caller also checks whether focus is inside, before a remark closes on scroll.
+  ref: RefObject<HTMLElement | null>;
   content: BubbleContent | null;
   // The greeting's target link was used.
   onFollow: () => void;
@@ -36,8 +54,6 @@ export function RobotBubble({
   // hadFocus: focus was inside the bubble, which is going away, so the caller should place it.
   onClose: (hadFocus: boolean) => void;
 }) {
-  const bubble = useRef<HTMLElement>(null);
-
   function close() {
     onClose(bubble.current?.contains(document.activeElement) ?? false);
   }
@@ -53,7 +69,7 @@ export function RobotBubble({
   return (
     <section
       ref={bubble}
-      aria-label={content ? bubbleLabel(content) : undefined}
+      aria-label={content ? NAMES[content.kind].label : undefined}
       onKeyDown={(event) => {
         if (event.key === "Escape") close();
       }}
@@ -71,7 +87,7 @@ export function RobotBubble({
           <button
             type="button"
             onClick={close}
-            aria-label={content.kind === "greeting" ? "Close greeting" : "Close answer preview"}
+            aria-label={NAMES[content.kind].close}
             className={`${focusRing} -mt-1 -mr-2 rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800`}
           >
             <CloseIcon />
@@ -86,7 +102,7 @@ export function RobotBubble({
             </a>
           ) : null}
           <button type="button" onClick={onOpenChat} className={link ? secondary : primary}>
-            {content.kind === "greeting" ? "Ask me a question" : "Read the full answer"}
+            {NAMES[content.kind].action}
           </button>
         </div>
       ) : null}
@@ -101,12 +117,9 @@ export function RobotBubble({
   );
 }
 
-function bubbleLabel(content: BubbleContent): string {
-  return content.kind === "greeting" ? `Greeting from ${ROBOT_NAME}` : `Answer from ${ROBOT_NAME}`;
-}
-
 function bubbleText(content: BubbleContent): string {
   if (content.kind === "answer") return content.preview;
+  if (content.kind === "remark") return content.text;
   return content.followed ? (content.lines.followUp ?? content.lines.opening) : content.lines.opening;
 }
 

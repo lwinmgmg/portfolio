@@ -16,7 +16,9 @@ import {
 } from "@/app/(public)/_components/robot/robot-greeting-text";
 import { RobotLauncher } from "@/app/(public)/_components/robot/robot-launcher";
 import { ROBOT_NAME, robotMood } from "@/app/(public)/_components/robot/robot-mood";
+import type { SectionRemark } from "@/app/(public)/_components/robot/robot-remarks";
 import { useGreeting } from "@/app/(public)/_components/robot/use-greeting";
+import { useSectionRemarks } from "@/app/(public)/_components/robot/use-section-remarks";
 
 // Tailwind's `md`: from here the panel is a side sheet and the CV stays visible beside it.
 const WIDE_VIEWPORT = "(min-width: 48rem)";
@@ -33,18 +35,24 @@ export function ChatWidget({
   suggestions,
   ownerName,
   greetingTarget,
+  sectionIds,
+  sectionRemarks,
 }: {
   suggestions: readonly string[];
   // The CV owner's first name, for the draft card ("Send to Lwin"). Null when the CV has none.
   ownerName: string | null;
   // The section the robot's greeting offers to show. Null when the CV has neither.
   greetingTarget: GreetingTarget | null;
+  // Every section on the page in order, and the robot's line for the ones it remarks on.
+  sectionIds: readonly string[];
+  sectionRemarks: readonly SectionRemark[];
 }) {
   const { state, restore, send, stop, reset, actOnDraft } = useChat();
   const greeting = useGreeting();
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const bubbleRef = useRef<HTMLElement>(null);
   // A drag that starts in the panel and ends on the backdrop must not close it.
   const pressedBackdrop = useRef(false);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -63,18 +71,27 @@ export function ChatWidget({
     }
   }
 
+  const remarks = useSectionRemarks({
+    sectionIds,
+    remarks: sectionRemarks,
+    blocked: panelOpen || previewing || greeting.stage !== "hidden",
+    holdsFocus: () => bubbleRef.current?.contains(document.activeElement) ?? false,
+  });
+
   // An answer can only be asked for with the panel open, which dismisses the greeting, so the
-  // two never compete for the bubble.
+  // two never compete for the bubble. A remark waits for both; an answer preview replaces it.
   const bubble: BubbleContent | null = previewing
     ? { kind: "answer", preview: answerPreview(state) }
-    : greeting.stage === "hidden"
-      ? null
-      : {
+    : greeting.stage !== "hidden"
+      ? {
           kind: "greeting",
           lines: greetingLines({ robotName: ROBOT_NAME, ownerName, target: greetingTarget }),
           target: greetingTarget,
           followed: greeting.stage === "followed",
-        };
+        }
+      : remarks.remark
+        ? { kind: "remark", text: remarks.remark.text }
+        : null;
 
   // On a phone, focusing the input would open the keyboard over the suggestions.
   function focusInputIfWide() {
@@ -83,6 +100,7 @@ export function ChatWidget({
 
   function open() {
     greeting.dismiss();
+    remarks.dismiss();
     restore();
     setPanelOpen(true);
     setUnread(false);
@@ -121,19 +139,30 @@ export function ChatWidget({
     <>
       <RobotLauncher
         ref={trigger}
-        mood={robotMood({ chat: state, typing: false, greeting: greeting.stage !== "hidden" })}
+        // The robot waves while it is saying hello or remarking, not over an answer preview.
+        mood={robotMood({
+          chat: state,
+          typing: false,
+          greeting: bubble?.kind === "greeting" || bubble?.kind === "remark",
+        })}
         label={TITLE}
         unread={unread}
         tracking={!panelOpen}
         onClick={open}
       />
       <RobotBubble
+        ref={bubbleRef}
         content={bubble}
-        onFollow={greeting.follow}
+        onFollow={() => {
+          greeting.follow();
+          // The follow-up line already says what the section holds.
+          if (greetingTarget) remarks.markSeen(greetingTarget.section);
+        }}
         onOpenChat={open}
         onClose={(hadFocus) => {
           // Closing the preview keeps the unread dot: the full answer is still unread.
           greeting.dismiss();
+          remarks.dismiss();
           setPreviewing(false);
           if (hadFocus) trigger.current?.focus({ preventScroll: true });
         }}

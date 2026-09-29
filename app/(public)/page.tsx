@@ -6,9 +6,10 @@ import { ChatWidget } from "@/app/(public)/_components/chat/chat-widget";
 import { CvComingSoon } from "@/app/(public)/_components/cv/cv-coming-soon";
 import { CvDocument } from "@/app/(public)/_components/cv/cv-document";
 import { CvSectionNav } from "@/app/(public)/_components/cv/cv-section-nav";
-import { cvNavItems } from "@/app/(public)/_components/cv/cv-sections";
+import { CV_PROFILE_ID, cvNavItems } from "@/app/(public)/_components/cv/cv-sections";
 import { cvPageMeta } from "@/app/(public)/_components/cv/cv-seo";
 import { greetingTarget } from "@/app/(public)/_components/robot/robot-greeting-text";
+import { sectionRemarks } from "@/app/(public)/_components/robot/robot-remarks";
 import { isChatAvailable } from "@/server/services/chat-runtime";
 import { getPublishedCv } from "@/server/services/cv-runtime";
 
@@ -23,6 +24,7 @@ export default async function HomePage() {
   const cv = await getPublishedCv();
   // The chat answers from the published CV's active index, so it needs both.
   const suggestions = cv && (await isChatAvailable()) ? chatSuggestions(cv) : null;
+  const ownerName = cv ? ownerFirstName(cv.profile.fullName) : null;
 
   return (
     <div className="flex flex-1 flex-col bg-zinc-50 font-sans dark:bg-black print:bg-white">
@@ -39,8 +41,11 @@ export default async function HomePage() {
       {cv && suggestions ? (
         <ChatWidget
           suggestions={suggestions}
-          ownerName={ownerFirstName(cv.profile.fullName)}
+          ownerName={ownerName}
           greetingTarget={greetingTarget(cv)}
+          // The profile header first, so scrolling back to the top leaves a remark's section.
+          sectionIds={[CV_PROFILE_ID, ...cvNavItems(cv).map((item) => item.id)]}
+          sectionRemarks={sectionRemarks(cv, ownerName)}
         />
       ) : null}
     </div>

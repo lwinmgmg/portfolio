@@ -1950,10 +1950,32 @@ The no-information reply has no marker in the stream, so it gets `idle`, not `pu
 
 The robot says one line the first time the visitor scrolls to Experience, Projects or Skills (for
 example, "Lwin has built 4 projects. Open one for the full story."). The trigger reuses `use-scroll-spy.ts`.
-At most once per section per tab session, never while the panel or the greeting bubble is open, and the
-bubble closes by itself after 6 s, because the same text is on the page.
+At most once per section per tab session, never while the panel or the greeting bubble is open. ~~The
+bubble closes by itself after 6 s, because the same text is on the page.~~ Changed by the owner
+(2026-09-30): the line stays while its section is current and closes when the visitor scrolls to
+another section (or on ×, Esc, the button or the robot). No timer.
 
-The owner decides after 5.4 whether this helps or distracts. It is not planned in detail until then.
+**Files:** `app/(public)/_components/robot/robot-remarks.ts` (+ test), `use-section-remarks.ts`, `robot-bubble.tsx`, `app/(public)/_components/cv/use-scroll-spy.ts`, `app/(public)/_components/chat/chat-storage.ts` (+ test), `chat-widget.tsx`, `app/(public)/page.tsx`.
+
+**Status:** Built. The owner asked for it after 5.5. Browser checks by hand (375 px, keyboard, screen reader, reduced motion) wait for the owner.
+
+**As built**
+- **Lines** (`sectionRemarks(cv, ownerName)`, pure): only for sections the page renders, with the count from the CV and the singular for one.
+  - "Lwin has held 3 roles. Ask me about any of them."
+  - "Lwin has built 4 projects. Open one for the full story."
+  - "Lwin lists 24 skills. Ask me where Lwin has used them." (skills are counted across groups)
+  - Without a name: "Here are 3 roles. …", "Here are 4 projects. …", "Here are 24 skills. Ask me where they were used."
+- **Trigger.** `useScrollSpy(ids, onChange?)` gained an optional callback. It reports each new current section from the observer, never the initial guess, so nothing is said before the visitor reaches a section; the nav's use is unchanged. `useSectionRemarks` spies on the profile header plus every nav section, so scrolling back to the top also counts as leaving.
+- **When a line shows.** The section has a line, the panel is closed, no greeting or answer preview is showing, the tab has been greeted (`readGreeted`: before that the greeting would replace the line), and the section is not in `cv-chat:remarked` (sessionStorage, a JSON list, guarded like the other keys). The key is written as the line appears. Using the greeting's target link marks that section too, since the follow-up line already describes it.
+- **Closing.** Any change of current section closes the line, unless focus is inside the bubble (a keyboard user acting on it; arrow keys on a focused button scroll the page). ×, Esc, "Ask me a question" and the robot close it as before. An answer preview takes the bubble over it.
+- **Bubble.** `BubbleContent` gained `{ kind: "remark", text }`: labelled "Note from Bit", "Close note", with "Ask me a question". `RobotBubble` now takes its section `ref` from `ChatWidget`, which checks it for focus. The robot waves while a greeting or a line is showing (not over an answer preview).
+- **Checked, 2026-09-30:** on the dev server, headless Chrome driven over the DevTools protocol at 1280 px:
+  - in a new tab, reaching Experience while the greeting shows says nothing and marks nothing;
+  - in a greeted tab, Experience shows "Lwin has held 4 roles. Ask me about any of them." and the robot waves;
+  - scrolling back to Summary closes it, and returning to Experience says nothing;
+  - Skills shows "Lwin lists 12 skills. Ask me where Lwin has used them.";
+  - × closes it, and after a reload Skills says nothing.
+- **Not checked:** 375 px, keyboard focus inside a line while scrolling, a screen reader's announcement, reduced motion, and the Projects line (the published CV has no projects).
 
 ## Phase 5.7: Robot acts out the steps
 
@@ -2007,6 +2029,7 @@ chat is doing, from the step events (`ChatStep`) that already stream before the 
 | 5.1 | Confirm the Phase 5 fixed decisions and the moods table, and keep or change the robot's name (`Bit`). |
 | 5.2 | Review every mood on `/admin/robot` in light mode, dark mode and with reduced motion; approve the look before 5.3. |
 | 5.4 | Try the greeting on a phone and on desktop; say whether 5.6 (section remarks) is wanted. |
+| 5.6 | Scroll the CV on a phone and on desktop; say whether the section lines help or distract (they can be removed by dropping `sectionRemarks` from `page.tsx`). |
 
 ## 4. Known risks
 

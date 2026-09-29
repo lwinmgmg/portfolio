@@ -7,6 +7,10 @@ import {
   type ChatEntry,
   type EmailDraftCard,
 } from "@/app/(public)/_components/chat/chat-state";
+import {
+  isRemarkSection,
+  type RemarkSection,
+} from "@/app/(public)/_components/robot/robot-remarks";
 import { CHAT_REASONING_MAX_CHARS } from "@/server/domain/chat";
 
 // Per tab, so a reload continues the conversation and a new tab starts fresh.
@@ -15,6 +19,8 @@ export const CONVERSATION_ID_KEY = "cv-chat:conversationId";
 export const MESSAGES_KEY = "cv-chat:messages";
 // Set when the robot's greeting appears, so it greets once per tab.
 export const GREETED_KEY = "cv-chat:greeted";
+// The sections the robot has remarked on, so it says each line once per tab.
+export const REMARKED_KEY = "cv-chat:remarked";
 
 export type StoredChat = { conversationId: string | null; entries: ChatEntry[] };
 
@@ -78,6 +84,28 @@ export function writeGreeted(storage: WritableStorage | null): void {
     storage?.setItem(GREETED_KEY, "1");
   } catch {
     // Blocked storage: a reload greets again.
+  }
+}
+
+// The sections the robot has already remarked on in this tab. Unknown values are dropped.
+export function readRemarked(storage: ReadableStorage | null): RemarkSection[] {
+  const stored = guarded((): unknown => JSON.parse(storage?.getItem(REMARKED_KEY) ?? "[]"), []);
+  if (!Array.isArray(stored)) return [];
+  return stored.filter(
+    (value): value is RemarkSection => typeof value === "string" && isRemarkSection(value),
+  );
+}
+
+export function writeRemarked(
+  storage: (ReadableStorage & WritableStorage) | null,
+  section: RemarkSection,
+): void {
+  const remarked = readRemarked(storage);
+  if (remarked.includes(section)) return;
+  try {
+    storage?.setItem(REMARKED_KEY, JSON.stringify([...remarked, section]));
+  } catch {
+    // Blocked storage: a reload may remark on the section again.
   }
 }
 

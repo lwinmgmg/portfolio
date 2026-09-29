@@ -60,7 +60,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     projects/[projectId]/     Project detail pages.
     _components/cv/           CV section components. Pure helpers: cv-format, cv-sections, cv-seo.
     _components/chat/         Chat widget (robot launcher, <dialog> panel, use-chat hook, steps panel in chat-activity, email draft card in chat-email-draft). Pure: chat-markdown, chat-text, chat-state, chat-storage, chat-suggestions, chat-steps-text, chat-email-text.
-    _components/robot/        Robot guide (Phase 5): Robot SVG (robot.tsx, moods in robot.module.css), RobotLauncher (opens the chat, eye tracking in use-eye-tracking), RobotBubble (the greeting, timer and stage in use-greeting, or a preview of an answer that finished while the chat was closed). Pure: robot-mood (mood from ChatState, ROBOT_NAME), robot-eyes, robot-greeting-text, robot-answer-preview.
+    _components/robot/        Robot guide (Phase 5): Robot SVG (robot.tsx, moods in robot.module.css), RobotLauncher (opens the chat, eye tracking in use-eye-tracking), RobotBubble (the greeting, timer and stage in use-greeting; a preview of an answer that finished while the chat was closed; or a section remark from use-section-remarks, on the CV's use-scroll-spy). Pure: robot-mood (mood from ChatState, ROBOT_NAME), robot-eyes, robot-greeting-text, robot-answer-preview, robot-remarks.
   admin/
     login/                    Login page, form, action, state.
     (panel)/                  Admin shell (nav layout). Pages call requireAdmin().
