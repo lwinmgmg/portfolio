@@ -20,6 +20,7 @@ test("applies defaults when only the key is set", () => {
     EMBEDDING_MODEL: "nvidia/nemotron-3-embed-1b:free",
     RERANK_MODEL: "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
     CHAT_DAILY_MESSAGE_LIMIT: 500,
+    LLM_ANSWER_REASONING: "low",
   });
 });
 
@@ -35,6 +36,7 @@ test("trims values and keeps explicit settings", () => {
     EMBEDDING_MODEL: "  custom/embed  ",
     RERANK_MODEL: "  custom/rerank  ",
     CHAT_DAILY_MESSAGE_LIMIT: "  250  ",
+    LLM_ANSWER_REASONING: "  high  ",
   });
 
   expect(parsed).toEqual({
@@ -48,7 +50,15 @@ test("trims values and keeps explicit settings", () => {
     EMBEDDING_MODEL: "custom/embed",
     RERANK_MODEL: "custom/rerank",
     CHAT_DAILY_MESSAGE_LIMIT: 250,
+    LLM_ANSWER_REASONING: "high",
   });
+});
+
+test("accepts every answer reasoning level", () => {
+  for (const level of ["off", "low", "medium", "high"] as const) {
+    expect(readLlmEnv({ OPENROUTER_API_KEY: key, LLM_ANSWER_REASONING: level })?.LLM_ANSWER_REASONING)
+      .toBe(level);
+  }
 });
 
 test("treats blank optional values as unset", () => {
@@ -63,6 +73,7 @@ test("treats blank optional values as unset", () => {
     EMBEDDING_MODEL: "",
     RERANK_MODEL: "",
     CHAT_DAILY_MESSAGE_LIMIT: " ",
+    LLM_ANSWER_REASONING: "",
   });
 
   expect(parsed).toEqual({
@@ -75,6 +86,7 @@ test("treats blank optional values as unset", () => {
     EMBEDDING_MODEL: "nvidia/nemotron-3-embed-1b:free",
     RERANK_MODEL: "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
     CHAT_DAILY_MESSAGE_LIMIT: 500,
+    LLM_ANSWER_REASONING: "low",
   });
 });
 
@@ -95,6 +107,12 @@ test("returns null when a set value is invalid", () => {
     readLlmEnv({
       OPENROUTER_API_KEY: key,
       CHAT_DAILY_MESSAGE_LIMIT: "nope",
+    }),
+  ).toBeNull();
+  expect(
+    readLlmEnv({
+      OPENROUTER_API_KEY: key,
+      LLM_ANSWER_REASONING: "minimal",
     }),
   ).toBeNull();
 });

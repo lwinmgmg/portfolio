@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.10 (chat UI) on `master`.
+Last updated after Phase 3.1 (reasoning in the LLM client) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.10. Chat widget on `/`, `streamChat`, `postPublicStream`. |
+| (next) | Phase 3.1. OpenRouter `reasoning` request field and stream events, `LLM_ANSWER_REASONING`, reasoning off for utility calls. |
+| `1bca9f1` | Phase 2.10. Chat widget on `/`, `streamChat`, `postPublicStream`. |
 | `a0e6c32` | Phase 2.9. `ChatService`, answer prompt, citations, conversations, `POST /api/public/chat`. |
 | `ddafbbb` | Phase 2.8. Golden set, retrieval metrics, `RetrievalEvaluator`, `scripts/rag-eval.ts`. |
 | `e91daff` | Phase 2.7. `TraceRecorder`, `RetrievalPipeline`, trace reader, `/admin/rag/playground`. |
@@ -55,6 +56,8 @@ Newest first:
 
 Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, check the chat in a browser (375 px, keyboard only, source chips), then Phase 2.11.
 
+Phase 3.1 is **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Next in that track: Phase 3.2 (stage progress from the pipeline), when the owner asks.
+
 ## Environment
 
 `.env.local` has `MONGODB_URI`, `MONGODB_DB`, `JWT_SECRET`, `ADMIN_USERNAME`, the LLM variables, and (by Phase 1.8) `BLOB_READ_WRITE_TOKEN` and `OPENROUTER_API_KEY`. Whether the OpenRouter key is valid was not checked. Without the blob token the upload form stays hidden and `/cv/download` returns 500. Without a valid OpenRouter key, extraction cannot run. Do not run `vercel env pull` unless the owner asks. Restart the dev server after those values change.
@@ -78,6 +81,9 @@ Do not switch model slugs. Defaults:
 - `LLM_UTILITY_MODEL=nvidia/nemotron-3.5-lightning`
 - `LLM_EXTRACT_MODEL=deepseek/deepseek-v4.1-flash` (structured output, text and image input; extraction sends Markdown, not a native PDF)
 - `LLM_ANSWER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free` (does not list `structured_outputs`; do not silently replace it)
+- `LLM_ANSWER_REASONING=low` (`off` | `low` | `medium` | `high`)
+
+Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes reasoning tokens. A utility call without `reasoning: { enabled: false }` spends its whole budget thinking and returns blank text (see Phase 3.1).
 
 `getLlm()` is server-only and throws `LlmConfigError` when `readLlmEnv()` is null. Call it inside the operation, not at module init, or `/admin/cv` crashes when the key is missing. Callers pass `pdfEngine` on each chat request. The shared client keeps its 60 second per-attempt timeout and 2 retries. An aborted outer signal is not retried.
 
@@ -279,6 +285,14 @@ Do not switch model slugs. Defaults:
 - Entry ids use a time-prefixed counter, not `crypto.randomUUID`, which needs a secure context (a phone on the LAN over http).
 - `isChatAvailable()` (`chat-runtime.ts`, `cache` + `connection()`) is true when RAG is configured and `findActive()` returns an index. A failed lookup is logged and hides the widget. The page calls it only when a CV is published.
 - Verified: unit tests, lint, types, build, and static markup of the widget and a sample answer (escaped HTML, chips, source links, the unknown `[S7]` dropped). Against the dev server, `/` renders the CV **without** the widget, and `POST /api/public/chat` still returns `unavailable` because there is no active index. No browser was available here, so nothing was checked in one: no streaming, 375 px layout, keyboard-only use, dark mode, or anchor scrolling.
+
+## Reasoning in the LLM client (Phase 3.1)
+
+- `ChatRequest.reasoning?: ReasoningSetting` (`{ effort }` or `{ enabled: false }`) maps to OpenRouter's `reasoning` body field. When it is absent, the body has no key. `ChatStreamEvent` gains `{ type: "reasoning"; text }`, read from `choices[0].delta.reasoning` in `interpretChunk`. Empty strings are skipped. A chunk with both fields yields reasoning first. A yielded reasoning event blocks a retry, like a delta. `complete()` ignores reasoning.
+- `LLM_ANSWER_REASONING` is parsed in `llm-env.ts`. An invalid value makes `readLlmEnv()` null. The domain type is `ReasoningLevel`.
+- `answerGenerationSettings(level)` (`answer-prompt.ts`): `off` → `{ enabled: false }`, 600 tokens. Any effort → `{ effort }`, 1,600 tokens (`ANSWER_MAX_TOKENS` 600 + `ANSWER_REASONING_TOKENS` 1,000). `ChatService` takes `answerReasoning` and, until Phase 3.3, drops `reasoning` events.
+- Measured live on 2026-09-29. The answer model used 270–365 reasoning tokens at every effort, so `effort` has no measurable effect; `off` works. Reasoning makes answers slower: 8–29 s against 4–9 s. The free endpoint can return 503 `provider_overloaded`.
+- `LlmContextualizer` and `LlmQueryRewriter` send `reasoning: { enabled: false }`. Without it the utility model returned blank content at `finish_reason: length`. That caused the active index's `contextFailures: 11/11` and the rewriter fallbacks. That index still has no contexts; rebuilding it from `/admin/rag` fixes that. Keep reasoning off for any new short utility call.
 
 ## Scaffold removal
 

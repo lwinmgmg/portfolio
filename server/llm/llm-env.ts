@@ -8,8 +8,10 @@ const DEFAULT_ANSWER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const DEFAULT_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b:free";
 const DEFAULT_RERANK_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2:free";
 const DEFAULT_CHAT_DAILY_MESSAGE_LIMIT = 500;
+const DEFAULT_ANSWER_REASONING = "low";
 
 const PdfEngineSchema = z.enum(["pdf-to-md", "native", "cloudflare-ai", "mistral-ocr"]);
+const ReasoningLevelSchema = z.enum(["off", "low", "medium", "high"]);
 
 // Blank strings are unset, so defaults apply. A present invalid value fails.
 function blankToUndefined(value: unknown): unknown {
@@ -44,6 +46,10 @@ export const LlmEnvSchema = z.object({
   EMBEDDING_MODEL: stringWithDefault(DEFAULT_EMBEDDING_MODEL),
   RERANK_MODEL: stringWithDefault(DEFAULT_RERANK_MODEL),
   CHAT_DAILY_MESSAGE_LIMIT: DailyMessageLimitSchema,
+  LLM_ANSWER_REASONING: z.preprocess(
+    blankToUndefined,
+    ReasoningLevelSchema.default(DEFAULT_ANSWER_REASONING),
+  ),
 });
 
 export type LlmEnv = z.infer<typeof LlmEnvSchema>;
@@ -62,6 +68,7 @@ export function readLlmEnv(
     EMBEDDING_MODEL: env.EMBEDDING_MODEL,
     RERANK_MODEL: env.RERANK_MODEL,
     CHAT_DAILY_MESSAGE_LIMIT: env.CHAT_DAILY_MESSAGE_LIMIT,
+    LLM_ANSWER_REASONING: env.LLM_ANSWER_REASONING,
   });
   if (!parsed.success) return null;
   return parsed.data;

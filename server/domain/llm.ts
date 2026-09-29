@@ -17,6 +17,14 @@ export type JsonSchemaFormat = {
 /** Local Markdown conversion or an OpenRouter file-parser engine. */
 export type PdfEngine = "pdf-to-md" | "native" | "cloudflare-ai" | "mistral-ocr";
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
+/** Maps to OpenRouter `reasoning`. `{ enabled: false }` asks a reasoning model not to think. */
+export type ReasoningSetting = { effort: ReasoningEffort } | { enabled: false };
+
+/** A configured reasoning level, as in `LLM_ANSWER_REASONING`. */
+export type ReasoningLevel = "off" | ReasoningEffort;
+
 export type ChatRequest = {
   model: string;
   messages: ChatMessage[];
@@ -25,6 +33,8 @@ export type ChatRequest = {
   /** Maps to OpenRouter `response_format` json_schema with `strict: true`. */
   jsonSchema?: JsonSchemaFormat;
   pdfEngine?: PdfEngine;
+  /** Absent: the body has no `reasoning` key and the model uses its own default. */
+  reasoning?: ReasoningSetting;
   signal?: AbortSignal;
 };
 
@@ -41,6 +51,7 @@ export type ChatResult = {
 };
 
 export type ChatStreamEvent =
+  | { type: "reasoning"; text: string }
   | { type: "delta"; text: string }
   | { type: "done"; usage: Usage | null };
 

@@ -67,6 +67,8 @@ export class LlmQueryRewriter implements QueryRewriter {
         temperature: 0,
         maxTokens: REWRITE_MAX_TOKENS,
         jsonSchema: { name: REWRITE_SCHEMA_NAME, schema: rewriteJsonSchema() },
+        // A reasoning model otherwise spends the whole 300 tokens thinking and returns blank text.
+        reasoning: { enabled: false },
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const output = parseRewrite(result.text);

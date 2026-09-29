@@ -31,6 +31,7 @@ function getChat(): ChatService {
     traces,
     chat: client,
     answerModel: env.LLM_ANSWER_MODEL,
+    answerReasoning: env.LLM_ANSWER_REASONING,
     dailyMessageLimit: env.CHAT_DAILY_MESSAGE_LIMIT,
   });
   return chat;

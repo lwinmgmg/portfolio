@@ -80,6 +80,7 @@ test("mode standalone makes one structured call and returns only the standalone 
   expect(request?.model).toBe("utility");
   expect(request?.temperature).toBe(0);
   expect(request?.maxTokens).toBe(300);
+  expect(request?.reasoning).toEqual({ enabled: false });
   expect(request?.signal instanceof AbortSignal).toBe(true);
   expect(request?.jsonSchema).toEqual({ name: "query_rewrite", schema: rewriteJsonSchema() });
   expect(request?.messages.map((message) => message.role)).toEqual(["system", "user"]);

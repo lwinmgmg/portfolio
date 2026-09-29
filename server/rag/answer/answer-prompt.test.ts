@@ -4,6 +4,7 @@ import type { ChatTurn } from "@/server/domain/chat";
 import type { ChatMessage } from "@/server/domain/llm";
 import {
   ANSWER_HISTORY_TURNS,
+  answerGenerationSettings,
   buildAnswerMessages,
   buildSmalltalkMessages,
   offTopicReply,
@@ -132,6 +133,13 @@ test("small talk has no sources and steers back to the CV", () => {
   expect(contentOf(messages[0])).toContain("ask about Jane Doe's experience");
   expect(contentOf(messages[3])).toBe("<question>Hi!</question>");
   expect(messages.some((message) => contentOf(message).includes("<source"))).toBe(false);
+});
+
+test("answer settings map the reasoning level and leave room for reasoning tokens", () => {
+  expect(answerGenerationSettings("off")).toEqual({ reasoning: { enabled: false }, maxTokens: 600 });
+  for (const effort of ["low", "medium", "high"] as const) {
+    expect(answerGenerationSettings(effort)).toEqual({ reasoning: { effort }, maxTokens: 1600 });
+  }
 });
 
 test("the off-topic reply names the subject", () => {

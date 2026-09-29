@@ -79,7 +79,13 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `EMBEDDING_MODEL` | yes | `nvidia/nemotron-3-embed-1b:free` | embeddings |
 | `RERANK_MODEL` | yes | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranking |
 | `CHAT_DAILY_MESSAGE_LIMIT` | no | `500` | global chat cost guard |
+| `LLM_ANSWER_REASONING` | no | `low` | `off` \| `low` \| `medium` \| `high`; answer-model reasoning shown as "Thinking" (Phase 3) |
 | `BLOB_READ_WRITE_TOKEN` | yes | — | `handleUpload` client tokens (pull with `vercel env pull`) |
+| `GMAIL_CLIENT_ID` | no | — | Google OAuth client for the Gmail sender (Phase 4). Without the Gmail values the email tool is not offered. |
+| `GMAIL_CLIENT_SECRET` | no | — | Google OAuth client secret (Phase 4) |
+| `GMAIL_REFRESH_TOKEN` | no | — | `gmail.send` refresh token from `scripts/gmail-refresh-token.ts` (Phase 4) |
+| `CONTACT_EMAIL_TO` | no | — | where visitor messages go, normally the owner's Gmail address (Phase 4) |
+| `CONTACT_EMAIL_DAILY_LIMIT` | no | `20` | site-wide cap on emails sent from the chat per UTC day (Phase 4) |
 
 Verify each default model slug exists on `openrouter.ai/models` and supports the needed parameters
 (`structured_outputs` for extract/utility models; native file input only when using the `native` PDF mode). If a slug is
@@ -106,6 +112,13 @@ server/
     llm-runtime.ts            server-only wiring
   storage/
     vercel-blob-store.ts      BlobStore impl
+  email/
+    email-env.ts              Gmail + contact env reader (+ test)
+    mime-message.ts           plain-text RFC 5322 message, base64url (+ test)
+    gmail-email-sender.ts     EmailSender impl on the Gmail API (+ test)
+  agent/
+    email-draft-tool.ts       send_email tool: stores a draft (+ test)
+    answer-loop.ts            one tool round per turn (+ test)
   cv/
     cv-schema.ts              zod schemas (+ test)
     cv-ids.ts                 deterministic id assignment (+ test)
@@ -117,12 +130,15 @@ server/
     rag-index-repository.ts
     rag-chunk-repository.ts
     rag-trace-repository.ts
+    rag-settings-repository.ts  chat retrieval config (2.10a)
     conversation-repository.ts
   services/
     cv-service.ts             (+ test)
     cv-runtime.ts             server-only wiring
     rag-index-service.ts      (+ test)
+    rag-settings-service.ts   (+ test)
     chat-service.ts           (+ test)
+    contact-email-service.ts  (+ test)
   rag/
     corpus/cv-corpus-source.ts
     chunking/structured-cv-chunker.ts        (+ test)
@@ -151,11 +167,14 @@ app/
   admin/(panel)/rag/...       RAG admin pages (indexes, playground, traces)
   api/admin/cv/upload/route.ts
   api/public/chat/route.ts
+  api/public/chat/email/route.ts
   cv/download/route.ts
   (public)/_components/cv/... public CV sections
   (public)/_components/chat/... chat widget
 client/api/chat.ts
 scripts/rag-eval.ts
+scripts/gmail-refresh-token.ts
+scripts/send-test-email.ts
 evals/cv-retrieval.golden.json
 ```
 
@@ -880,6 +899,7 @@ QUERY (per chat turn)
 - The panel is a native modal `<dialog>` (`showModal()`): the page behind is inert, `Esc` closes it, and `onClose` returns focus to the button. Tab moves between the panel and the browser UI rather than wrapping inside the panel. A click on the backdrop also closes it.
 - The textarea is `readOnly` + `aria-disabled` while streaming, not `disabled`, so keyboard focus stays in it.
 - Besides `cv-chat:conversationId`, the transcript is kept in `sessionStorage` under `cv-chat:messages`, so a reload shows the turns the server still uses as history. Storage is read on first open, not during render. A `meta` event with a different conversation id (new session or expired conversation) drops the older turns from view.
+- Owner decision after the first build: answers render a Markdown subset instead of plain text. `chat-markdown.ts` parses paragraphs, `#` headings (shown as bold lines), `-`/`*`/`+` and numbered lists (nested by indentation), code fences, rules, `**strong**`, `*em*`, `` `code` ``, `\` escapes and `[text](url)` links (http(s) and mailto only; other links show their text). The result is a tree rendered as React elements, still with no `dangerouslySetInnerHTML`. Tables, images and raw HTML stay as written text. No Markdown package was added.
 - Chips are numbered 1..n in order of first use, matching the source list. Ids the `sources` event does not list get no chip. A marker still streaming in (`[S1,`) is hidden.
 - Suggestions are in the second person, like the button: "What is your role at <company>?", "How have you used <skill> and <skill>?", "Tell me about the <project> project.", with general fallbacks.
 - `isChatAvailable()` in `server/services/chat-runtime.ts` (active index lookup, errors hide the widget) is the page's check.
@@ -887,6 +907,54 @@ QUERY (per chat turn)
 **Done when**
 - A visitor can hold a multi-turn conversation, follow-up questions resolve correctly ("what about before that?"), and source chips scroll to the right CV item.
 - Works at 375 px and with keyboard only.
+
+## Phase 2.10a: Chat retrieval settings
+
+The playground can already run with any `RetrievalConfig`, including `finalK` (how many chunks become
+sources) and `minRerankScore` (the threshold), but the chat always uses `DEFAULT_RETRIEVAL_CONFIG`.
+This sub-phase lets the admin tune the config in the playground, save it as the chat's config, and
+have every later chat turn use it. No code change or redeploy is needed to change it.
+
+**Files:** `server/domain/rag.ts` (extend), `server/repositories/rag-settings-repository.ts`, `server/services/rag-settings-service.ts` (+ test), `server/rag/rag-composition.ts`, `server/rag/rag-runtime.ts`, `server/services/chat-service.ts`, `server/services/chat-runtime.ts`, `app/admin/(panel)/rag/playground/*`, `server/rag/eval/eval-args.ts`, `scripts/rag-eval.ts`, tests.
+
+**Fixed decisions**
+- There is one chat config for the whole site. It is not stored on a `RagIndex`, so activating a new index keeps the tuned config.
+- The stored config is parsed with `RetrievalConfigSchema` on every read. A missing document gives `DEFAULT_RETRIEVAL_CONFIG`. A document that no longer parses (because the schema changed) also gives the default and logs a warning. The chat must never fail because of a stored config.
+- The threshold applies only when the reranker returns real scores. This is the existing rule: after a reranker fallback, `filter` is skipped.
+
+**Steps**
+1. Domain (`server/domain/rag.ts`):
+   ```ts
+   type ChatRetrievalSettings = { config: RetrievalConfig; updatedAt: string | null };  // null = defaults, never saved
+   interface RagSettingsRepository {
+     ensureReady(): Promise<void>;
+     findChatConfig(): Promise<{ config: unknown; updatedAt: string } | null>;  // raw; the service parses it
+     saveChatConfig(config: RetrievalConfig, updatedAt: string): Promise<void>;
+   }
+   ```
+2. `MongoRagSettingsRepository`: collection `rag_settings`, a single document `{ _id: "chat", retrieval, updatedAt }` written with an upsert. No extra indexes.
+3. `RagSettingsService` (constructor: repository, clock, logger):
+   - `chatSettings(): Promise<ChatRetrievalSettings>`: parse or fall back as described in the fixed decisions.
+   - `saveChatConfig(input: unknown): Promise<ChatRetrievalSettings>`: parse with `RetrievalConfigSchema`, then save. Invalid input throws a `RagError` whose message the admin can read.
+   - Tests: missing document, valid document, stale document (falls back and warns), save round trip, invalid input rejected.
+4. Wiring: build the service in `rag-composition.ts` (the repository is passed in through `RagDependencies`, like `traces`) and expose `getChatRetrievalSettings()` and `saveChatRetrievalConfig()` from `rag-runtime.ts`.
+5. `ChatService`:
+   - Take `retrievalConfig: () => Promise<RetrievalConfig>` in its dependencies instead of importing `DEFAULT_RETRIEVAL_CONFIG`. Read it once per turn, before retrieval. `chat-runtime.ts` passes the settings service.
+   - The trace already stores the `config` it ran with, so each chat trace shows which settings answered it.
+   - **Nothing passes the threshold:** when `scope = "cv"` and retrieval returns no chunks, stream a fixed reply ("I don't have that information in <subjectName>'s CV. You can contact <subjectName> directly.") with no LLM call, like the off-topic path. Store the turn and the trace as usual. Add the text to `answer-prompt.ts` next to `offTopicReply`.
+   - Tests: the config from the dependency reaches the pipeline, a config change applies to the next turn, and zero chunks give the fixed reply with no `chat.stream` call.
+6. Playground (`/admin/rag/playground`):
+   - Show a "Chat uses" summary above the form: every `RetrievalConfig` field and the `updatedAt` time, or "Defaults (never saved)".
+   - Add a "Chat config" preset to the preset dropdown that fills the form with the saved config. The form opens with it, not with `DEFAULT_RETRIEVAL_CONFIG`.
+   - Add a "Use for chat" button that saves the form's current config through a `withAdmin` action (state type in `playground-state.ts`, `useActionState`). It asks for confirmation, because it changes live chat answers. After success, call `revalidatePath("/admin/rag/playground")`.
+   - The button saves the config only, not the query, history or index. The chat always uses the active index.
+   - Under `minRerankScore`, keep the existing hint and add one line: "Chunks scoring below this are dropped. If none pass, the chat says it has no information." The filter panel already lists what was dropped at the chosen threshold, which is how the admin picks a value.
+7. Eval: `--presets` also accepts `chat`, which runs the saved chat config (read through `rag-composition`). The report shows it as a row named `chat`. Update `evals/README.md`.
+
+**Done when**
+- In the playground, the admin raises `minRerankScore`, sees the weak chunks move to the filter panel's dropped list, clicks "Use for chat", and the next chat turn's trace shows the new `config` and only the chunks that passed.
+- A question whose chunks all fall below the threshold gets the fixed "no information" reply and its trace has no `generate` stage.
+- `bun run eval:rag -- --presets hybrid-rerank,chat` prints both rows.
 
 ## Phase 2.11: Trace history and feedback
 
@@ -934,6 +1002,325 @@ QUERY (per chat turn)
 
 ---
 
+# PHASE 3: Visible chat workflow
+
+Today the chat shows `...` until the first answer token arrives. Phase 3 streams each step of the turn to
+the visitor as it happens, with that step's result, so they can see what the agent is doing:
+
+```
+▾ Worked for 3.4 s · 5 sources                          <- collapses when the answer starts
+  ✓ Understood the question      "Lwin's backend experience"         0.8 s  ›
+  ✓ Semantic search              20 chunks · best 0.82               0.3 s  ›
+  ✓ Keyword search               14 chunks · best 7.31               0.0 s  ›
+  ✓ Combined results (RRF)       24 → 20 chunks                      0.0 s  ›
+  ✓ Reranked                     kept 5 · best 0.91                  0.6 s  ›
+  ● Thinking…                    (reasoning streams here)                   ›
+Answer text…
+```
+
+Each row expands (`›`) to show its full result: rewritten queries and scope, a ranked hit list per
+query with scores, RRF contributions, rank moves after reranking, filtered chunks, and the model's
+reasoning text.
+
+**Fixed decisions for Phase 3** (the owner confirms them at the 3.1 checkpoint):
+
+| Topic | Decision |
+|---|---|
+| Transport | The existing NDJSON chat stream. New event types; no second request, no polling. |
+| Source of truth | Step results are projected from the same `TraceStage` data the admin trace stores. There is no separate code path that could drift from it. |
+| What is public | Stage names, durations, rewritten queries, scope, and per hit: rank, score, title, section and CV anchor. **Not public:** chunk text or context notes, the rewriter's `raw`, provider error messages, model names, usage, cost, or the retrieval config. |
+| Payload bound | At most `CHAT_STEP_HITS = 10` hits per list, plus the list's `total`. |
+| Thinking | The answer model's own reasoning tokens (OpenRouter `reasoning`), streamed as they arrive. Controlled by a new env var `LLM_ANSWER_REASONING` (`off` \| `low` \| `medium` \| `high`, default `low`). With `off`, or when the model sends no reasoning, there is no Thinking step. |
+| Persistence | Steps and reasoning are kept in the browser transcript (`sessionStorage`) so a reload still shows them. The server does not store them in `chat_conversations`. Stored history stays text only (§1). Reasoning also goes into the trace's `generate` stage, capped at 8,000 characters. |
+| Libraries | None added. Collapsibles are native `<details>`/`<summary>`. |
+
+## Phase 3.1: Reasoning in the LLM client
+
+**Files:** `server/domain/llm.ts`, `server/llm/openrouter-client.ts`, `server/llm/llm-env.ts`, `.env.example`, `server/rag/answer/answer-prompt.ts`, tests.
+
+**Steps**
+1. `ChatRequest.reasoning?: { effort: "low" | "medium" | "high" } | { enabled: false }`, mapped to OpenRouter's `reasoning` body field. When it is absent, the body has no `reasoning` key (current behaviour).
+2. `ChatStreamEvent` gains `{ type: "reasoning"; text: string }`. The SSE parser reads `choices[0].delta.reasoning` (a string). Empty strings are skipped, like content. `complete()` ignores reasoning.
+3. `llm-env.ts`: `LLM_ANSWER_REASONING` (`off` | `low` | `medium` | `high`, default `low`). Invalid values fail the env read, like the other variables. Add it to `.env.example` and to §1.1.
+4. Answer calls pass `reasoning` from env (`off` → `{ enabled: false }`). The OpenRouter `max_tokens` counts reasoning tokens, so raise the answer's `maxTokens` so the 600-token answer budget is not eaten by reasoning. With one live call against `LLM_ANSWER_MODEL`, find out whether the model honours `effort` and how many reasoning tokens `low` uses, then set the constant from that and record it under **As built**.
+5. **Check, do not assume:** the active index has `contextFailures: 11/11` with `LLM_UTILITY_MODEL`. OpenRouter lists that model with `reasoning`. The likely cause is reasoning using up the contextualizer's `maxTokens: 150` and leaving blank content. The rewriter (`maxTokens: 300`) may fall back for the same reason. Confirm with one live contextualizer call. If that is the cause, pass `{ enabled: false }` on utility calls (contextualizer and rewriter) and report it. Do not change models.
+6. Tests: body mapping for each `reasoning` variant and its absence; the SSE parser with interleaved `reasoning` and `content` deltas; env parsing.
+
+**Status:** Done
+
+**As built**
+- The SSE reading is in `interpretChunk` in `openrouter-client.ts` (`sse.ts` only splits events). A chunk that carries both fields yields `reasoning` first, then `delta`. A yielded `reasoning` event also blocks a stream retry, like a delta.
+- `ReasoningSetting` and `ReasoningLevel` (`"off" | ReasoningEffort`) are in `server/domain/llm.ts`. `answerGenerationSettings(level)` in `answer-prompt.ts` returns `{ reasoning, maxTokens }`: `off` → `{ enabled: false }` and 600; any effort → `{ effort }` and `ANSWER_MAX_TOKENS + ANSWER_REASONING_TOKENS` = 600 + 1,000 = 1,600.
+- Outside the listed files: `ChatService` takes `answerReasoning: ReasoningLevel` (from `chat-runtime.ts`) and skips `reasoning` events until 3.3 streams them. The contextualizer and rewriter pass `reasoning: { enabled: false }`.
+- Answer model (`nvidia/nemotron-3-ultra-550b-a55b:free`, sample-CV answer prompt, 5 sources, 2026-09-29): reasoning tokens were 274–323 at `low`, 271–363 at `medium` and 307–349 at `high`. `effort` has no measurable effect; `{ enabled: false }` gives 0 reasoning tokens. Every run ended with `finish_reason: stop`. Latency was 8–29 s with reasoning and 4–9 s without. The free endpoint once returned 503 `provider_overloaded`. `ANSWER_REASONING_TOKENS = 1,000` leaves about 3× the observed maximum.
+- Live `stream()` with `effort: "low"` and `maxTokens: 1600`: `reasoning` events (1,076 chars), then `delta` events, then `done`; 347 completion tokens and a complete answer.
+- Utility model (`nvidia/nemotron-3.5-lightning`), step 5 confirmed: with no `reasoning` key the contextualizer call returned `finish_reason: length`, 150/150 reasoning tokens and blank content, and the rewriter call returned 300/300 reasoning tokens and blank content, so it fell back. With `{ enabled: false }` both returned `stop` with 0 reasoning tokens: a 45-token context and valid rewrite JSON. The active index's contexts are still blank. Rebuild it from `/admin/rag` to get them.
+
+**Done when**
+- A live `stream()` call to `LLM_ANSWER_MODEL` with `effort: "low"` yields `reasoning` events followed by `delta` events, and the answer is not cut short.
+- The utility-model finding (step 5) is written under **As built**.
+
+## Phase 3.2: Stage progress from the pipeline
+
+**Files:** `server/domain/rag.ts`, `server/domain/chat.ts`, `server/rag/pipeline/trace-recorder.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/progress/chat-steps.ts` (new), tests.
+
+**Steps**
+1. `server/domain/rag.ts`: `TraceObserver = { stageStarted(name: string, startedAt: number): void; stageEnded(stage: TraceStage): void }`. `RetrievalRequest.observer?: TraceObserver`.
+2. `TraceRecorder` takes an optional `observer`. It calls `stageStarted` after reserving the stage slot and `stageEnded` with a copy of the finished entry (the summarized output, or `error` set). Observer exceptions are caught and logged, and never fail the stage. `RetrievalPipeline` passes `request.observer` through. Playground and eval pass nothing and do not change.
+3. Public types in `server/domain/chat.ts` (the client imports these; do not redefine them):
+   ```ts
+   type ChatStepName = "rewrite" | "embed-queries" | "vector-search" | "lexical-search"
+                     | "fuse" | "rerank" | "filter" | "reasoning" | "generate";   // = STAGE values + "reasoning"
+   type ChatStepStatus = "running" | "done" | "failed";
+   type ChatStepHit = { rank: number; score: number; title: string; section: string; anchor: string | null };
+   type ChatStepDetail =
+     | { kind: "rewrite"; queries: string[]; scope: QueryScope; fallback: boolean }
+     | { kind: "embed"; count: number; dimensions: number }
+     | { kind: "search"; method: "vector" | "bm25"; lists: { query: string; total: number; hits: ChatStepHit[] }[] }
+     | { kind: "fuse"; total: number; hits: (ChatStepHit & { contributions: { list: string; rank: number }[] })[] }
+     | { kind: "rerank"; fallback: boolean; hits: (ChatStepHit & { fusedRank: number })[] }
+     | { kind: "filter"; minScore: number; kept: number; dropped: ChatStepHit[] }
+     | { kind: "reasoning" }
+     | { kind: "generate"; sources: number };
+   type ChatStep = { name: ChatStepName; status: ChatStepStatus;
+                     startedAt: number;            // ms from the start of the turn
+                     durationMs: number | null;    // null while running
+                     detail: ChatStepDetail | null };  // null while running, when failed, or when unreadable
+   ```
+   `ChatEvent` gains `{ type: "step"; step: ChatStep }` and `{ type: "reasoning"; text: string }`.
+4. `server/rag/progress/chat-steps.ts` (pure): `runningStep(name, startedAt)` and `finishedStep(stage: TraceStage): ChatStep`. Parse `stage.output` with the `trace-stages.ts` schemas. A failed stage, or an output that does not parse, gives `status: "failed"` or `detail: null`, and never exposes a message. Rewrite `fallback` = `typeof raw === "string"`. Hits are cut to `CHAT_STEP_HITS`, `total` keeps the full count, and `anchor` comes from `anchorForEntityKey` on the first entity key (as `citations.ts` does). The rerank error text is dropped; only `fallback` is kept.
+5. Tests: recorder observer order (start → end, including a failing stage and a throwing observer); every stage kind projected from real pipeline output over the sample CV; the hit cap and `total`; that no chunk text, context, `raw`, model or error text reaches a `ChatStep` (assert on its JSON).
+
+**Done when**
+- A faked pipeline run with an observer produces one running and one finished step per executed stage, in pipeline order.
+
+## Phase 3.3: Chat service and API events
+
+**Files:** `server/services/chat-service.ts`, `server/rag/progress/event-channel.ts` (new), `server/rag/pipeline/trace-stages.ts`, tests.
+
+**Steps**
+1. `event-channel.ts` (pure): a small push→pull queue (`push(item)`, `close()`, `fail(error)`, async iterator) so that the observer's callbacks can be yielded from the `reply` generator while `pipeline.run` is still pending. It is unbounded: a turn has at most ~16 step events.
+2. `ChatService.reply`: after `meta`, run the pipeline with an observer that pushes `step` events, and yield them as they arrive until the pipeline settles. Then continue as today. Step `startedAt` values share the trace timeline, so `generate` and `reasoning` also use `trace.totalMs + (t − retrievedAt)`.
+3. Generation:
+   - The first `reasoning` chunk emits step `reasoning` as running, then each chunk as a `{ type: "reasoning", text }` event.
+   - The first content `delta` finishes `reasoning` (when it ran) and starts step `generate`.
+   - When the stream completes, `generate` is finished with `{ kind: "generate", sources }`. On failure, the running step is sent as `failed` before the `error` event.
+   - Smalltalk runs the same steps. Off-topic stops after `rewrite` (its detail shows the scope), then gives the fixed reply as today, with no `generate` step.
+4. Stop during retrieval: the generator's `finally` stores nothing (as today for a turn with no answer), awaits the pipeline so the trace can be saved, then saves it. The route's `after(() => finished)` already covers that wait.
+5. `GenerateStageOutputSchema` gains `reasoning: z.string().nullable().optional()` (older traces have no key), capped at 8,000 characters when saved.
+6. Tests with fakes: full event order (`meta`, the step pairs in pipeline order, `reasoning`, `delta`s, `sources`, `done`); no reasoning → no `reasoning` step; off-topic; retrieval failure (failed step, then `error unavailable`, trace saved); answer failure (failed `generate`); stop mid-retrieval and mid-reasoning; reasoning stored in the trace and capped. Update the existing event-order tests.
+
+**Done when**
+- `curl -N` against `/api/public/chat` shows `step` events for every stage and `reasoning` lines before the first `delta`, and the stream still ends in `done`.
+
+## Phase 3.4: Client events, state and storage
+
+**Files:** `client/api/chat.ts`, `client/api/chat-steps.ts` (new), `app/(public)/_components/chat/chat-state.ts`, `chat-storage.ts`, tests.
+
+**Steps**
+1. `client/api/chat-steps.ts`: hand-written guards (no zod in the client bundle) for `ChatStep` and each detail kind. A step with an unknown `name` or `kind` is skipped; a malformed detail becomes `detail: null`. Anchors must start with `#`, as with `isChatSource`. `parseChatEvent` handles `step` and `reasoning`.
+2. `AssistantEntry` gains `steps: ChatStep[]` and `reasoning: string`. The reducer upserts a `step` by `name` (a finished step replaces its running one; an older event never replaces a newer one) and appends `reasoning` text.
+3. When the stream ends as `stopped` or `interrupted`, or on `error`, steps still `running` get a client-only status `"stopped"`. Do not put that status on the server type; the client widens it.
+4. `settlePending` currently drops an answer with no text. Now it keeps the entry when it has steps, so a failed turn still shows where it failed.
+5. Storage: store `steps` and `reasoning` (reasoning capped at 8,000 characters). Validate on read with the same guards. Older stored entries without these fields load with `[]` and `""`.
+6. Tests: parser (valid events, unknown step, bad anchor, malformed detail); reducer (upsert, ordering, end states, the kept failed turn); storage round trip, the cap and legacy entries.
+
+**Done when**
+- Reducer and storage tests cover every event and end state. The built client chunk has no zod.
+
+## Phase 3.5: Workflow UI
+
+**Files:** `app/(public)/_components/chat/chat-activity.tsx`, `chat-step-detail.tsx`, `chat-steps-text.ts` (pure, + test), `chat-answer.tsx`, `chat-messages.tsx`.
+
+**Steps**
+1. `chat-steps-text.ts` (pure): the label per step, running and done ("Searching the CV…" / "Semantic search"); a one-line summary from the detail ("20 chunks · best 0.82", "24 → 20 chunks", "kept 5 · best 0.91", "Out of scope"); score formatting per kind (cosine and rerank to 2 decimals, BM25 to 2, RRF to 4); a panel header "Worked for 3.4 s · 5 sources" (time from the first step's start to the last step's end); and the live status text.
+2. `chat-activity.tsx` replaces the `...` placeholder: one outer `<details>` per answer containing a list of step rows. Each row is a `<details>` whose `<summary>` shows the status icon (spinner, check, cross, stopped), the label, the summary and the duration.
+   - The outer panel is open while no answer text exists and closes itself when the first `delta` arrives. Once the visitor toggles it, their choice wins for that entry. Restored entries start closed.
+   - The `reasoning` row is open while it streams and shows the text as plain text (`whitespace-pre-wrap`, not Markdown), scrolled to the latest line. It closes when `generate` starts.
+3. `chat-step-detail.tsx`: the expanded content per kind.
+   - rewrite: the queries, the scope, and a "used your message as written" note on fallback.
+   - search: per query, an ordered list of `rank · title · section · score`, with "and N more" when `total` exceeds the list.
+   - fuse: the same, plus contributions (`vector:q0 #3, bm25:q0 #1`).
+   - rerank: `fused #7 → #1` with the score, or a note when it fell back to fused order.
+   - filter: the dropped chunks.
+   - Each score type gets a one-line hint ("cosine similarity, 0–1", "BM25, higher is better", …).
+   - Titles link to their CV anchor with the same close-on-mobile behaviour as source links.
+   - Lists, not tables, so 375 px does not need horizontal scrolling.
+4. Accessibility:
+   - The `role="log"` list keeps `aria-busy` while streaming. A separate visually hidden `role="status"` announces only step changes ("Reranking results"), not every token.
+   - Icons carry text alternatives. The spinner is static under `prefers-reduced-motion: reduce`.
+   - Summaries are keyboard reachable (native `<details>`).
+5. Keep the existing styles: zinc palette, dark mode, `focusRing`.
+
+**Done when**
+- A visitor sees each step appear and finish live, can expand any step to see its results, and sees the Thinking text stream before the answer.
+- After a reload the collapsed panel and its steps are still there.
+- Checked in a browser at 375 px and 1440 px, in dark mode, and keyboard only. If no browser is available, say so and list what was not checked, as in 2.10.
+
+---
+
+# PHASE 4: Agent tools (email the owner)
+
+Today the chat agent has no tools: every turn is retrieve, then answer. Phase 4 adds LLM tool calling
+and a first tool, `send_email`, so a visitor can ask the agent to pass a message to the owner:
+
+```
+Visitor: I'd like to talk to Lwin about a backend role. I'm Jane, jane@acme.com.
+  ✓ Understood the question      contact request                     0.7 s  ›
+  ✓ Drafted an email             send_email                          1.9 s  ›
+Agent:   I've drafted a message to Lwin. Check it and press Send.
+  ┌────────────────────────────────────────────────┐
+  │ Hi Lwin, Jane (jane@acme.com) would like to    │
+  │ talk to you about a backend role …             │
+  │                          [Discard]  [Send]     │
+  └────────────────────────────────────────────────┘
+```
+
+The tool takes one parameter, the email text. The model can only **draft**. The email is sent
+only when the visitor presses Send, through its own endpoint, so a prompt injection or a model
+mistake cannot send mail by itself.
+
+**Fixed decisions for Phase 4** (the owner confirms them at the 4.1 checkpoint):
+
+| Topic | Decision |
+|---|---|
+| Tool | `send_email({ text: string })`, 1–2,000 characters. No other parameters: the recipient, sender and subject are fixed on the server. |
+| Confirmation | The tool call stores a draft and shows it. Only the visitor's Send click sends it. The model is told never to claim that a message was sent. |
+| Provider | **Gmail API** through a hand-written `fetch` adapter (`users.messages.send`), with an OAuth refresh token for the owner's Google account and only the `https://www.googleapis.com/auth/gmail.send` scope. It sends from the owner's Gmail to `CONTACT_EMAIL_TO` (normally the same address). No package is added. Fallback if the OAuth setup is not acceptable: Gmail SMTP with an app password, which needs `nodemailer` (owner approval, §0.1). |
+| Message | Plain text, UTF-8. Subject: `Portfolio chat: message from a visitor`. The body is the draft text, then a footer with the conversation id and the send time. No visitor input goes into a header. |
+| Limits | At most 2 sent emails per public session (`CONTACT_EMAIL_SESSION_LIMIT`) and `CONTACT_EMAIL_DAILY_LIMIT` (default 20) per UTC day for the whole site. Only one draft per turn. |
+| At most once | Gmail has no idempotency key. A draft is claimed atomically (`pending` → `sending`) before the send. A draft left in `sending` (the function died mid-send) becomes `failed` and is never resent. |
+| Draft lifetime | Only the newest pending draft in a conversation can be sent. A new draft supersedes older pending ones. Pending drafts expire after 1 hour. |
+| Tool loop | At most one tool round per turn: model → tool → model (with `tool_choice: "none"`) → final text. A second tool call is ignored and recorded in the trace. |
+| When tools are offered | Only when the email env vars are set. Then the `send_email` tool goes with `cv`, `smalltalk` and the new `contact` scope. Off-topic turns stay a fixed reply. |
+| History | Stored history stays text only (§1). The draft is stored on the conversation, not in the message text. A pending draft goes into the final user turn as `<pending_email_draft>` so the visitor can ask for changes. |
+| Privacy | Drafts hold whatever the visitor wrote, including contact details. They live in `chat_conversations` (30-day TTL) and in admin-only traces. Public step events show that a draft was made, never its text; the draft card shows the text to its own session only. |
+
+## Phase 4.1: Tool calling in the LLM client
+
+**Files:** `server/domain/llm.ts`, `server/llm/openrouter-client.ts`, `server/llm/sse.ts` (if the parser changes), tests.
+
+**Steps**
+1. Domain types:
+   ```ts
+   type ToolDefinition = { name: string; description: string; parameters: Record<string, unknown> };  // JSON Schema
+   type ToolCall = { id: string; name: string; arguments: string };  // arguments: raw JSON text from the model
+   type ChatMessage =
+     | { role: "system" | "user"; content: string | ContentPart[] }
+     | { role: "assistant"; content: string | ContentPart[]; toolCalls?: ToolCall[] }
+     | { role: "tool"; toolCallId: string; content: string };
+   ```
+   `ChatRequest` gains `tools?: ToolDefinition[]` and `toolChoice?: "auto" | "none"`.
+2. Body mapping: `tools` → `[{ type: "function", function: { name, description, parameters } }]`, `toolChoice` → `tool_choice`, assistant `toolCalls` → `tool_calls`, tool messages → `{ role: "tool", tool_call_id, content }`. With no tools, the body is unchanged.
+3. Streaming: OpenRouter sends `choices[0].delta.tool_calls` as fragments keyed by `index` (the first fragment has `id` and `function.name`, and later ones append to `function.arguments`). Assemble them per index. When the stream finishes (`finish_reason: "tool_calls"` or end of stream), emit one `{ type: "tool_call"; call: ToolCall }` per call, before `done`. Content deltas still stream as they arrive. `complete()` returns `toolCalls` on `ChatResult` too.
+4. A fragment without an id or name, or arguments that are not valid JSON when the stream ends, still produce a `tool_call` event. The caller validates the arguments. The client stays a transport and does not parse tool arguments.
+5. Tests: body mapping with and without tools; fragments split across SSE chunks; two parallel calls; content before a tool call; reasoning (Phase 3.1) interleaved with tool-call fragments.
+6. **Live check:** one `stream()` call to `LLM_ANSWER_MODEL` with a trivial tool and a message that needs it. The model lists `tools` and `tool_choice` on OpenRouter. Record under **As built** whether it calls the tool, streams the call in fragments, and honours `tool_choice: "none"`. If it does not call tools reliably, report it and do not change the model.
+
+**Done when**
+- The live check yields a `tool_call` event with parseable arguments, and a follow-up request with the tool result yields a text answer.
+
+## Phase 4.2: Gmail sender
+
+**Files:** `server/domain/email.ts`, `server/email/email-env.ts` (+ test), `server/email/gmail-email-sender.ts` (+ test), `server/email/mime-message.ts` (+ test), `scripts/gmail-refresh-token.ts`, `scripts/send-test-email.ts`, `.env.example`, `package.json`.
+
+**Steps**
+1. `server/domain/email.ts`: `type OutgoingEmail = { to: string; subject: string; text: string }` and `interface EmailSender { send(email: OutgoingEmail, signal?: AbortSignal): Promise<{ messageId: string }> }`, plus `EmailSendError` with `retryable`.
+2. `email-env.ts` (zod): `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `CONTACT_EMAIL_TO` (an email address), `CONTACT_EMAIL_DAILY_LIMIT` (positive int, default 20). `readEmailEnv()` returns null when any required value is missing, like `readLlmEnv()`: the tool is then not offered. Add them to `.env.example` and §1.1.
+3. `mime-message.ts` (pure): builds the RFC 5322 message (`To`, `Subject` RFC 2047-encoded when not ASCII, `MIME-Version`, `Content-Type: text/plain; charset=UTF-8`, `Content-Transfer-Encoding: base64`, the base64 body wrapped at 76 characters) and returns it as base64url for the Gmail `raw` field. It rejects CR or LF in `to` and `subject`. Tests: ASCII and non-ASCII subjects, a body with Unicode and long lines, header-injection attempts.
+4. `GmailEmailSender` (constructor: env, `fetch`, clock):
+   - Access token: `POST https://oauth2.googleapis.com/token` with `grant_type=refresh_token`. It is cached in memory until 60 seconds before `expires_in`. On a 401 from Gmail, clear the cache and retry once.
+   - Send: `POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send` with `{ raw }`. It returns the Gmail message `id`.
+   - 15 seconds per request. It does **not** retry a send that may have reached Gmail (a timeout or 5xx after the request was written), because Gmail has no idempotency key. It throws `EmailSendError` with `retryable: false`.
+   - `invalid_grant` from the token endpoint (the refresh token was revoked or expired) throws a clear error that names the fix: run `scripts/gmail-refresh-token.ts` again.
+   - Tests with a fake `fetch`: token caching and expiry, the 401 refresh, request shape, error mapping. No network.
+5. `scripts/gmail-refresh-token.ts` (run by the owner, not the agent): reads the client id and secret from `.env.local`, starts a loopback server with `Bun.serve` on a free port (never 3000), prints the Google consent URL for the `gmail.send` scope with `access_type=offline&prompt=consent`, exchanges the returned code, and prints `GMAIL_REFRESH_TOKEN=...` for `.env.local`. It uses PKCE and a `state` check.
+6. `scripts/send-test-email.ts` (`bun run email:test`): sends one fixed test email to `CONTACT_EMAIL_TO` through `GmailEmailSender`. It needs no Mongo, so no shim.
+
+**Done when**
+- The owner runs `bun run email:test` and the test email arrives in their Gmail inbox.
+
+## Phase 4.3: Tools in the chat turn
+
+**Files:** `server/domain/agent.ts`, `server/domain/chat.ts`, `server/agent/*` (new), `server/rag/query/rewrite-prompt.ts`, `server/rag/query/llm-query-rewriter.ts`, `server/rag/answer/answer-prompt.ts`, `server/rag/pipeline/trace-stages.ts`, `server/rag/pipeline/trace-reader.ts`, `app/admin/(panel)/rag/_components/trace-stage-panel.tsx`, `server/repositories/conversation-repository.ts`, `server/services/chat-service.ts`, `server/services/chat-runtime.ts`, tests.
+
+**Steps**
+1. `server/domain/agent.ts`:
+   ```ts
+   interface AgentTool<Args> {
+     definition: ToolDefinition;
+     parse(args: unknown): Args | null;                // zod inside; null = invalid arguments
+     run(args: Args, context: ToolContext): Promise<ToolOutcome>;
+   }
+   type ToolContext = { conversationId: string; sessionId: string; now: Date };
+   type ToolOutcome = { resultForModel: string; event: ChatEvent | null };
+   ```
+2. Email drafts (`server/domain/chat.ts`):
+   ```ts
+   type EmailDraftStatus = "pending" | "sending" | "sent" | "failed" | "discarded" | "superseded";
+   type EmailDraft = { id: string; text: string; status: EmailDraftStatus; createdAt: string; sentAt: string | null };
+   ```
+   `Conversation.emailDrafts: EmailDraft[]` (older documents read as `[]`). `ConversationRepository` gains `addEmailDraft(conversationId, draft)`, which also marks older pending drafts `superseded`. 4.4 adds the send-side methods.
+3. `server/agent/email-draft-tool.ts`: `send_email`. The description tells the model:
+   - Use it only when the visitor asks to contact the owner or pass on a message.
+   - If the visitor has not given their name and a way to reply, ask for them first instead of calling the tool.
+   - Write the email in the first person on the visitor's behalf, and include their contact details.
+   - The visitor must press Send, so never say that the message was sent.
+
+   `parse` trims the text, strips control characters except newlines and tabs, and requires 1–2,000 characters. `run` stores a pending draft and returns `resultForModel: '{"status":"draft_shown"}'` and the event `{ type: "email_draft", draft: { id, text } }`. Invalid arguments give `resultForModel: '{"status":"invalid", ...}'` and no event.
+4. Scope: the rewriter gains `"contact"`, meaning the visitor wants to reach the owner or leave a message. It is added to `QueryScope`, the rewriter prompt and schema, the playground trace panel and the eval (a `contact` question counts as needing no chunks). `contact` skips retrieval like `smalltalk`, but gets its own prompt, `buildContactMessages`.
+5. `server/agent/answer-loop.ts` (pure, dependencies injected): `runAnswerLoop({ chat, request, tools, context })` yields `delta`, `reasoning` and tool `ChatEvent`s. It:
+   - streams round 1 with `tools` and `toolChoice: "auto"`;
+   - for each `tool_call`, finds the tool by name (an unknown name or a second call in the turn gets an error result), parses and runs it;
+   - streams round 2 with the assistant `toolCalls` and the `tool` messages, and `toolChoice: "none"`.
+
+   Round 2 runs only when round 1 called a tool. The answer's text is round 1's text plus round 2's text.
+6. `ChatService`: when `readEmailEnv()` is set, offer the tool for `cv`, `smalltalk` and `contact`, and use `runAnswerLoop` in `generate`. Otherwise keep the current single call. The answer prompt gains the tool rules, and `<pending_email_draft>` when the conversation has one. Citations still come from the final text only.
+7. Trace: a new `tool` stage per call. Input: name and raw arguments. Output: `{ outcome: "drafted" | "invalid" | "unknown_tool" | "ignored", draftId }`. Add it to `trace-stages.ts`, `readTrace` and a panel in `trace-stage-panel.tsx` (the "new traced stage" pattern in AGENTS.md). Phase 3's `ChatStepName` gains `"tool"`, with detail `{ kind: "tool"; name: string; outcome }`. It never includes the draft text.
+8. Tests with fakes: a contact turn yields `tool` steps, `email_draft`, then round-2 `delta`s and `done`; invalid arguments; an unknown tool; a second call ignored; tools not offered without email env; the draft stored and older ones superseded; the pending draft reaches the prompt; off-topic is unchanged.
+
+**Done when**
+- `curl -N` on `/api/public/chat` with "Please tell Lwin I'd like to talk. I'm Jane, jane@example.com" streams an `email_draft` event and an answer that asks the visitor to press Send, and no email is sent.
+
+## Phase 4.4: Send endpoint
+
+**Files:** `app/api/public/chat/email/route.ts`, `server/services/contact-email-service.ts` (+ test), `server/services/chat-runtime.ts`, `server/repositories/conversation-repository.ts`, `server/domain/chat.ts`, tests.
+
+**Steps**
+1. `ConversationRepository` gains:
+   - `claimEmailDraft(conversationId, sessionId, draftId, now)`: one atomic update from `pending` to `sending`. It matches only the session's conversation, the newest draft, and one younger than 1 hour. It returns the draft, or null.
+   - `markEmailDraft(conversationId, draftId, status: "sent" | "failed", sentAt)` and `discardEmailDraft(conversationId, sessionId, draftId)`.
+   - `countSentEmailsForSession(sessionId)` and `countSentEmailsSince(date)`.
+   - On read, a draft that has been `sending` for more than 2 minutes counts as `failed`, and `failEmailDraftsStuckSince(date)` writes that.
+2. `ContactEmailService.send({ sessionId, conversationId, draftId })` → `"sent" | "limit" | "not_found" | "expired" | "failed"`:
+   - Check the session and daily limits.
+   - Claim the draft, then send `{ to: CONTACT_EMAIL_TO, subject, text: draft text + footer }` through `EmailSender`, then mark it.
+   - A send error marks it `failed` and logs the message. The visitor gets only the code.
+
+   `discard(...)` → `"discarded" | "not_found"`.
+3. `POST /api/public/chat/email`: `withPublicSession`, zod body `{ conversationId: string, draftId: string, action: "send" | "discard" }`, answered with `publicJson`. Status codes: 200 `{ status }`, 429 `limit`, 404 `not_found`, 410 `expired`, 502 `failed`, 503 when email is not configured. `maxDuration = 30`.
+4. Tests: send success, both limits, a draft from another session, a superseded or expired draft, double Send (the second call gets `not_found` and only one send happens), a stuck `sending` draft is not resent, a provider failure, discard.
+
+**Done when**
+- A draft made in 4.3 is sent with `curl` and arrives in the owner's inbox. Pressing Send again sends nothing.
+
+## Phase 4.5: Draft card in the chat UI
+
+**Files:** `client/api/chat.ts`, `client/api/contact-email.ts` (new), `app/(public)/_components/chat/*`, tests.
+
+**Steps**
+1. `parseChatEvent` handles `email_draft` (hand-written guard, like the Phase 3 step guards). `client/api/contact-email.ts`: `sendContactEmail({ conversationId, draftId, action })` on a new `postPublicJson` in `public-http.ts` (the same `sessionFetch` as `postPublicStream`), mapping the status codes above.
+2. `AssistantEntry` gains `emailDraft: { id, text, state: "pending" | "sending" | "sent" | "failed" | "expired" | "discarded" | "superseded" | "limit" } | null`. A newer draft in the same conversation marks older pending cards `superseded` (shown as "Replaced by a newer draft").
+3. `chat-email-draft.tsx`: a card under the answer with the draft as plain text (`whitespace-pre-wrap`, never Markdown), "Send to <first name>" and "Discard" buttons, and the result line ("Sent. <first name> will reply to the address in your message.", "Could not send. Try again later.", "Limit reached for this session."). Send asks for no extra confirmation: the card is the confirmation. The buttons are disabled while sending. Focus moves to the result line when it appears.
+4. Storage: the draft and its state are saved with the entry in `sessionStorage`. A restored `pending` card is still sendable; the server decides if it expired.
+5. The Phase 3 step row for `tool` reads "Drafted an email" and expands to "Waiting for you to press Send", not the text.
+6. Tests: the guard, reducer states and supersede, storage round trip, the text helpers.
+
+**Done when**
+- In a browser, a visitor asks to contact the owner, sees the draft, presses Send, and the email arrives. Discard and a second Send do nothing. Checked at 375 px and keyboard only, or listed as not checked, as in 2.10.
+
+---
+
 ## 3. Owner checkpoints
 
 | After | Owner action |
@@ -945,10 +1332,19 @@ QUERY (per chat turn)
 | 2.3 | Inspect the chunks and contexts in `/admin/rag/[indexId]`. |
 | 2.8 | Write the 40 golden questions, run the eval, pick default presets. |
 | 2.10 | Test the chat end to end on a Vercel preview deployment. |
+| 3.1 | Confirm the Phase 3 fixed decisions, the `LLM_ANSWER_REASONING` level, and the fix for the utility model (if it is needed). |
+| 3.5 | Check the workflow panel on a phone and on desktop. |
+| 4.1 | Confirm the Phase 4 fixed decisions (draft-then-Send, limits, Gmail API over SMTP). |
+| 4.2 | Create a Google Cloud OAuth client (Desktop app) with the Gmail API enabled, set the app's publishing status to **In production**, run `scripts/gmail-refresh-token.ts`, put the values in `.env.local` and Vercel, then run `bun run email:test`. |
 
 ## 4. Known risks
 
 - **Structured-output support varies by provider.** `require_parameters: true` may leave no provider for a model; the error must say so clearly (1.2).
 - **Scanned PDFs.** The local `pdf-to-md` mode extracts embedded text and rejects image-only PDFs. Use an OCR mode when needed.
 - **Function duration on Vercel.** Extraction and index builds run in `after()`; if the plan limit is lower than needed, report it rather than splitting jobs.
+- **Visible reasoning (Phase 3).** Reasoning text is not filtered. It can paraphrase the system prompt or discuss the prompt-injection rules, even though the answer prompt says never to reveal them. The owner accepts this by keeping `LLM_ANSWER_REASONING` on; setting it to `off` removes the Thinking step. Reasoning also adds latency and output tokens to every answer.
+- **Public retrieval detail (Phase 3).** Visitors see chunk titles and scores. Everything comes from the public CV, but it shows how the retrieval works. Chunk text, context notes, errors and config stay admin-only.
+- **Gmail refresh token lifetime (Phase 4).** While the Google OAuth app is in *Testing* status, refresh tokens expire after 7 days and the email tool stops working. Set the app to *In production* (an unverified app is fine for the owner's own account; Google shows a warning on the consent screen). Changing the Google password or revoking access also revokes the token.
+- **Email abuse (Phase 4).** Anyone can draft and send up to the limits, and the text is visitor-written. The fixed recipient, the Send click, the per-session and daily caps, and the public-session gate bound it; spam can still reach the owner's inbox up to `CONTACT_EMAIL_DAILY_LIMIT` a day.
+- **Tool-calling reliability (Phase 4).** The free answer model lists `tools`, but it may call the tool too eagerly or not at all. 4.1 records how it behaves. Changing the model is the owner's decision.
 - **Public session gate.** The home page redirects cookie-less clients to session issuance; crawlers that drop cookies may not index the CV page. Out of scope; do not change it without asking.

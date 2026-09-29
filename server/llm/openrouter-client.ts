@@ -8,6 +8,8 @@ import {
   type ContentPart,
   type EmbeddingClient,
   type PdfEngine,
+  type ReasoningEffort,
+  type ReasoningSetting,
   type RerankClient,
   type RerankResult,
   type Usage,
@@ -75,6 +77,7 @@ type ChatBody = {
     id: "file-parser";
     pdf: { engine: Exclude<PdfEngine, "pdf-to-md"> };
   }>;
+  reasoning?: { effort: ReasoningEffort } | { enabled: false };
 };
 
 type OpenRouterPath = "/chat/completions" | "/embeddings" | "/rerank";
@@ -219,9 +222,15 @@ export class OpenRouterClient implements ChatClient, EmbeddingClient, RerankClie
       const chunk = interpretChunk(data);
       if (chunk.error) throw chunk.error;
       if (chunk.usage) usage = chunk.usage;
-      if (chunk.delta === null) continue;
-      onYield();
-      yield { type: "delta", text: chunk.delta };
+      // One chunk can carry both; the reasoning came first.
+      if (chunk.reasoning !== null) {
+        onYield();
+        yield { type: "reasoning", text: chunk.reasoning };
+      }
+      if (chunk.delta !== null) {
+        onYield();
+        yield { type: "delta", text: chunk.delta };
+      }
     }
 
     onYield();
@@ -309,7 +318,12 @@ function chatBody(request: ChatRequest, stream: boolean): ChatBody {
   if (request.pdfEngine && request.pdfEngine !== "pdf-to-md") {
     body.plugins = [{ id: "file-parser", pdf: { engine: request.pdfEngine } }];
   }
+  if (request.reasoning) body.reasoning = wireReasoning(request.reasoning);
   return body;
+}
+
+function wireReasoning(setting: ReasoningSetting): NonNullable<ChatBody["reasoning"]> {
+  return "effort" in setting ? { effort: setting.effort } : { enabled: false };
 }
 
 function mapMessage(message: ChatMessage): WireMessage {
@@ -418,6 +432,7 @@ function parseRerank(payload: unknown): RerankResult[] {
 }
 
 type StreamChunk = {
+  reasoning: string | null;
   delta: string | null;
   usage: Usage | null;
   error: LlmProviderError | null;
@@ -437,16 +452,22 @@ function interpretChunk(data: string): StreamChunk {
 
   const record = objectPayload(payload, "OpenRouter stream chunk was not an object");
   return {
-    delta: readDelta(record),
+    reasoning: readDeltaText(record, "reasoning"),
+    delta: readDeltaText(record, "content"),
     usage: readUsage(record),
     error: readStreamError(record),
   };
 }
 
-function readDelta(payload: Record<string, unknown>): string | null {
+// Empty strings are skipped; providers send them alongside finish_reason and usage.
+function readDeltaText(
+  payload: Record<string, unknown>,
+  field: "content" | "reasoning",
+): string | null {
   const choice = firstChoice(payload);
-  if (!choice || !isRecord(choice.delta) || typeof choice.delta.content !== "string") return null;
-  return choice.delta.content.length === 0 ? null : choice.delta.content;
+  if (!choice || !isRecord(choice.delta)) return null;
+  const text = choice.delta[field];
+  return typeof text === "string" && text.length > 0 ? text : null;
 }
 
 function readStreamError(payload: Record<string, unknown>): LlmProviderError | null {

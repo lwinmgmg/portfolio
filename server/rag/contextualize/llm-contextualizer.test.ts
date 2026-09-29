@@ -51,6 +51,7 @@ test("each chunk is sent with the cacheable document and the situating instructi
   expect(request?.model).toBe("utility-model");
   expect(request?.temperature).toBe(0);
   expect(request?.maxTokens).toBe(150);
+  expect(request?.reasoning).toEqual({ enabled: false });
   expect(request?.signal instanceof AbortSignal).toBe(true);
   expect(request?.messages.length).toBe(1);
   expect(request?.messages[0]?.role).toBe("user");

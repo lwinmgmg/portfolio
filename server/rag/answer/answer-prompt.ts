@@ -1,5 +1,5 @@
 import type { ChatTurn } from "@/server/domain/chat";
-import type { ChatMessage } from "@/server/domain/llm";
+import type { ChatMessage, ReasoningLevel, ReasoningSetting } from "@/server/domain/llm";
 import type { RetrievedChunk } from "@/server/domain/rag";
 import { stripCitations } from "@/server/rag/answer/citations";
 
@@ -9,6 +9,19 @@ export const ANSWER_HISTORY_TURNS = 6;
 // Settings for every answer-model call.
 export const ANSWER_MAX_TOKENS = 600;
 export const ANSWER_TEMPERATURE = 0.2;
+// OpenRouter's max_tokens includes reasoning tokens, so reasoning gets its own room on top of
+// the answer's. The answer model used 270–365 reasoning tokens at every effort in Phase 3.1.
+export const ANSWER_REASONING_TOKENS = 1_000;
+
+export type AnswerGenerationSettings = {
+  reasoning: ReasoningSetting;
+  maxTokens: number;
+};
+
+export function answerGenerationSettings(level: ReasoningLevel): AnswerGenerationSettings {
+  if (level === "off") return { reasoning: { enabled: false }, maxTokens: ANSWER_MAX_TOKENS };
+  return { reasoning: { effort: level }, maxTokens: ANSWER_MAX_TOKENS + ANSWER_REASONING_TOKENS };
+}
 
 export type AnswerSource = Pick<RetrievedChunk, "sourceId" | "section" | "title" | "indexText">;
 

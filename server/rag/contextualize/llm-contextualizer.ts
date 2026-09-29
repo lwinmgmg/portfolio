@@ -57,6 +57,8 @@ export class LlmContextualizer implements Contextualizer {
         messages: buildContextMessages(markdown, text),
         temperature: 0,
         maxTokens: CONTEXT_MAX_TOKENS,
+        // A reasoning model otherwise spends the whole 150 tokens thinking and returns blank text.
+        reasoning: { enabled: false },
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const context = result.text.trim();

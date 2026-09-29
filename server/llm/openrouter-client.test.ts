@@ -477,6 +477,101 @@ test("retries a stream when the failure happens before any delta", async () => {
   expect(delays).toEqual([500]);
 });
 
+test("maps each reasoning setting to the body and omits the key when unset", async () => {
+  const cases: Array<{ reasoning: ChatRequest["reasoning"]; expected: unknown }> = [
+    { reasoning: { effort: "low" }, expected: { effort: "low" } },
+    { reasoning: { effort: "medium" }, expected: { effort: "medium" } },
+    { reasoning: { effort: "high" }, expected: { effort: "high" } },
+    { reasoning: { enabled: false }, expected: { enabled: false } },
+  ];
+
+  for (const item of cases) {
+    const { fetch, requests } = createFetch([jsonResult(200, completion("ok"))]);
+    const { client } = createClient(fetch);
+    await client.complete(chatRequest({ reasoning: item.reasoning }));
+    expect(requireRequest(requests).body).toEqual({
+      model: "requested/model",
+      messages: [{ role: "user", content: "Hi" }],
+      reasoning: item.expected,
+    });
+  }
+
+  const { fetch, requests } = createFetch([jsonResult(200, completion("ok"))]);
+  const { client } = createClient(fetch);
+  await client.complete(chatRequest());
+  expect(Object.keys(requireRequest(requests).body as object)).not.toContain("reasoning");
+});
+
+test("streams reasoning and content deltas in order and skips empty reasoning", async () => {
+  const { fetch, requests } = createFetch([
+    sseResult([
+      event({ choices: [{ delta: { role: "assistant", content: "", reasoning: "Let me " } }] }),
+      event({ choices: [{ delta: { content: null, reasoning: "check." } }] }),
+      event({ choices: [{ delta: { reasoning: "" } }] }),
+      event({ choices: [{ delta: { reasoning: " Done.", content: "Jane" } }] }),
+      event({ choices: [{ delta: { content: " leads" } }] }),
+      event({ choices: [{ delta: { reasoning: "late", content: "" } }] }),
+      event({
+        choices: [{ delta: { content: "" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 5, completion_tokens: 9 },
+      }),
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events, error } = await collectStream(
+    client,
+    chatRequest({ reasoning: { effort: "low" } }),
+  );
+
+  expect(error).toBeNull();
+  expect(requireRequest(requests).body).toEqual({
+    model: "requested/model",
+    messages: [{ role: "user", content: "Hi" }],
+    stream: true,
+    reasoning: { effort: "low" },
+  });
+  expect(events).toEqual([
+    { type: "reasoning", text: "Let me " },
+    { type: "reasoning", text: "check." },
+    { type: "reasoning", text: " Done." },
+    { type: "delta", text: "Jane" },
+    { type: "delta", text: " leads" },
+    { type: "reasoning", text: "late" },
+    { type: "done", usage: { promptTokens: 5, completionTokens: 9, cost: null } },
+  ]);
+});
+
+test("does not retry a stream after reasoning was yielded", async () => {
+  const { fetch, requests } = createFetch([
+    failingStream([event({ choices: [{ delta: { reasoning: "Hmm" } }] })], "socket hang up"),
+    sseResult([event({ choices: [{ delta: { content: "Again" } }] }), "data: [DONE]\n\n"]),
+  ]);
+  const { client, delays } = createClient(fetch);
+
+  const { events, error } = await collectStream(client, chatRequest());
+
+  expect(events).toEqual([{ type: "reasoning", text: "Hmm" }]);
+  expect(error?.message).toBe("socket hang up");
+  expect(requests.length).toBe(1);
+  expect(delays).toEqual([]);
+});
+
+test("complete returns only the content and ignores reasoning", async () => {
+  const { fetch } = createFetch([
+    jsonResult(200, {
+      model: "served/model",
+      choices: [{ message: { role: "assistant", content: "Answer", reasoning: "Thinking..." } }],
+    }),
+  ]);
+  const { client } = createClient(fetch);
+
+  const result = await client.complete(chatRequest({ reasoning: { effort: "low" } }));
+
+  expect(result.text).toBe("Answer");
+});
+
 test("orders embedding vectors by index", async () => {
   const { fetch, requests } = createFetch([
     jsonResult(200, {

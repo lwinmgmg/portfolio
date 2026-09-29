@@ -14,6 +14,7 @@ import type {
   ChatRequest,
   ChatResult,
   ChatStreamEvent,
+  ReasoningLevel,
   Usage,
 } from "@/server/domain/llm";
 import {
@@ -89,6 +90,8 @@ class MemoryConversations implements ConversationRepository {
 }
 
 type ScriptedAnswer = {
+  // Yielded as reasoning events before the deltas.
+  reasoning?: string[];
   deltas: string[];
   usage?: Usage | null;
   // Throws this error before yielding the delta at `failAt`.
@@ -108,6 +111,7 @@ class FakeChat implements ChatClient {
 
   async *stream(request: ChatRequest): AsyncIterable<ChatStreamEvent> {
     this.requests.push(request);
+    for (const text of this.script.reasoning ?? []) yield { type: "reasoning", text };
     for (const [index, text] of this.script.deltas.entries()) {
       if (request.signal?.aborted) throw new Error("OpenRouter request was aborted");
       if (this.script.failAt === index) throw new Error("provider exploded");
@@ -166,6 +170,7 @@ type SetupOptions = {
   activeIndex?: RagIndex | null;
   published?: CvVersion | null;
   dailyMessageLimit?: number;
+  answerReasoning?: ReasoningLevel;
 };
 
 function setup(options: SetupOptions = {}) {
@@ -213,6 +218,7 @@ function setup(options: SetupOptions = {}) {
     },
     chat,
     answerModel: "answer-model",
+    answerReasoning: options.answerReasoning ?? "low",
     dailyMessageLimit: options.dailyMessageLimit ?? 500,
     now: () => now,
     // Each reading advances 5 ms.
@@ -312,11 +318,34 @@ test("the answer model gets the answer settings and the sources in the final tur
 
   const [request] = chat.requests;
   expect(request?.model).toBe("answer-model");
-  expect(request?.maxTokens).toBe(600);
+  expect(request?.reasoning).toEqual({ effort: "low" });
+  expect(request?.maxTokens).toBe(1600);
   expect(request?.temperature).toBe(0.2);
   expect(request?.messages.map((message) => message.role)).toEqual(["system", "user"]);
   expect(messageText(request, 1)).toContain('<source id="S1" section="experience"');
   expect(messageText(request, 1)).toContain("<question>Where did she work?</question>");
+});
+
+test("answer reasoning off disables reasoning and keeps the answer budget", async () => {
+  const { service, chat } = setup({ answerReasoning: "off" });
+
+  await collect(service.reply(ask));
+
+  expect(chat.requests[0]?.reasoning).toEqual({ enabled: false });
+  expect(chat.requests[0]?.maxTokens).toBe(600);
+});
+
+test("reasoning from the answer model is not part of the answer", async () => {
+  const { service, conversations } = setup({
+    answer: { reasoning: ["Sources say Acme."], deltas: ["She worked at Acme [S1]."] },
+  });
+
+  const events = await collect(service.reply(ask));
+
+  expect(events.filter((event) => event.type === "delta")).toEqual([
+    { type: "delta", text: "She worked at Acme [S1]." },
+  ]);
+  expect(conversations.rows[0]?.messages[1]?.text).toBe("She worked at Acme [S1].");
 });
 
 test("the turn is stored with cited entity keys and the trace id", async () => {

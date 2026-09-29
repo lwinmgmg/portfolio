@@ -10,7 +10,7 @@ import {
   type StoredMessage,
 } from "@/server/domain/chat";
 import type { CvVersionRepository } from "@/server/domain/cv";
-import type { ChatClient, ChatMessage, Usage } from "@/server/domain/llm";
+import type { ChatClient, ChatMessage, ReasoningLevel, Usage } from "@/server/domain/llm";
 import {
   RagError,
   RetrievalError,
@@ -23,8 +23,8 @@ import {
 } from "@/server/domain/rag";
 import {
   ANSWER_HISTORY_TURNS,
-  ANSWER_MAX_TOKENS,
   ANSWER_TEMPERATURE,
+  answerGenerationSettings,
   buildAnswerMessages,
   buildSmalltalkMessages,
   offTopicReply,
@@ -60,6 +60,8 @@ export type ChatServiceDeps = {
   traces: Pick<RagTraceRepository, "save">;
   chat: ChatClient;
   answerModel: string;
+  // LLM_ANSWER_REASONING.
+  answerReasoning: ReasoningLevel;
   // User messages across all sessions per UTC day.
   dailyMessageLimit: number;
   now?: () => Date;
@@ -219,7 +221,7 @@ export class ChatService {
         const stream = this.deps.chat.stream({
           model: this.deps.answerModel,
           messages,
-          maxTokens: ANSWER_MAX_TOKENS,
+          ...answerGenerationSettings(this.deps.answerReasoning),
           temperature: ANSWER_TEMPERATURE,
           signal: turn.signal,
         });
@@ -228,6 +230,8 @@ export class ChatService {
             usage = event.usage;
             continue;
           }
+          // Phase 3.3 streams reasoning to the visitor; until then it is not part of the answer.
+          if (event.type === "reasoning") continue;
           text += event.text;
           yield { type: "delta", text: event.text };
         }
