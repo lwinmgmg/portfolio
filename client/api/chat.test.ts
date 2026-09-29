@@ -45,8 +45,22 @@ const REQUEST = { conversationId: null, message: "Where does Jane work?" };
 
 test("streams the events in order and reports a complete answer", async () => {
   const events: ChatEvent[] = [];
+  const running = { startedAt: 0, durationMs: null, detail: null, status: "running" };
   const stream = [
     { type: "meta", conversationId: "c1" },
+    { type: "step", step: { ...running, name: "rewrite" } },
+    {
+      type: "step",
+      step: {
+        name: "rewrite",
+        status: "done",
+        startedAt: 0,
+        durationMs: 800,
+        detail: { kind: "rewrite", queries: ["Jane employer"], scope: "cv", fallback: false },
+      },
+    },
+    { type: "step", step: { ...running, name: "reasoning", startedAt: 900 } },
+    { type: "reasoning", text: "The CV says Acme." },
     { type: "delta", text: "At Acme [S1]." },
     { type: "sources", sources: [SOURCE] },
     { type: "done" },

@@ -3,10 +3,17 @@ import { expect, test } from "bun:test";
 import {
   chatReducer,
   INITIAL_CHAT_STATE,
+  type AssistantEntry,
   type ChatAction,
   type ChatState,
 } from "@/app/(public)/_components/chat/chat-state";
-import type { ChatEvent, ChatSource } from "@/server/domain/chat";
+import type {
+  ChatEvent,
+  ChatSource,
+  ChatStep,
+  ChatStepDetail,
+  ChatStepName,
+} from "@/server/domain/chat";
 
 const SOURCE: ChatSource = {
   sourceId: "S1",
@@ -45,9 +52,177 @@ test("a streamed answer collects deltas and sources, then settles", () => {
     notice: null,
     entries: [
       { id: "u1", role: "user", text: "Where?" },
-      { id: "a1", role: "assistant", text: "At Acme [S1].", sources: [SOURCE], status: "done" },
+      {
+        id: "a1",
+        role: "assistant",
+        text: "At Acme [S1].",
+        sources: [SOURCE],
+        status: "done",
+        steps: [],
+        reasoning: "",
+      },
     ],
   });
+});
+
+function running(name: ChatStepName, startedAt = 0): ChatAction {
+  const step: ChatStep = { name, status: "running", startedAt, durationMs: null, detail: null };
+  return event({ type: "step", step });
+}
+
+function finished(name: ChatStepName, status: "done" | "failed" = "done", startedAt = 0): ChatStep {
+  const detail = status === "done" ? DETAILS[name] ?? null : null;
+  return { name, status, startedAt, durationMs: 10, detail };
+}
+
+function ended(name: ChatStepName, status: "done" | "failed" = "done", startedAt = 0): ChatAction {
+  return event({ type: "step", step: finished(name, status, startedAt) });
+}
+
+const DETAILS: Partial<Record<ChatStepName, ChatStepDetail>> = {
+  rewrite: { kind: "rewrite", queries: ["Jane employer"], scope: "cv", fallback: false },
+  "embed-queries": { kind: "embed", count: 1, dimensions: 8 },
+  reasoning: { kind: "reasoning" },
+  generate: { kind: "generate", sources: 1 },
+};
+
+function pending(state: ChatState): AssistantEntry {
+  const last = state.entries.at(-1);
+  if (last?.role !== "assistant") throw new Error("no answer entry");
+  return last;
+}
+
+test("a full turn keeps its steps in start order and its reasoning", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    send("Where?"),
+    event({ type: "meta", conversationId: "c1" }),
+    running("rewrite"),
+    ended("rewrite"),
+    running("embed-queries", 10),
+    ended("embed-queries", "done", 10),
+    running("reasoning", 20),
+    event({ type: "reasoning", text: "The CV " }),
+    event({ type: "reasoning", text: "says Acme." }),
+    ended("reasoning", "done", 20),
+    running("generate", 30),
+    event({ type: "delta", text: "At Acme [S1]." }),
+    ended("generate", "done", 30),
+    event({ type: "sources", sources: [SOURCE] }),
+    event({ type: "done" }),
+    { type: "end", outcome: "complete" },
+  );
+  expect(pending(state)).toMatchObject({ status: "done", reasoning: "The CV says Acme." });
+  expect(pending(state).steps).toEqual([
+    finished("rewrite"),
+    finished("embed-queries", "done", 10),
+    finished("reasoning", "done", 20),
+    finished("generate", "done", 30),
+  ]);
+});
+
+test("a finished step replaces its running one in place", () => {
+  const state = run(INITIAL_CHAT_STATE, send("Hi"), running("rewrite"), running("embed-queries"));
+  const rewritten = run(state, ended("rewrite"));
+  expect(pending(rewritten).steps.map((step) => `${step.name}:${step.status}`)).toEqual([
+    "rewrite:done",
+    "embed-queries:running",
+  ]);
+});
+
+test("a late running event never replaces a finished step", () => {
+  const state = run(INITIAL_CHAT_STATE, send("Hi"), running("rewrite"), ended("rewrite"));
+  expect(run(state, running("rewrite"))).toEqual(state);
+  const again = run(state, running("rewrite"), running("rewrite"));
+  expect(pending(again).steps).toEqual([finished("rewrite")]);
+});
+
+test("a finished step with no running one before it is added", () => {
+  const state = run(INITIAL_CHAT_STATE, send("Hi"), ended("rewrite"), ended("generate", "failed"));
+  expect(pending(state).steps).toEqual([finished("rewrite"), finished("generate", "failed")]);
+});
+
+test("stopping marks running steps stopped and keeps finished ones", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    send("Hi"),
+    running("rewrite"),
+    ended("rewrite"),
+    running("reasoning", 5),
+    event({ type: "reasoning", text: "Thinking" }),
+    { type: "end", outcome: "stopped" },
+  );
+  expect(state.notice).toBeNull();
+  expect(pending(state)).toMatchObject({ status: "stopped", text: "", reasoning: "Thinking" });
+  expect(pending(state).steps.map((step) => `${step.name}:${step.status}`)).toEqual([
+    "rewrite:done",
+    "reasoning:stopped",
+  ]);
+  expect(pending(state).steps[1]).toMatchObject({ startedAt: 5, durationMs: null, detail: null });
+});
+
+test("an interrupted stream keeps the steps it got, marked stopped", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    send("Hi"),
+    running("rewrite"),
+    ended("rewrite"),
+    running("embed-queries"),
+    { type: "end", outcome: "interrupted" },
+  );
+  expect(state.notice).toBe("interrupted");
+  expect(pending(state)).toMatchObject({ status: "interrupted", text: "" });
+  expect(pending(state).steps.map((step) => step.status)).toEqual(["done", "stopped"]);
+});
+
+test("an error keeps a failed turn with no text, so it shows where it failed", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    send("Hi"),
+    running("rewrite"),
+    ended("rewrite"),
+    running("embed-queries"),
+    ended("embed-queries", "failed"),
+    event({ type: "error", code: "unavailable" }),
+    { type: "end", outcome: "complete" },
+  );
+  expect(state.streaming).toBe(false);
+  expect(state.notice).toBe("unavailable");
+  expect(pending(state)).toMatchObject({ status: "interrupted", text: "" });
+  expect(pending(state).steps).toEqual([finished("rewrite"), finished("embed-queries", "failed")]);
+});
+
+test("an error while a step runs marks that step stopped", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    send("Hi"),
+    running("generate"),
+    event({ type: "delta", text: "Ja" }),
+    event({ type: "error", code: "unavailable" }),
+  );
+  expect(pending(state).steps.map((step) => step.status)).toEqual(["stopped"]);
+});
+
+test("a stream that completes with a step still running marks it stopped", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    send("Hi"),
+    running("rewrite"),
+    ended("rewrite"),
+    running("generate"),
+    event({ type: "delta", text: "Hello." }),
+    event({ type: "done" }),
+  );
+  expect(pending(state).status).toBe("done");
+  expect(pending(state).steps.map((step) => step.status)).toEqual(["done", "stopped"]);
+});
+
+test("steps and reasoning outside a stream are ignored", () => {
+  const settled = run(INITIAL_CHAT_STATE, send("Hi"), event({ type: "done" }), {
+    type: "end",
+    outcome: "complete",
+  });
+  expect(run(settled, running("rewrite"), event({ type: "reasoning", text: "x" }))).toBe(settled);
 });
 
 test("sending is ignored while an answer streams", () => {

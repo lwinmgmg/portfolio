@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 
-import type { ChatEntry } from "@/app/(public)/_components/chat/chat-state";
+import type {
+  AssistantEntry,
+  ChatEntry,
+  UserEntry,
+} from "@/app/(public)/_components/chat/chat-state";
 import {
   CONVERSATION_ID_KEY,
   MESSAGES_KEY,
@@ -21,24 +25,63 @@ class MemoryStorage {
   }
 }
 
+const QUESTION: UserEntry = { id: "u1", role: "user", text: "Where?" };
+
+const ANSWER: AssistantEntry = {
+  id: "a1",
+  role: "assistant",
+  text: "At Acme [S1].",
+  sources: [
+    {
+      sourceId: "S1",
+      entityKeys: ["experience:acme"],
+      title: "Engineer",
+      section: "experience",
+      anchor: "#experience-acme",
+    },
+  ],
+  status: "done",
+  steps: [
+    {
+      name: "rewrite",
+      status: "done",
+      startedAt: 0,
+      durationMs: 800,
+      detail: { kind: "rewrite", queries: ["Jane employer"], scope: "cv", fallback: false },
+    },
+    { name: "rerank", status: "failed", startedAt: 800, durationMs: 20, detail: null },
+  ],
+  reasoning: "The CV says Acme.",
+};
+
+// Stopped while reasoning: no text, and the running step marked stopped.
+const STOPPED: AssistantEntry = {
+  id: "a2",
+  role: "assistant",
+  text: "",
+  sources: null,
+  status: "stopped",
+  steps: [{ name: "reasoning", status: "stopped", startedAt: 5, durationMs: null, detail: null }],
+  reasoning: "Looking",
+};
+
 const ENTRIES: ChatEntry[] = [
-  { id: "u1", role: "user", text: "Where?" },
-  {
-    id: "a1",
-    role: "assistant",
-    text: "At Acme [S1].",
-    sources: [
-      {
-        sourceId: "S1",
-        entityKeys: ["experience:acme"],
-        title: "Engineer",
-        section: "experience",
-        anchor: "#experience-acme",
-      },
-    ],
-    status: "done",
-  },
+  QUESTION,
+  ANSWER,
+  { id: "u2", role: "user", text: "And before?" },
+  STOPPED,
 ];
+
+function storedAnswer(storage: MemoryStorage): unknown {
+  const stored: unknown = JSON.parse(storage.getItem(MESSAGES_KEY) ?? "[]");
+  return Array.isArray(stored) ? stored[1] : undefined;
+}
+
+// Stores QUESTION and ANSWER, with `fields` replacing (or, when undefined, removing) the answer's.
+function storedWith(storage: MemoryStorage, fields: Record<string, unknown>): void {
+  storage.setItem(CONVERSATION_ID_KEY, "c1");
+  storage.setItem(MESSAGES_KEY, JSON.stringify([QUESTION, { ...ANSWER, ...fields }]));
+}
 
 test("round-trips a conversation and clears it", () => {
   const storage = new MemoryStorage();
@@ -58,6 +101,58 @@ test("keeps the conversation id but drops a malformed transcript", () => {
     storage.setItem(MESSAGES_KEY, raw);
     expect(readStoredChat(storage)).toEqual({ conversationId: "c1", entries: [] });
   }
+  for (const fields of [{ steps: "rewrite" }, { reasoning: 42 }]) {
+    storedWith(storage, fields);
+    expect(readStoredChat(storage)).toEqual({ conversationId: "c1", entries: [] });
+  }
+});
+
+test("caps stored reasoning at 8,000 characters", () => {
+  const storage = new MemoryStorage();
+  const long: AssistantEntry = { ...ANSWER, reasoning: "r".repeat(9_000) };
+  writeStoredChat(storage, { conversationId: "c1", entries: [QUESTION, long] });
+  expect(storedAnswer(storage)).toMatchObject({ reasoning: "r".repeat(8_000) });
+  expect(readStoredChat(storage).entries).toEqual([
+    QUESTION,
+    { ...long, reasoning: "r".repeat(8_000) },
+  ]);
+
+  // A longer value written by anything else is cut on read too.
+  storedWith(storage, { reasoning: "r".repeat(8_001) });
+  expect(readStoredChat(storage).entries[1]).toMatchObject({ reasoning: "r".repeat(8_000) });
+});
+
+test("an entry stored before steps existed loads with none", () => {
+  const storage = new MemoryStorage();
+  storedWith(storage, { steps: undefined, reasoning: undefined });
+  expect(storedAnswer(storage)).not.toHaveProperty("steps");
+  expect(readStoredChat(storage).entries).toEqual([
+    QUESTION,
+    { ...ANSWER, steps: [], reasoning: "" },
+  ]);
+});
+
+test("a stored step this client cannot read is skipped, and a bad detail is dropped", () => {
+  const storage = new MemoryStorage();
+  const kept = { name: "rewrite", status: "done", startedAt: 0, durationMs: 1, detail: null };
+  const badAnchor = {
+    name: "filter",
+    status: "done",
+    startedAt: 1,
+    durationMs: 1,
+    detail: {
+      kind: "filter",
+      minScore: 0.2,
+      kept: 1,
+      dropped: [{ rank: 1, score: 0.1, title: "x", section: "s", anchor: "javascript:x" }],
+    },
+  };
+  storedWith(storage, {
+    steps: [kept, { ...kept, name: "plan" }, { ...kept, status: "queued" }, badAnchor],
+  });
+  expect(readStoredChat(storage).entries[1]).toMatchObject({
+    steps: [kept, { ...badAnchor, detail: null }],
+  });
 });
 
 test("works without storage, or when it throws", () => {

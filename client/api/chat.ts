@@ -1,5 +1,6 @@
 "use client";
 
+import { isCvAnchor, isRecord, parseChatStep } from "@/client/api/chat-steps";
 import { readNdjson } from "@/client/api/ndjson";
 import { errorKindFor, postPublicStream, PublicApiError } from "@/client/api/public-http";
 import type {
@@ -61,6 +62,12 @@ export function parseChatEvent(value: unknown): ChatEvent | null {
       return typeof value.conversationId === "string"
         ? { type: "meta", conversationId: value.conversationId }
         : null;
+    case "step": {
+      const step = parseChatStep(value.step);
+      return step ? { type: "step", step } : null;
+    }
+    case "reasoning":
+      return typeof value.text === "string" ? { type: "reasoning", text: value.text } : null;
     case "delta":
       return typeof value.text === "string" ? { type: "delta", text: value.text } : null;
     case "sources":
@@ -90,11 +97,6 @@ export function isChatSource(value: unknown): value is ChatSource {
     value.entityKeys.every((key) => typeof key === "string") &&
     typeof value.title === "string" &&
     typeof value.section === "string" &&
-    // Anchors become hrefs, so only same-page fragments are accepted.
-    (value.anchor === null || (typeof value.anchor === "string" && value.anchor.startsWith("#")))
+    (value.anchor === null || isCvAnchor(value.anchor))
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

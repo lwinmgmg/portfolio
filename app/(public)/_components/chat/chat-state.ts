@@ -1,4 +1,5 @@
 import type { ChatStreamEnd } from "@/client/api/chat";
+import { CHAT_STEP_STATUSES } from "@/client/api/chat-steps";
 import {
   CHAT_MESSAGE_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
@@ -6,11 +7,23 @@ import {
   type ChatEvent,
   type ChatLimitCode,
   type ChatSource,
+  type ChatStep,
+  type ChatStepStatus,
 } from "@/server/domain/chat";
 
 export type UserEntry = { id: string; role: "user"; text: string };
 
 export type AssistantStatus = "streaming" | "done" | "stopped" | "interrupted";
+
+// `stopped`: the step was still running when its answer ended. Only the client sets it.
+export type AnswerStepStatus = ChatStepStatus | "stopped";
+
+export const ANSWER_STEP_STATUSES: readonly AnswerStepStatus[] = [
+  ...CHAT_STEP_STATUSES,
+  "stopped",
+];
+
+export type AnswerStep = Omit<ChatStep, "status"> & { status: AnswerStepStatus };
 
 export type AssistantEntry = {
   id: string;
@@ -19,6 +32,10 @@ export type AssistantEntry = {
   // Null until the `sources` event arrives.
   sources: ChatSource[] | null;
   status: AssistantStatus;
+  // The work behind the answer, one per step name, in the order the steps started.
+  steps: AnswerStep[];
+  // The answer model's reasoning, streamed before the text.
+  reasoning: string;
 };
 
 export type ChatEntry = UserEntry | AssistantEntry;
@@ -74,7 +91,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         entries: [
           ...state.entries,
           { id: action.userId, role: "user", text: action.text },
-          { id: action.assistantId, role: "assistant", text: "", sources: null, status: "streaming" },
+          {
+            id: action.assistantId,
+            role: "assistant",
+            text: "",
+            sources: null,
+            status: "streaming",
+            steps: [],
+            reasoning: "",
+          },
         ],
       };
     case "event":
@@ -99,15 +124,21 @@ function applyEvent(state: ChatState, event: ChatEvent): ChatState {
         ? { ...state, conversationId: event.conversationId }
         : { ...state, conversationId: event.conversationId, entries: state.entries.slice(-2) };
     case "step":
+      return updatePending(state, (entry) => ({
+        ...entry,
+        steps: upsertStep(entry.steps, event.step),
+      }));
     case "reasoning":
-      // Not shown yet: Phase 3.4 keeps these on the entry.
-      return state;
+      return updatePending(state, (entry) => ({
+        ...entry,
+        reasoning: entry.reasoning + event.text,
+      }));
     case "delta":
       return updatePending(state, (entry) => ({ ...entry, text: entry.text + event.text }));
     case "sources":
       return updatePending(state, (entry) => ({ ...entry, sources: event.sources }));
     case "done":
-      return updatePending(state, (entry) => ({ ...entry, status: "done" }));
+      return updatePending(state, (entry) => settle(entry, "done"));
     case "error":
     case "limit":
       return settlePending({ ...state, notice: event.code });
@@ -117,13 +148,34 @@ function applyEvent(state: ChatState, event: ChatEvent): ChatState {
 function endStream(state: ChatState, outcome: ChatStreamEnd): ChatState {
   switch (outcome) {
     case "complete":
-      return updatePending(state, (entry) => ({ ...entry, status: "done" }));
+      return updatePending(state, (entry) => settle(entry, "done"));
     case "stopped":
       // Kept even when empty, so the visitor sees the answer was stopped.
-      return updatePending(state, (entry) => ({ ...entry, status: "stopped" }));
+      return updatePending(state, (entry) => settle(entry, "stopped"));
     case "interrupted":
       return settlePending({ ...state, notice: state.notice ?? "interrupted" });
   }
+}
+
+// Adds a step, or replaces the one of its name. A running event never replaces a step that
+// is already known, so a late `running` cannot undo a finished step.
+function upsertStep(steps: AnswerStep[], step: ChatStep): AnswerStep[] {
+  const index = steps.findIndex((known) => known.name === step.name);
+  if (index === -1) return [...steps, step];
+  if (step.status === "running") return steps;
+  return steps.map((known, i) => (i === index ? step : known));
+}
+
+// Ends an answer. The server sends no end for a step that was running when the stream
+// stopped, so the client marks it stopped.
+function settle(
+  entry: AssistantEntry,
+  status: Exclude<AssistantStatus, "streaming">,
+): AssistantEntry {
+  const steps = entry.steps.map((step): AnswerStep =>
+    step.status === "running" ? { ...step, status: "stopped" } : step,
+  );
+  return { ...entry, status, steps };
 }
 
 // The answer being streamed, if any: always the last entry.
@@ -136,10 +188,13 @@ function updatePending(
   return { ...state, entries: [...state.entries.slice(0, -1), update(last)] };
 }
 
-// Ends an answer that will get no more text: dropped when it has none, marked cut off otherwise.
+// Ends an answer that will get no more text: dropped when it has neither text nor steps,
+// marked cut off otherwise, so a failed turn still shows the step it failed at.
 function settlePending(state: ChatState): ChatState {
   const last = state.entries.at(-1);
   if (!last || last.role !== "assistant" || last.status !== "streaming") return state;
-  if (!last.text) return { ...state, entries: state.entries.slice(0, -1) };
-  return updatePending(state, (entry) => ({ ...entry, status: "interrupted" }));
+  if (!last.text && last.steps.length === 0) {
+    return { ...state, entries: state.entries.slice(0, -1) };
+  }
+  return updatePending(state, (entry) => settle(entry, "interrupted"));
 }

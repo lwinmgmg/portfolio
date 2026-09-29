@@ -1,8 +1,11 @@
 import { isChatSource } from "@/client/api/chat";
-import type {
-  AssistantStatus,
-  ChatEntry,
+import { isRecord, readChatStep } from "@/client/api/chat-steps";
+import {
+  ANSWER_STEP_STATUSES,
+  type AssistantStatus,
+  type ChatEntry,
 } from "@/app/(public)/_components/chat/chat-state";
+import { CHAT_REASONING_MAX_CHARS } from "@/server/domain/chat";
 
 // Per tab, so a reload continues the conversation and a new tab starts fresh.
 export const CONVERSATION_ID_KEY = "cv-chat:conversationId";
@@ -29,10 +32,11 @@ export function browserSessionStorage(): Storage | null {
 export function readStoredChat(storage: ReadableStorage | null): StoredChat {
   const conversationId = guarded(() => storage?.getItem(CONVERSATION_ID_KEY) || null, null);
   if (!conversationId) return { conversationId: null, entries: [] };
-  const entries = guarded((): unknown => JSON.parse(storage?.getItem(MESSAGES_KEY) ?? "[]"), []);
+  const stored = guarded((): unknown => JSON.parse(storage?.getItem(MESSAGES_KEY) ?? "[]"), []);
+  const entries = Array.isArray(stored) ? stored.map(readStoredEntry) : [];
   return {
     conversationId,
-    entries: Array.isArray(entries) && entries.every(isStoredEntry) ? entries : [],
+    entries: entries.every((entry) => entry !== null) ? entries : [],
   };
 }
 
@@ -54,20 +58,38 @@ export function writeStoredChat(storage: WritableStorage | null, chat: StoredCha
       return;
     }
     storage.setItem(CONVERSATION_ID_KEY, chat.conversationId);
-    storage.setItem(MESSAGES_KEY, JSON.stringify(chat.entries));
+    storage.setItem(MESSAGES_KEY, JSON.stringify(chat.entries.map(capReasoning)));
   } catch {
     // Quota or blocked storage: the conversation still works for this page view.
   }
 }
 
-function isStoredEntry(value: unknown): value is ChatEntry {
-  if (typeof value !== "object" || value === null) return false;
-  const entry = value as Record<string, unknown>;
-  if (typeof entry.id !== "string" || typeof entry.text !== "string") return false;
-  if (entry.role === "user") return true;
-  return (
-    entry.role === "assistant" &&
-    SETTLED.some((status) => status === entry.status) &&
-    (entry.sources === null || (Array.isArray(entry.sources) && entry.sources.every(isChatSource)))
-  );
+function capReasoning(entry: ChatEntry): ChatEntry {
+  if (entry.role === "user" || entry.reasoning.length <= CHAT_REASONING_MAX_CHARS) return entry;
+  return { ...entry, reasoning: entry.reasoning.slice(0, CHAT_REASONING_MAX_CHARS) };
+}
+
+// Null for an entry that cannot be shown. Entries stored before steps existed have no `steps`
+// or `reasoning` and load with none; a step this client cannot read is skipped.
+function readStoredEntry(value: unknown): ChatEntry | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.text !== "string") {
+    return null;
+  }
+  if (value.role === "user") return { id: value.id, role: "user", text: value.text };
+  const status = SETTLED.find((settled) => settled === value.status);
+  const sources = value.sources;
+  if (value.role !== "assistant" || status === undefined) return null;
+  if (sources !== null && !(Array.isArray(sources) && sources.every(isChatSource))) return null;
+  const steps = value.steps ?? [];
+  const reasoning = value.reasoning ?? "";
+  if (!Array.isArray(steps) || typeof reasoning !== "string") return null;
+  return {
+    id: value.id,
+    role: "assistant",
+    text: value.text,
+    sources,
+    status,
+    steps: steps.flatMap((step) => readChatStep(step, ANSWER_STEP_STATUSES) ?? []),
+    reasoning: reasoning.slice(0, CHAT_REASONING_MAX_CHARS),
+  };
 }

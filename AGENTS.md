@@ -79,7 +79,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
 
 client/                       Browser-side data access.
   api/public-http.ts          getPublicJson and postPublicStream, the base for public fetchers (session lock, 401 -> issue -> retry).
-  api/chat.ts                 streamChat: NDJSON chat events (reader in api/ndjson.ts).
+  api/chat.ts                 streamChat: NDJSON chat events (reader in api/ndjson.ts, hand-written step guards in api/chat-steps.ts).
   query/                      TanStack Query client and provider.
 
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.

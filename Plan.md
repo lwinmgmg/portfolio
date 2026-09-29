@@ -1151,6 +1151,18 @@ reasoning text.
 5. Storage: store `steps` and `reasoning` (reasoning capped at 8,000 characters). Validate on read with the same guards. Older stored entries without these fields load with `[]` and `""`.
 6. Tests: parser (valid events, unknown step, bad anchor, malformed detail); reducer (upsert, ordering, end states, the kept failed turn); storage round trip, the cap and legacy entries.
 
+**Status:** Done
+
+**As built**
+- **Guards.** `readChatStep(value, statuses)` takes the statuses to accept. `parseChatStep` uses the server's three, and storage uses the client's four (`ANSWER_STEP_STATUSES`). An unknown status also skips the step.
+  - **What counts as malformed.** A detail whose `kind` is known but belongs to another step (for example `generate` carrying `{ kind: "reasoning" }`) is malformed, so it becomes `detail: null`. So does a detail that is not an object. A bad hit anchor makes the whole detail null, not only that hit.
+  - `isRecord` and `isCvAnchor` moved into `chat-steps.ts`, and `isChatSource` uses them.
+- **Client status.** The widened step type is `AnswerStep` (`AnswerStepStatus = ChatStepStatus | "stopped"`) in `chat-state.ts`.
+- **Upsert.** Steps keep the order in which they started. A finished step replaces its running one in place, and a finished step with no running one before it is appended. A `running` event is ignored once its name is listed.
+- **End states.** Running steps are marked stopped on every end, including `done` and a `complete` stream. A step can only still be running then if the server misbehaved. The reducer does not cap reasoning; storage does, on write and again on read.
+- **Storage.** Entries are rebuilt field by field. A step storage cannot read is skipped rather than dropping the transcript. A `steps` that is not an array, or a `reasoning` that is not a string, drops the transcript, like any malformed entry. A `null` or missing value loads as `[]` or `""`.
+- **Done-when.** Reducer tests cover every event type and every end (`done`, `complete`, `stopped`, `interrupted`, `error`, `limit`, `fail`). Storage tests cover the round trip, stopped steps, the cap, legacy entries and unreadable steps; 614 tests pass. After `bun run build`, the public chat chunk (`static/chunks/3718_2k0fz2ae.js`, the only one with the chat storage key, referenced only from `server/app/(public)`) has no zod markers. The one client chunk with zod is referenced only by `admin/(panel)/cv/[versionId]`.
+
 **Done when**
 - Reducer and storage tests cover every event and end state. The built client chunk has no zod.
 
