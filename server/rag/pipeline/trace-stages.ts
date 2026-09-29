@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import type { ToolCallOutcome } from "@/server/domain/chat";
+import type { QueryScope, RouteScope } from "@/server/domain/rag";
+
 // What each retrieval stage writes to the trace. The pipeline builds these shapes and the trace
 // reader parses stored traces with the same schemas, so the two cannot drift apart.
 
@@ -15,6 +18,8 @@ export const STAGE = {
   filter: "filter",
   // Added by the chat service after retrieval. Not recorded by the pipeline.
   generate: "generate",
+  // One per tool call the answer model made (Phase 4), also added by the chat service.
+  tool: "tool",
 } as const;
 
 // Names of the lists that fusion merges, e.g. `vector:q0` and `bm25:q1`.
@@ -34,7 +39,8 @@ const TracedHitSchema = z.object({
 
 export type TracedHit = z.infer<typeof TracedHitSchema>;
 
-const ScopeSchema = z.enum(["cv", "smalltalk", "off_topic"]);
+const ScopeSchema = z.enum(["cv", "smalltalk", "off_topic", "contact"]) satisfies z.ZodType<QueryScope>;
+const RouteScopeSchema = z.enum(["cv", "smalltalk", "off_topic"]) satisfies z.ZodType<RouteScope>;
 
 export const RouteStageInputSchema = z.object({
   // The model asked. The output names the one that answered.
@@ -47,7 +53,7 @@ export const RouteStageOutputSchema = z.object({
   // Set only for a short-circuit; null means the rewriter decided.
   scope: z.enum(["smalltalk", "off_topic"]).nullable(),
   probabilities: z.object({ cv: z.number(), smalltalk: z.number(), off_topic: z.number() }).nullable(),
-  choice: ScopeSchema.nullable(),
+  choice: RouteScopeSchema.nullable(),
   model: z.string().nullable(),
   fallback: z.boolean(),
   error: z.string().nullable(),
@@ -113,11 +119,15 @@ export const FilterStageOutputSchema = z.object({
 
 export const GenerateStageInputSchema = z.object({
   model: z.string(),
-  // `cv` answers from sources. `smalltalk` is only in traces from before small talk got a fixed
-  // reply; it stays so those traces still parse.
-  mode: z.enum(["cv", "smalltalk"]),
+  // `cv` answers from sources; `contact` drafts a message to the subject. `smalltalk` is only in
+  // traces from before small talk got a fixed reply; it stays so those traces still parse.
+  mode: z.enum(["cv", "smalltalk", "contact"]),
   sources: z.number(),
   historyTurns: z.number(),
+  // The tools offered. Absent in traces written before Phase 4.3.
+  tools: z.array(z.string()).optional(),
+  // Whether the prompt carried the conversation's pending email draft. Absent before 4.3.
+  pendingDraft: z.boolean().optional(),
 });
 
 export const GenerateStageOutputSchema = z.object({
@@ -132,6 +142,25 @@ export const GenerateStageOutputSchema = z.object({
   // The model's reasoning, capped at CHAT_REASONING_MAX_CHARS. Null when it sent none; older
   // traces have no key.
   reasoning: z.string().nullable().optional(),
+  // Model calls: 2 when a tool ran between them. Absent in traces written before Phase 4.3.
+  rounds: z.number().optional(),
+});
+
+export const ToolStageInputSchema = z.object({
+  name: z.string(),
+  // The model's raw arguments. For send_email this holds the draft text: traces are admin-only.
+  arguments: z.string(),
+});
+
+export const ToolStageOutputSchema = z.object({
+  outcome: z.enum([
+    "drafted",
+    "invalid",
+    "unknown_tool",
+    "ignored",
+    "failed",
+  ]) satisfies z.ZodType<ToolCallOutcome>,
+  draftId: z.string().nullable(),
 });
 
 export type RouteStageInput = z.infer<typeof RouteStageInputSchema>;
@@ -145,3 +174,5 @@ export type RerankStageOutput = z.infer<typeof RerankStageOutputSchema>;
 export type FilterStageOutput = z.infer<typeof FilterStageOutputSchema>;
 export type GenerateStageInput = z.infer<typeof GenerateStageInputSchema>;
 export type GenerateStageOutput = z.infer<typeof GenerateStageOutputSchema>;
+export type ToolStageInput = z.infer<typeof ToolStageInputSchema>;
+export type ToolStageOutput = z.infer<typeof ToolStageOutputSchema>;

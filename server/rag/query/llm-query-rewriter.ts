@@ -14,7 +14,7 @@ const REWRITE_SCHEMA_NAME = "query_rewrite";
 const RewriteOutputSchema = z.object({
   standalone: z.string(),
   variants: z.array(z.string()),
-  scope: z.enum(["cv", "smalltalk", "off_topic"]),
+  scope: z.enum(["cv", "smalltalk", "off_topic", "contact"]),
 });
 
 type RewriteOutput = z.infer<typeof RewriteOutputSchema>;

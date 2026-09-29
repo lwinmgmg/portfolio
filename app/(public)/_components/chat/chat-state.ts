@@ -137,6 +137,9 @@ function applyEvent(state: ChatState, event: ChatEvent): ChatState {
       return updatePending(state, (entry) => ({ ...entry, text: entry.text + event.text }));
     case "sources":
       return updatePending(state, (entry) => ({ ...entry, sources: event.sources }));
+    // The draft card is Phase 4.5; until then `parseChatEvent` drops this event anyway.
+    case "email_draft":
+      return state;
     case "done":
       return updatePending(state, (entry) => settle(entry, "done"));
     case "error":

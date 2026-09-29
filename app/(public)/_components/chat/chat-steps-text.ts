@@ -1,5 +1,5 @@
 import type { AnswerStep, AssistantEntry } from "@/app/(public)/_components/chat/chat-state";
-import type { ChatStepDetail, ChatStepName } from "@/server/domain/chat";
+import type { ChatStepDetail, ChatStepName, ToolCallOutcome } from "@/server/domain/chat";
 import type { QueryScope } from "@/server/domain/rag";
 
 // Words for the steps panel. Pure, so the wording is tested apart from the components.
@@ -23,6 +23,7 @@ const STEP_WORDS: Record<ChatStepName, StepWords> = {
   filter: { active: "Dropping weak matches", done: "Dropped weak matches" },
   reasoning: { active: "Thinking", done: "Thought it through" },
   generate: { active: "Writing the answer", done: "Wrote the answer" },
+  tool: { active: "Drafting an email", done: "Drafted an email" },
 };
 
 export function stepLabel(step: AnswerStep): string {
@@ -62,6 +63,7 @@ const SCOPE_LABELS: Record<QueryScope, string> = {
   cv: "About the CV",
   smalltalk: "Small talk",
   off_topic: "Out of scope",
+  contact: "Contact request",
 };
 
 export function scopeLabel(scope: QueryScope): string {
@@ -109,7 +111,16 @@ function detailSummary(detail: ChatStepDetail): string {
       return "";
     case "generate":
       return detail.sources === 0 ? "No sources" : count(detail.sources, "source", "sources");
+    case "tool":
+      return detail.outcome === "drafted" ? detail.name : "Nothing drafted";
   }
+}
+
+// The expanded tool row. Never the draft: the card under the answer shows that.
+export function toolDetailText(outcome: ToolCallOutcome): string {
+  return outcome === "drafted"
+    ? "Waiting for you to press Send."
+    : "The email could not be drafted.";
 }
 
 function queriesSummary(queries: readonly string[]): string {

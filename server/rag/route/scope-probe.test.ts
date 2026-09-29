@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { QueryScope } from "@/server/domain/rag";
+import type { RouteScope } from "@/server/domain/rag";
 import type { ScopeReading } from "@/server/rag/route/route-question";
 import {
   expectedScopes,
@@ -12,16 +12,16 @@ import {
 } from "@/server/rag/route/scope-probe";
 
 function outcome(
-  expected: QueryScope,
+  expected: RouteScope,
   reading: ScopeReading,
   latencyMs = 100,
 ): ProbeOutcome {
   return { item: { id: `${expected}-${latencyMs}`, expected, message: "m", history: [] }, reading, latencyMs };
 }
 
-function read(choice: QueryScope, probability: number): ScopeReading {
+function read(choice: RouteScope, probability: number): ScopeReading {
   const rest = (1 - probability) / 2;
-  const probabilities: Record<QueryScope, number> = { cv: rest, smalltalk: rest, off_topic: rest };
+  const probabilities: Record<RouteScope, number> = { cv: rest, smalltalk: rest, off_topic: rest };
   probabilities[choice] = probability;
   return { ok: true, choice, probabilities };
 }

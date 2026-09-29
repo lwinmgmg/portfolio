@@ -38,6 +38,7 @@ const DETAILS: Record<ChatStepName, ChatStepDetail> = {
   filter: { kind: "filter", minScore: 0.2, kept: 5, dropped: [LOOSE_HIT] },
   reasoning: { kind: "reasoning" },
   generate: { kind: "generate", sources: 5 },
+  tool: { kind: "tool", name: "send_email", outcome: "drafted" },
 };
 
 function done(name: ChatStepName, detail: ChatStepDetail | null = DETAILS[name]): ChatStep {
@@ -92,6 +93,8 @@ test("a malformed detail becomes null and keeps the step", () => {
     ["rerank", { kind: "rerank", fallback: false, hits: [HIT] }],
     ["filter", { kind: "filter", minScore: 0.2, kept: 5, dropped: [{ ...HIT, score: null }] }],
     ["generate", { kind: "generate", sources: "5" }],
+    ["tool", { kind: "tool", name: "send_email", outcome: "sent" }],
+    ["tool", { kind: "tool", outcome: "drafted" }],
     // A known kind on the wrong step.
     ["generate", DETAILS.reasoning],
     ["rerank", "kept 5"],

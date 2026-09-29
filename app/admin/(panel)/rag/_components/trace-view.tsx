@@ -82,6 +82,7 @@ const SKIPPED_NOTES: Record<QueryScope, string> = {
   cv: "No sources were returned.",
   smalltalk: "Small talk: retrieval was skipped.",
   off_topic: "Off-topic message: retrieval was skipped.",
+  contact: "Contact request: retrieval was skipped.",
 };
 
 function FinalSources({

@@ -14,13 +14,26 @@ function answer(choice: string, probabilities: Record<string, number>): ChoiceAn
   return { choice, confidence: 0.5, probabilities };
 }
 
-test("the route question is a choice over the rewriter's scope definitions", () => {
+test("the route question is a choice over the rewriter's scope definitions, contact folded into cv", () => {
   const question = buildRouteQuestion("Ada Lovelace");
+  const definitions = scopeDefinitions("Ada Lovelace");
 
   expect(question.type).toBe("choice");
-  expect(question.criteria).toEqual(scopeDefinitions("Ada Lovelace"));
   expect(Object.keys(question.criteria)).toEqual(["cv", "smalltalk", "off_topic"]);
+  expect(question.criteria.cv).toBe(`${definitions.cv} Also when ${definitions.contact}`);
+  expect(question.criteria.smalltalk).toBe(definitions.smalltalk);
+  expect(question.criteria.off_topic).toBe(definitions.off_topic);
   expect(question.instructions).toContain("Ada Lovelace");
+});
+
+test("a contact choice from the router is not a known option", () => {
+  expect(
+    readScopeAnswer({
+      choice: "contact",
+      confidence: 0.9,
+      probabilities: { cv: 0.05, smalltalk: 0.03, off_topic: 0.02, contact: 0.9 },
+    }).ok,
+  ).toBe(false);
 });
 
 test("the state keeps the last 6 turns, oldest first", () => {

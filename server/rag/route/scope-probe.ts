@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { QueryScope } from "@/server/domain/rag";
+import type { RouteScope } from "@/server/domain/rag";
 import { shortCircuitScope, type ScopeReading } from "@/server/rag/route/route-question";
 
 // The cutoffs the probe compares before one is picked for `minRouteConfidence`.
@@ -117,8 +117,8 @@ export function probeTotals(outcomes: readonly ProbeOutcome[]): ProbeTotals {
   };
 }
 
-export function expectedScopes(set: ProbeSet): Record<QueryScope, number> {
-  const counts: Record<QueryScope, number> = { cv: 0, smalltalk: 0, off_topic: 0 };
+export function expectedScopes(set: ProbeSet): Record<RouteScope, number> {
+  const counts: Record<RouteScope, number> = { cv: 0, smalltalk: 0, off_topic: 0 };
   for (const item of set.items) counts[item.expected] += 1;
   return counts;
 }

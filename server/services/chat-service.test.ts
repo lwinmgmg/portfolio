@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 
+import { EmailDraftTool } from "@/server/agent/email-draft-tool";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
+import type { AgentTool } from "@/server/domain/agent";
 import {
   CHAT_REASONING_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
@@ -11,6 +13,7 @@ import {
   type ChatStepStatus,
   type Conversation,
   type ConversationRepository,
+  type EmailDraft,
   type StoredMessage,
 } from "@/server/domain/chat";
 import type { CvVersion } from "@/server/domain/cv";
@@ -20,6 +23,7 @@ import type {
   ChatResult,
   ChatStreamEvent,
   ReasoningLevel,
+  ToolCall,
   Usage,
 } from "@/server/domain/llm";
 import {
@@ -50,6 +54,7 @@ class MemoryConversations implements ConversationRepository {
   rows: Conversation[] = [];
   otherUserMessagesToday = 0;
   appendFails = false;
+  draftFails = false;
   sinceQueries: Date[] = [];
 
   ensureReady(): Promise<void> {
@@ -66,6 +71,7 @@ class MemoryConversations implements ConversationRepository {
       id: `conv-${this.rows.length + 1}`,
       sessionId,
       messages: [],
+      emailDrafts: [],
       createdAt: at,
       updatedAt: at,
     };
@@ -78,6 +84,16 @@ class MemoryConversations implements ConversationRepository {
     const row = this.rows.find((item) => item.id === id);
     if (!row) throw new Error(`no conversation ${id}`);
     row.messages.push(...structuredClone(messages));
+  }
+
+  async addEmailDraft(conversationId: string, draft: EmailDraft): Promise<void> {
+    if (this.draftFails) throw new Error("database down");
+    const row = this.rows.find((item) => item.id === conversationId);
+    if (!row) throw new Error(`no conversation ${conversationId}`);
+    for (const older of row.emailDrafts) {
+      if (older.status === "pending") older.status = "superseded";
+    }
+    row.emailDrafts.push(structuredClone(draft));
   }
 
   async countUserMessagesForSession(sessionId: string): Promise<number> {
@@ -105,28 +121,37 @@ type ScriptedAnswer = {
   failAt?: number;
   // Called after each delta is yielded, e.g. to abort the request.
   afterDelta?: (index: number) => void;
+  // Yielded after the deltas, as the provider does.
+  toolCalls?: ToolCall[];
 };
 
+// Each call streams the next script; the last one repeats.
 class FakeChat implements ChatClient {
   readonly requests: ChatRequest[] = [];
+  private readonly scripts: ScriptedAnswer[];
 
-  constructor(private readonly script: ScriptedAnswer) {}
+  constructor(scripts: ScriptedAnswer | ScriptedAnswer[]) {
+    this.scripts = Array.isArray(scripts) ? scripts : [scripts];
+  }
 
   complete(): Promise<ChatResult> {
     throw new Error("complete is not used by the chat service");
   }
 
   async *stream(request: ChatRequest): AsyncIterable<ChatStreamEvent> {
+    const script = this.scripts[Math.min(this.requests.length, this.scripts.length - 1)];
+    if (!script) throw new Error("no script");
     this.requests.push(request);
-    for (const text of this.script.reasoning ?? []) yield { type: "reasoning", text };
-    for (const [index, text] of this.script.deltas.entries()) {
+    for (const text of script.reasoning ?? []) yield { type: "reasoning", text };
+    for (const [index, text] of script.deltas.entries()) {
       if (request.signal?.aborted) throw new Error("OpenRouter request was aborted");
-      if (this.script.failAt === index) throw new Error("provider exploded");
+      if (script.failAt === index) throw new Error("provider exploded");
       yield { type: "delta", text };
-      this.script.afterDelta?.(index);
+      script.afterDelta?.(index);
     }
     if (request.signal?.aborted) throw new Error("OpenRouter request was aborted");
-    yield { type: "done", usage: this.script.usage ?? null };
+    for (const call of script.toolCalls ?? []) yield { type: "tool_call", call };
+    yield { type: "done", usage: script.usage ?? null };
   }
 }
 
@@ -192,7 +217,10 @@ function traceFor(request: RetrievalRequest, id: string, stages: TraceStage[]): 
 
 type SetupOptions = {
   scope?: QueryScope;
-  answer?: ScriptedAnswer;
+  // One script per model call; a single script serves every call.
+  answer?: ScriptedAnswer | ScriptedAnswer[];
+  // Built with the test's conversations, like the runtime's email tool.
+  tools?: (conversations: MemoryConversations) => AgentTool[];
   // `stage`: the embed stage fails; `no-index`: the active index is gone by the time it runs.
   retrievalFails?: "stage" | "no-index";
   // Awaited before each stage starts, e.g. to hold the pipeline mid-run.
@@ -266,6 +294,7 @@ function setup(options: SetupOptions = {}) {
     answerModel: "answer-model",
     answerReasoning: options.answerReasoning ?? "low",
     dailyMessageLimit: options.dailyMessageLimit ?? 500,
+    ...(options.tools ? { tools: options.tools(conversations) } : {}),
     now: () => now,
     // Each reading advances 5 ms.
     clock: () => (tick += 5),
@@ -606,7 +635,14 @@ test("the saved trace gains a generate stage after retrieval", async () => {
   // Clock: retrieval returned at 5, generation ran from 10 to 15; the pipeline's total was 10.
   expect(trace?.stages.at(-1)).toEqual({
     name: "generate",
-    input: { model: "answer-model", mode: "cv", sources: 2, historyTurns: 0 },
+    input: {
+      model: "answer-model",
+      mode: "cv",
+      sources: 2,
+      historyTurns: 0,
+      tools: [],
+      pendingDraft: false,
+    },
     output: {
       model: "answer-model",
       usage: { promptTokens: 120, completionTokens: 20, cost: 0.001 },
@@ -614,6 +650,7 @@ test("the saved trace gains a generate stage after retrieval", async () => {
       stopped: false,
       citedSourceIds: ["S1", "S2"],
       reasoning: null,
+      rounds: 1,
     },
     startedAt: 15,
     durationMs: 5,
@@ -656,6 +693,7 @@ test("the session limit stops the 21st message", async () => {
     id: "conv-old",
     sessionId: "session-1",
     messages: Array.from({ length: CHAT_SESSION_MESSAGE_LIMIT - 1 }, () => ({ ...userMessage })),
+    emailDrafts: [],
     createdAt: at,
     updatedAt: at,
   });
@@ -970,6 +1008,320 @@ test("storage failures are logged and the stream still finishes", async () => {
 
   expect(events.at(-1)).toEqual({ type: "done" });
   expect(logged).toEqual(["Could not store the chat messages."]);
+});
+
+// ---- Tools (Phase 4.3) ----
+
+const contactAsk: ChatReplyRequest = {
+  sessionId: "session-1",
+  conversationId: null,
+  message: "Please tell her I'd like to talk. I'm Sam, sam@example.com",
+};
+
+const draftText = "Hi Jane, I'm Sam (sam@example.com) and I'd like to talk about a backend role.";
+
+function sendEmailCall(text: string = draftText, id = "call-1"): ToolCall {
+  return { id, name: "send_email", arguments: JSON.stringify({ text }) };
+}
+
+const emailTool = (conversations: MemoryConversations): AgentTool[] => {
+  let drafts = 0;
+  return [new EmailDraftTool(conversations, () => `draft-${(drafts += 1)}`)];
+};
+
+// Round 1 calls the tool; round 2 answers.
+const draftingAnswer: ScriptedAnswer[] = [
+  { reasoning: ["Sam gave a name and an email."], deltas: [], toolCalls: [sendEmailCall()] },
+  {
+    deltas: ["I've drafted a message to Jane Doe. ", "Check it and press Send."],
+    usage: { promptTokens: 300, completionTokens: 20, cost: null },
+  },
+];
+
+function toolStages(trace: RetrievalTrace | undefined): TraceStage[] {
+  return trace?.stages.filter((stage) => stage.name === "tool") ?? [];
+}
+
+test("a contact turn yields the tool steps, the draft, then round 2's answer and done", async () => {
+  const { service, chat, conversations, saved } = setup({
+    scope: "contact",
+    tools: emailTool,
+    answer: draftingAnswer,
+  });
+
+  const events = await collect(service.reply(contactAsk));
+
+  // Clock: asked at 10 (15 on the timeline); the tool ran from 15 to 20; round 2's first text
+  // at 20; done at 25.
+  expect(events).toEqual([
+    { type: "meta", conversationId: "conv-1" },
+    running("rewrite", 0),
+    ended("rewrite", 0, 1, {
+      kind: "rewrite",
+      queries: [contactAsk.message],
+      scope: "contact",
+      fallback: false,
+    }),
+    running("reasoning", 15),
+    { type: "reasoning", text: "Sam gave a name and an email." },
+    ended("reasoning", 15, 5, { kind: "reasoning" }),
+    running("tool", 20),
+    ended("tool", 20, 5, { kind: "tool", name: "send_email", outcome: "drafted" }),
+    { type: "email_draft", draft: { id: "draft-1", text: draftText } },
+    running("generate", 25),
+    { type: "delta", text: "I've drafted a message to Jane Doe. " },
+    { type: "delta", text: "Check it and press Send." },
+    ended("generate", 25, 5, { kind: "generate", sources: 0 }),
+    { type: "sources", sources: [] },
+    { type: "done" },
+  ]);
+
+  // Round 1 offered the tool; round 2 saw the call and its result, with the tool on `none`.
+  expect(chat.requests).toHaveLength(2);
+  expect(chat.requests[0]?.tools?.map((tool) => tool.name)).toEqual(["send_email"]);
+  expect(chat.requests[0]?.toolChoice).toBe("auto");
+  expect(chat.requests[1]?.toolChoice).toBe("none");
+  expect(chat.requests[1]?.messages.slice(-2).map((message) => message.role)).toEqual([
+    "assistant",
+    "tool",
+  ]);
+
+  // The draft is stored on the conversation; the history keeps only the text.
+  const row = conversations.rows[0];
+  expect(row?.emailDrafts).toEqual([
+    {
+      id: "draft-1",
+      text: draftText,
+      status: "pending",
+      createdAt: now.toISOString(),
+      sentAt: null,
+    },
+  ]);
+  expect(row?.messages.map((message) => message.text)).toEqual([
+    contactAsk.message,
+    "I've drafted a message to Jane Doe. Check it and press Send.",
+  ]);
+
+  // The trace: generate covers both rounds, then the tool stage with the raw arguments.
+  const trace = saved[0];
+  expect(trace?.stages.map((stage) => stage.name)).toEqual(["rewrite", "generate", "tool"]);
+  expect(trace?.stages[1]).toMatchObject({
+    input: { mode: "contact", sources: 0, tools: ["send_email"], pendingDraft: false },
+    output: { rounds: 2, reasoning: "Sam gave a name and an email." },
+    startedAt: 15,
+    durationMs: 15,
+  });
+  expect(trace?.stages[2]).toEqual({
+    name: "tool",
+    input: { name: "send_email", arguments: JSON.stringify({ text: draftText }) },
+    output: { outcome: "drafted", draftId: "draft-1" },
+    startedAt: 20,
+    durationMs: 5,
+    error: null,
+  });
+});
+
+test("the contact prompt has the tool rules and no sources", async () => {
+  const { service, chat } = setup({ scope: "contact", tools: emailTool, answer: draftingAnswer });
+
+  await collect(service.reply(contactAsk));
+
+  const system = messageText(chat.requests[0], 0);
+  expect(system).toContain("The send_email tool drafts an email to Jane Doe.");
+  expect(system).toContain("Never say or suggest that a message was sent.");
+  expect(messageText(chat.requests[0], 1)).toBe(`<message>${contactAsk.message}</message>`);
+});
+
+test("a CV question with tools offered keeps its sources and adds the tool rules", async () => {
+  const { service, chat } = setup({ tools: emailTool });
+
+  const events = await collect(service.reply(ask));
+
+  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(chat.requests).toHaveLength(1);
+  expect(chat.requests[0]?.tools?.map((tool) => tool.name)).toEqual(["send_email"]);
+  expect(messageText(chat.requests[0], 0)).toContain("Messages to Jane Doe:");
+  expect(messageText(chat.requests[0], 1)).toContain('<source id="S1"');
+  expect(messageText(chat.requests[0], 1)).not.toContain("<pending_email_draft>");
+});
+
+test("without email configured no tools are offered and a contact request gets a fixed reply", async () => {
+  const cv = setup();
+  await collect(cv.service.reply(ask));
+  expect(Object.keys(cv.chat.requests[0] ?? {})).not.toContain("tools");
+  expect(messageText(cv.chat.requests[0], 0)).not.toContain("send_email");
+
+  const contact = setup({ scope: "contact" });
+  const events = await collect(contact.service.reply(contactAsk));
+  const reply =
+    "I can't pass messages on from this chat. You can contact Jane Doe directly with the details on this page.";
+  expect(withoutSteps(events)).toEqual([
+    { type: "meta", conversationId: "conv-1" },
+    { type: "delta", text: reply },
+    { type: "sources", sources: [] },
+    { type: "done" },
+  ]);
+  expect(contact.chat.requests).toHaveLength(0);
+  expect(contact.saved[0]?.stages.map((stage) => stage.name)).toEqual(["rewrite"]);
+});
+
+test("off topic and small talk keep their fixed replies with tools offered", async () => {
+  for (const scope of ["off_topic", "smalltalk"] satisfies QueryScope[]) {
+    const { service, chat, conversations } = setup({ scope, tools: emailTool });
+
+    const events = await collect(service.reply(ask));
+
+    expect(events.at(-1)).toEqual({ type: "done" });
+    expect(chat.requests).toHaveLength(0);
+    expect(conversations.rows[0]?.emailDrafts).toEqual([]);
+  }
+});
+
+test("invalid arguments draft nothing; the step says so and round 2 still answers", async () => {
+  const { service, conversations, saved } = setup({
+    scope: "contact",
+    tools: emailTool,
+    answer: [
+      { deltas: [], toolCalls: [sendEmailCall("   ")] },
+      { deltas: ["I couldn't draft that. What should the message say?"] },
+    ],
+  });
+
+  const events = await collect(service.reply(contactAsk));
+
+  expect(events.some((event) => event.type === "email_draft")).toBe(false);
+  const toolStep = events.find((event) => event.type === "step" && event.step.status === "done" && event.step.name === "tool");
+  expect(toolStep).toMatchObject({ step: { detail: { kind: "tool", name: "send_email", outcome: "invalid" } } });
+  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(conversations.rows[0]?.emailDrafts).toEqual([]);
+  expect(toolStages(saved[0]).map((stage) => stage.output)).toEqual([
+    { outcome: "invalid", draftId: null },
+  ]);
+});
+
+test("an unknown tool and a second call are only in the trace; one tool step is shown", async () => {
+  const { service, conversations, saved } = setup({
+    scope: "contact",
+    tools: emailTool,
+    answer: [
+      {
+        deltas: [],
+        toolCalls: [
+          { id: "call-1", name: "wire_money", arguments: "{}" },
+          sendEmailCall(draftText, "call-2"),
+        ],
+      },
+      { deltas: ["I can only draft messages."] },
+    ],
+  });
+
+  const events = await collect(service.reply(contactAsk));
+
+  expect(stepLog(events).filter((step) => step.startsWith("tool"))).toEqual([
+    "tool:running",
+    "tool:done",
+  ]);
+  expect(conversations.rows[0]?.emailDrafts).toEqual([]);
+  expect(toolStages(saved[0]).map((stage) => [stage.input, stage.output])).toEqual([
+    [{ name: "wire_money", arguments: "{}" }, { outcome: "unknown_tool", draftId: null }],
+    [
+      { name: "send_email", arguments: JSON.stringify({ text: draftText }) },
+      { outcome: "ignored", draftId: null },
+    ],
+  ]);
+});
+
+test("a tool that fails is logged, its step fails, and the answer still finishes", async () => {
+  const { service, conversations, saved, logged } = setup({
+    scope: "contact",
+    tools: emailTool,
+    answer: draftingAnswer,
+  });
+  conversations.draftFails = true;
+
+  const events = await collect(service.reply(contactAsk));
+
+  expect(stepLog(events).filter((step) => step.startsWith("tool"))).toEqual([
+    "tool:running",
+    "tool:failed",
+  ]);
+  expect(events.some((event) => event.type === "email_draft")).toBe(false);
+  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(logged).toEqual(["Chat tool failed."]);
+  expect(toolStages(saved[0])[0]).toMatchObject({
+    output: { outcome: "failed", draftId: null },
+    error: "database down",
+  });
+});
+
+test("a new draft supersedes the pending one, which reaches the next prompt", async () => {
+  const { service, chat, conversations } = setup({
+    scope: "contact",
+    tools: emailTool,
+    answer: [
+      ...draftingAnswer,
+      { deltas: [], toolCalls: [sendEmailCall("Hi Jane, I'm Sam. Could we talk on Friday?")] },
+      { deltas: ["I've updated the draft. Check it and press Send."] },
+    ],
+  });
+
+  await collect(service.reply(contactAsk));
+  await collect(
+    service.reply({ ...contactAsk, conversationId: "conv-1", message: "Ask for Friday instead." }),
+  );
+
+  expect(conversations.rows[0]?.emailDrafts.map((draft) => [draft.id, draft.status])).toEqual([
+    ["draft-1", "superseded"],
+    ["draft-2", "pending"],
+  ]);
+  const retry = chat.requests[2];
+  expect(messageText(retry, retry ? retry.messages.length - 1 : 0)).toBe(
+    `<pending_email_draft>${draftText}</pending_email_draft>\n\n<message>Ask for Friday instead.</message>`,
+  );
+});
+
+test("a draft that is sent, superseded or over an hour old is not in the prompt", async () => {
+  const { service, chat, conversations } = setup({ scope: "contact", tools: emailTool, answer: { deltas: ["Ok."] } });
+  const hourAgo = new Date(now.getTime() - 3_600_000).toISOString();
+  const cases: EmailDraft[] = [
+    { id: "d", text: "old", status: "pending", createdAt: hourAgo, sentAt: null },
+    { id: "d", text: "sent", status: "sent", createdAt: now.toISOString(), sentAt: now.toISOString() },
+  ];
+  for (const [index, draft] of cases.entries()) {
+    conversations.rows.push({
+      id: `conv-old-${index}`,
+      sessionId: "session-1",
+      messages: [],
+      emailDrafts: [draft],
+      createdAt: at,
+      updatedAt: at,
+    });
+    await collect(service.reply({ ...contactAsk, conversationId: `conv-old-${index}` }));
+  }
+
+  for (const request of chat.requests) {
+    expect(messageText(request, request.messages.length - 1)).not.toContain("<pending_email_draft>");
+  }
+  expect(chat.requests).toHaveLength(2);
+});
+
+test("stopping during round 2 keeps the draft and stores the partial answer", async () => {
+  const controller = new AbortController();
+  const { service, conversations } = setup({
+    scope: "contact",
+    tools: emailTool,
+    answer: [
+      draftingAnswer[0] ?? { deltas: [] },
+      { deltas: ["I've drafted", " a message."], afterDelta: () => controller.abort() },
+    ],
+  });
+
+  const events = await collect(service.reply({ ...contactAsk, signal: controller.signal }));
+
+  expect(events.some((event) => event.type === "email_draft")).toBe(true);
+  expect(events.at(-1)).toEqual({ type: "delta", text: "I've drafted" });
+  expect(conversations.rows[0]?.emailDrafts[0]?.status).toBe("pending");
+  expect(conversations.rows[0]?.messages[1]?.text).toBe(`I've drafted ${STOPPED_SUFFIX}`);
 });
 
 test("startOfUtcDay truncates to midnight UTC", () => {

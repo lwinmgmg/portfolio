@@ -19,6 +19,8 @@ import {
   RouteStageOutputSchema,
   SearchStageOutputSchema,
   STAGE,
+  ToolStageInputSchema,
+  ToolStageOutputSchema,
   type TracedHit,
 } from "@/server/rag/pipeline/trace-stages";
 
@@ -27,6 +29,9 @@ import {
 // messages cannot reach the visitor.
 
 type DetailReader = (stage: TraceStage) => ChatStepDetail | null;
+
+// OpenAI-style tool names are at most 64 characters.
+const TOOL_NAME_MAX_CHARS = 64;
 
 type StageName = (typeof STAGE)[keyof typeof STAGE];
 
@@ -81,6 +86,17 @@ const DETAIL_READERS: Record<StageName | "reasoning", DetailReader> = {
   // The sources count is known when generation starts, so it is read from the input.
   [STAGE.generate]: (stage) =>
     read(GenerateStageInputSchema, stage.input, ({ sources }) => ({ kind: "generate", sources })),
+  // The tool's name and outcome only: the arguments hold the draft text. The model picks the
+  // name, so an unknown one is cut short.
+  [STAGE.tool]: (stage) => {
+    const input = ToolStageInputSchema.safeParse(stage.input);
+    if (!input.success) return null;
+    return read(ToolStageOutputSchema, stage.output, ({ outcome }) => ({
+      kind: "tool",
+      name: input.data.name.slice(0, TOOL_NAME_MAX_CHARS),
+      outcome,
+    }));
+  },
 } satisfies Record<ChatStepName, DetailReader>;
 
 export function isChatStepName(name: string): name is ChatStepName {

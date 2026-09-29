@@ -4,6 +4,7 @@ import type {
   ChatStepHit,
   ChatStepName,
   ChatStepStatus,
+  ToolCallOutcome,
 } from "@/server/domain/chat";
 import type { QueryScope } from "@/server/domain/rag";
 
@@ -25,9 +26,18 @@ const DETAIL_KIND: Record<ChatStepName, DetailKind> = {
   filter: "filter",
   reasoning: "reasoning",
   generate: "generate",
+  tool: "tool",
 };
 
-const SCOPES: readonly QueryScope[] = ["cv", "smalltalk", "off_topic"];
+const SCOPES: readonly QueryScope[] = ["cv", "smalltalk", "off_topic", "contact"];
+
+const TOOL_OUTCOMES: readonly ToolCallOutcome[] = [
+  "drafted",
+  "invalid",
+  "unknown_tool",
+  "ignored",
+  "failed",
+];
 
 // Checks the fields of one detail kind; the kind itself is already known.
 const DETAIL_GUARDS: Record<DetailKind, (value: Record<string, unknown>) => boolean> = {
@@ -67,6 +77,8 @@ const DETAIL_GUARDS: Record<DetailKind, (value: Record<string, unknown>) => bool
     isNumber(value.minScore) && isNumber(value.kept) && isArrayOf(value.dropped, isChatStepHit),
   reasoning: () => true,
   generate: (value) => isNumber(value.sources),
+  tool: (value) =>
+    isString(value.name) && TOOL_OUTCOMES.some((outcome) => outcome === value.outcome),
 };
 
 // A step with one of `statuses`, or null when its name, kind or status is unknown or its

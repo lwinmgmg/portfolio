@@ -6,6 +6,7 @@ import {
   CHAT_CONVERSATION_TTL_SECONDS,
   type Conversation,
   type ConversationRepository,
+  type EmailDraft,
   type StoredMessage,
 } from "@/server/domain/chat";
 import { parseInstant } from "@/server/repositories/mongo-dates";
@@ -13,9 +14,16 @@ import { MongoRepository } from "@/server/repositories/mongo-repository";
 
 type StoredMessageDocument = Omit<StoredMessage, "createdAt"> & { createdAt: Date };
 
+type EmailDraftDocument = Omit<EmailDraft, "createdAt" | "sentAt"> & {
+  createdAt: Date;
+  sentAt: Date | null;
+};
+
 type ConversationDocument = {
   sessionId: string;
   messages: StoredMessageDocument[];
+  // Absent in conversations stored before Phase 4.3.
+  emailDrafts?: EmailDraftDocument[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -38,6 +46,13 @@ export class MongoConversationRepository
         citedEntityKeys: [...message.citedEntityKeys],
         traceId: message.traceId,
         createdAt: message.createdAt.toISOString(),
+      })),
+      emailDrafts: (document.emailDrafts ?? []).map((draft) => ({
+        id: draft.id,
+        text: draft.text,
+        status: draft.status,
+        createdAt: draft.createdAt.toISOString(),
+        sentAt: draft.sentAt ? draft.sentAt.toISOString() : null,
       })),
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
@@ -73,6 +88,7 @@ export class MongoConversationRepository
     const document: ConversationDocument = {
       sessionId,
       messages: [],
+      emailDrafts: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -97,6 +113,50 @@ export class MongoConversationRepository
       { _id: objectId },
       { $push: { messages: { $each: documents } }, $max: { updatedAt } },
     );
+  }
+
+  // One pipeline update, so superseding the older pending drafts and adding the new one cannot
+  // be split by a concurrent write. The new draft goes in as a `$literal`: in a pipeline, a text
+  // starting with `$` would otherwise be read as a field path.
+  async addEmailDraft(conversationId: string, draft: EmailDraft): Promise<void> {
+    const objectId = this.parseId(conversationId);
+    if (!objectId) throw new Error(`Conversation id "${conversationId}" is not valid.`);
+    const document: EmailDraftDocument = {
+      id: draft.id,
+      text: draft.text,
+      status: draft.status,
+      createdAt: parseInstant(draft.createdAt),
+      sentAt: draft.sentAt === null ? null : parseInstant(draft.sentAt),
+    };
+    await this.ensureReady();
+    const result = await this.collection().updateOne({ _id: objectId }, [
+      {
+        $set: {
+          emailDrafts: {
+            $concatArrays: [
+              {
+                $map: {
+                  input: { $ifNull: ["$emailDrafts", []] },
+                  as: "draft",
+                  in: {
+                    $cond: [
+                      { $eq: ["$$draft.status", "pending"] },
+                      { $mergeObjects: ["$$draft", { status: "superseded" }] },
+                      "$$draft",
+                    ],
+                  },
+                },
+              },
+              [{ $literal: document }],
+            ],
+          },
+          updatedAt: { $max: ["$updatedAt", document.createdAt] },
+        },
+      },
+    ]);
+    if (result.matchedCount === 0) {
+      throw new Error(`Conversation "${conversationId}" was not found.`);
+    }
   }
 
   async countUserMessagesForSession(sessionId: string): Promise<number> {

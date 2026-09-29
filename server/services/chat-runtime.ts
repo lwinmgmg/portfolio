@@ -3,7 +3,10 @@ import "server-only";
 import { cache } from "react";
 import { connection } from "next/server";
 
+import { EmailDraftTool } from "@/server/agent/email-draft-tool";
+import type { AgentTool } from "@/server/domain/agent";
 import type { ChatEvent } from "@/server/domain/chat";
+import { readEmailEnv } from "@/server/email/email-env";
 import { getLlm } from "@/server/llm/llm-runtime";
 import { getRag, isRagConfigured } from "@/server/rag/rag-runtime";
 import { MongoConversationRepository } from "@/server/repositories/conversation-repository";
@@ -35,8 +38,14 @@ function getChat(): ChatService {
     answerModel: env.LLM_ANSWER_MODEL,
     answerReasoning: env.LLM_ANSWER_REASONING,
     dailyMessageLimit: env.CHAT_DAILY_MESSAGE_LIMIT,
+    tools: agentTools(),
   });
   return chat;
+}
+
+// The email tool only drafts, but it is offered only when a draft could later be sent.
+function agentTools(): AgentTool[] {
+  return readEmailEnv() === null ? [] : [new EmailDraftTool(conversations)];
 }
 
 export function isChatConfigured(): boolean {

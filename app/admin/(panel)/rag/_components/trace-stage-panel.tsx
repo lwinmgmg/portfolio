@@ -80,6 +80,8 @@ function StageBody({ detail }: { detail: StageDetail }) {
       return <RerankBody detail={detail} />;
     case "filter":
       return <FilterBody detail={detail} />;
+    case "tool":
+      return <ToolBody detail={detail} />;
     case "raw":
       return (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -209,6 +211,7 @@ const scopeTone = {
   cv: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
   smalltalk: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   off_topic: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  contact: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
 } as const;
 
 function ScopeBadge({ scope }: { scope: keyof typeof scopeTone }) {
@@ -318,6 +321,48 @@ function FilterBody({ detail }: { detail: Extract<StageDetail, { kind: "filter" 
       {dropped.length > 0 ? <HitTable hits={dropped} scoreLabel="Rerank score" /> : null}
     </div>
   );
+}
+
+const TOOL_OUTCOMES = {
+  drafted: "Drafted: waiting for the visitor's Send",
+  invalid: "Invalid arguments: not run",
+  unknown_tool: "Unknown tool: not run",
+  ignored: "Ignored: only the turn's first call runs",
+  failed: "The tool failed",
+} as const;
+
+// The arguments are shown raw: for send_email they are the draft the visitor will see.
+function ToolBody({ detail }: { detail: Extract<StageDetail, { kind: "tool" }> }) {
+  const { input, output } = detail;
+  return (
+    <div className="space-y-3 text-sm">
+      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
+        <dt className="font-medium">Tool</dt>
+        <dd className="break-all font-mono">{input.name || "(no name)"}</dd>
+        <dt className="font-medium">Outcome</dt>
+        <dd className="font-semibold">{TOOL_OUTCOMES[output.outcome]}</dd>
+        {output.draftId ? (
+          <>
+            <dt className="font-medium">Draft</dt>
+            <dd className="break-all font-mono text-xs leading-5">{output.draftId}</dd>
+          </>
+        ) : null}
+      </dl>
+      <div className="space-y-1">
+        <p className="font-medium">Arguments</p>
+        <pre className={pre}>{toolArguments(input.arguments)}</pre>
+      </div>
+    </div>
+  );
+}
+
+// Pretty-printed when the model sent JSON, as sent otherwise.
+function toolArguments(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw || "(none)";
+  }
 }
 
 function HitTable({ hits, scoreLabel }: { hits: readonly TracedHit[]; scoreLabel: string }) {

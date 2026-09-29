@@ -129,8 +129,13 @@ export interface Retriever {
 
 export type QueryRewriteMode = "none" | "standalone" | "multi";
 
-// What the latest message asks for. Only `cv` messages need sources.
-export type QueryScope = "cv" | "smalltalk" | "off_topic";
+// What the latest message asks for. Only `cv` messages need sources. `contact`: the visitor
+// wants to reach the subject or leave a message (Phase 4).
+export type QueryScope = "cv" | "smalltalk" | "off_topic" | "contact";
+
+// The scopes the decision router chooses from. It reads a contact request as `cv`, so it defers
+// to the rewriter and never short-circuits one.
+export type RouteScope = Exclude<QueryScope, "contact">;
 
 export type RewriteInput = {
   message: string;
@@ -170,8 +175,8 @@ export type RouteDecision = {
   // Set only for a confident short-circuit. Null: the rewriter decides, as without a router.
   scope: "smalltalk" | "off_topic" | null;
   // Null after a fallback.
-  probabilities: Record<QueryScope, number> | null;
-  choice: QueryScope | null;
+  probabilities: Record<RouteScope, number> | null;
+  choice: RouteScope | null;
   // The model that answered, as the provider named it. Null when nothing answered.
   model: string | null;
   // True when the router could not decide: a provider error, a timeout or an unreadable answer.

@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 4.2 (Gmail sender) on `master`, after 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
+Last updated after Phase 4.3 (tools in the chat turn) on `master`, after 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 4.2. `EmailSender` domain, `readEmailEnv`, MIME builder, `GmailEmailSender`, OAuth helpers, `email:token` and `email:test` scripts. Built; waiting on the owner's Google OAuth setup and test email. |
+| (next) | Phase 4.3. `send_email` draft tool, `runAnswerLoop`, `contact` scope, email drafts on conversations, `tool` trace stage and step. Built; the done-when waits on the email settings. |
+| `58890ae` | Phase 4.2. `EmailSender` domain, `readEmailEnv`, MIME builder, `GmailEmailSender`, OAuth helpers, `email:token` and `email:test` scripts. Built; waiting on the owner's Google OAuth setup and test email. |
 | `557bbe4` | Phase 4.1. Tools, tool choice, tool messages and streamed `tool_call` events in `OpenRouterClient`. Done; live-checked on `z-ai/glm-5.3-flash`. |
 | `03a5e16` | Phase 2.14 steps 3–9. `DecisionScopeRouter`, `scopeRouter` / `minRouteConfidence`, `route` stage, trace panel, public step, playground fields, eval scope columns; router default `typesafe/jev-1.13`. Built, not browser-checked. |
 | `03a5e16` | Phase 2.14a. Small talk gets the fixed `smalltalkReply` (no answer-model call) and, like off topic, stops retrieval after `rewrite`. Built, not live-checked. |
@@ -74,7 +75,7 @@ Phase 2.14 (scope routing) is built, not Done: the owner chose `typesafe/jev-1.1
 
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check.
 
-Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built but not Done. Its done-when is the owner's 4.2 checkpoint: a Google OAuth client (Desktop app, Gmail API on, publishing status In production), `bun run email:token`, the values in `.env.local` and Vercel, then `bun run email:test` arriving in the inbox. Next: that checkpoint, then Phase 4.3 when the owner asks.
+Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built but not Done. Its done-when is the owner's 4.2 checkpoint: a Google OAuth client (Desktop app, Gmail API on, publishing status In production), `bun run email:token`, the values in `.env.local` and Vercel, then `bun run email:test` arriving in the inbox. Phase 4.3 (tools in the chat turn) is built but not Done. Its done-when needs working email settings: on 2026-09-29 `.env.local` had the six email names with blank values. Next: the 4.2 checkpoint, then the 4.3 done-when curl, then Phase 4.4 when the owner asks.
 
 ## Environment
 
@@ -474,6 +475,15 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 - **Headers.** Only `To` and `Subject` are built from input, and a line break in either throws before any request. The body is base64, so its text cannot add headers. No `From` or `Date`: Gmail fills them in.
 - **Scripts.** `bun run email:token` (`scripts/gmail-refresh-token.ts`) is for the owner and needs a browser. Agents must not run it against real credentials. It listens on `127.0.0.1` port 0 with `node:http`, since there are no Bun global types. `bun run email:test` sends a real email, so run it only when the owner asks.
 - **Test matchers.** The new tests use only the matchers in `server/auth/bun-test.d.ts`. `test.each`, `toMatch`, `toStartWith` and `resolves` pass at runtime but fail `tsc` and the build.
+
+## Tools in the chat turn (Phase 4.3)
+
+- **Where.** `server/domain/agent.ts` (`AgentTool`, `ToolContext`, `ToolOutcome`), `server/agent/email-draft-tool.ts` (`EmailDraftTool`, `SEND_EMAIL_TOOL`) and `server/agent/answer-loop.ts` (`runAnswerLoop`). `chat-runtime.ts` offers the tool only when `readEmailEnv()` is non-null.
+- **The model only drafts.** `run` stores a `pending` draft on the conversation (`emailDrafts`, kept out of `messages`) and sends `email_draft` to the visitor. Nothing in 4.3 sends mail; 4.4 adds the Send endpoint. A draft holds visitor contact details: it lives in `chat_conversations` (30-day TTL) and the admin trace, never in a public step.
+- **Scopes.** The rewriter has four scopes; the decision router keeps three (`RouteScope`) and reads a contact request as `cv`, so it defers. Small talk keeps its fixed reply and gets no tools (Plan deviation: step 6 listed small talk). Without email settings, `contact` gets `contactUnavailableReply`.
+- **One tool round.** Round 1 has the tools on `auto`; round 2, only after a call, has them on `none` and must see a `tool` message for every call id. Tool rules are in the system prompt because the provider drops tool definitions under `none` (4.1).
+- **Steps.** The client lists one step per name, so `AnswerSteps` sends `reasoning` and `generate` once each across both rounds. Ignored calls are in the trace only.
+- **Checked live without email settings** (2026-09-29): the done-when message is rewritten as `contact` and gets the fixed reply; "What is Lwin's email address?" stays `cv`. The tool path (draft, round 2) is covered by unit tests only.
 
 ## Scaffold removal
 

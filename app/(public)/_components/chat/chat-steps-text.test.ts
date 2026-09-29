@@ -12,6 +12,7 @@ import {
   stepDuration,
   stepLabel,
   stepSummary,
+  toolDetailText,
 } from "@/app/(public)/_components/chat/chat-steps-text";
 import type { ChatStepDetail, ChatStepHit, ChatStepName } from "@/server/domain/chat";
 
@@ -126,6 +127,26 @@ test("summarizes fusion, reranking, the filter, embedding and the answer", () =>
   expect(stepSummary(step("generate", { kind: "generate", sources: 5 }))).toBe("5 sources");
   expect(stepSummary(step("generate", { kind: "generate", sources: 1 }))).toBe("1 source");
   expect(stepSummary(step("generate", { kind: "generate", sources: 0 }))).toBe("No sources");
+});
+
+test("the tool step reads as drafting an email and never shows the draft", () => {
+  expect(stepLabel(running("tool"))).toBe("Drafting an email…");
+  const drafted = step("tool", { kind: "tool", name: "send_email", outcome: "drafted" });
+  expect(stepLabel(drafted)).toBe("Drafted an email");
+  expect(stepSummary(drafted)).toBe("send_email");
+  expect(stepSummary(step("tool", { kind: "tool", name: "send_email", outcome: "invalid" }))).toBe(
+    "Nothing drafted",
+  );
+  expect(toolDetailText("drafted")).toBe("Waiting for you to press Send.");
+  expect(toolDetailText("failed")).toBe("The email could not be drafted.");
+});
+
+test("a contact request is labelled as one", () => {
+  expect(
+    stepSummary(
+      step("rewrite", { kind: "rewrite", queries: ["x"], scope: "contact", fallback: false }),
+    ),
+  ).toBe("Contact request");
 });
 
 test("says nothing extra for reasoning, a missing detail, or a running step", () => {

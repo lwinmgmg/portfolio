@@ -21,11 +21,31 @@ export type StoredMessage = ChatTurn & {
   createdAt: string;
 };
 
+// ---- Email drafts: the send_email tool drafts, and only the visitor's Send click sends ----
+
+// Longest draft text, in UTF-16 code units.
+export const EMAIL_DRAFT_MAX_CHARS = 2_000;
+
+// A pending draft older than this can no longer be sent.
+export const EMAIL_DRAFT_TTL_MS = 3_600_000;
+
+export type EmailDraftStatus = "pending" | "sending" | "sent" | "failed" | "discarded" | "superseded";
+
+export type EmailDraft = {
+  id: string;
+  text: string;
+  status: EmailDraftStatus;
+  createdAt: string;
+  sentAt: string | null;
+};
+
 export type Conversation = {
   id: string;
   // The public session that owns the conversation.
   sessionId: string;
   messages: StoredMessage[];
+  // Oldest first. Kept out of `messages`, so the history stays text only.
+  emailDrafts: EmailDraft[];
   createdAt: string;
   updatedAt: string;
 };
@@ -36,6 +56,8 @@ export interface ConversationRepository {
   findForSession(id: string, sessionId: string): Promise<Conversation | null>;
   create(sessionId: string): Promise<Conversation>;
   append(id: string, messages: StoredMessage[]): Promise<void>;
+  // Adds the draft and marks the conversation's older pending drafts `superseded`, in one write.
+  addEmailDraft(conversationId: string, draft: EmailDraft): Promise<void>;
   countUserMessagesForSession(sessionId: string): Promise<number>;
   countUserMessagesSince(since: Date): Promise<number>;
 }
@@ -58,7 +80,11 @@ export const CHAT_STEP_HITS = 10;
 // Longest reasoning text kept after the turn (in the trace, and later in the browser transcript).
 export const CHAT_REASONING_MAX_CHARS = 8_000;
 
-// The retrieval stage names (STAGE in trace-stages.ts), plus the answer model's reasoning.
+// What one tool call came to. `invalid`: the arguments did not parse. `ignored`: a call after
+// the turn's first. `failed`: the tool threw.
+export type ToolCallOutcome = "drafted" | "invalid" | "unknown_tool" | "ignored" | "failed";
+
+// The stage names (STAGE in trace-stages.ts), plus the answer model's reasoning.
 export type ChatStepName =
   | "route"
   | "rewrite"
@@ -69,7 +95,8 @@ export type ChatStepName =
   | "rerank"
   | "filter"
   | "reasoning"
-  | "generate";
+  | "generate"
+  | "tool";
 
 export type ChatStepStatus = "running" | "done" | "failed";
 
@@ -103,7 +130,9 @@ export type ChatStepDetail =
   | { kind: "rerank"; fallback: boolean; hits: (ChatStepHit & { fusedRank: number })[] }
   | { kind: "filter"; minScore: number; kept: number; dropped: ChatStepHit[] }
   | { kind: "reasoning" }
-  | { kind: "generate"; sources: number };
+  | { kind: "generate"; sources: number }
+  // Never the arguments: a draft's text reaches only its own session, in `email_draft`.
+  | { kind: "tool"; name: string; outcome: ToolCallOutcome };
 
 export type ChatStep = {
   name: ChatStepName;
@@ -128,6 +157,8 @@ export type ChatEvent =
   // The answer model's reasoning, streamed before the answer.
   | { type: "reasoning"; text: string }
   | { type: "delta"; text: string }
+  // The send_email tool drafted this; it is sent only when the visitor presses Send.
+  | { type: "email_draft"; draft: { id: string; text: string } }
   | { type: "sources"; sources: ChatSource[] }
   | { type: "done" }
   | { type: "error"; code: ChatErrorCode }

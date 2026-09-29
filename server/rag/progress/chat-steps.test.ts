@@ -432,6 +432,28 @@ test("the route step shows only the scope and whether the router fell back", () 
   expect(JSON.stringify(failed)).not.toContain("secret");
 });
 
+test("the tool step shows the tool's name and outcome, never its arguments", () => {
+  const drafted = finishedStep(
+    stage(
+      "tool",
+      { outcome: "drafted", draftId: "draft-1" },
+      { input: { name: "send_email", arguments: '{"text":"secret draft"}' } },
+    ),
+  );
+  const unknown = finishedStep(
+    stage(
+      "tool",
+      { outcome: "unknown_tool", draftId: null },
+      { input: { name: "x".repeat(100), arguments: "{}" } },
+    ),
+  );
+
+  expect(drafted?.detail).toEqual({ kind: "tool", name: "send_email", outcome: "drafted" });
+  expect(JSON.stringify(drafted)).not.toContain("secret");
+  expect(unknown?.detail).toEqual({ kind: "tool", name: "x".repeat(64), outcome: "unknown_tool" });
+  expect(finishedStep(stage("tool", { outcome: "drafted", draftId: null }))?.detail).toBe(null);
+});
+
 test("a stage that is not a chat step gives no step", () => {
   expect(finishedStep(stage("unknown", null))).toBe(null);
   expect(isChatStepName("toString")).toBe(false);

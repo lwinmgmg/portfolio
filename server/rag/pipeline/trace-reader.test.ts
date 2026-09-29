@@ -128,6 +128,38 @@ test("a filter keeps its mean, and older traces without it still parse", () => {
   ]);
 });
 
+test("a tool stage is parsed with its call and outcome; a failed one stays raw", () => {
+  const input = { name: "send_email", arguments: '{"text":"Hi Lwin"}' };
+  const view = readTrace(
+    traceWith([
+      stage("tool", input, { outcome: "drafted", draftId: "draft-1" }),
+      stage("tool", input, { outcome: "failed", draftId: null }, "database down"),
+      stage("tool", input, { outcome: "sent", draftId: null }),
+    ]),
+  );
+
+  expect(view.stages[0]?.detail).toEqual({
+    kind: "tool",
+    input,
+    output: { outcome: "drafted", draftId: "draft-1" },
+  });
+  expect(view.stages[1]?.detail.kind).toBe("raw");
+  expect(view.stages[2]?.detail.kind).toBe("raw");
+});
+
+test("a rewrite scored as contact parses", () => {
+  const view = readTrace(
+    traceWith([
+      stage(
+        "rewrite",
+        { message: "Tell him hi", history: [], mode: "standalone", subjectName: "Ada" },
+        { queries: ["Tell him hi"], scope: "contact", raw: null },
+      ),
+    ]),
+  );
+  expect(view.stages[0]?.detail).toMatchObject({ kind: "rewrite", output: { scope: "contact" } });
+});
+
 test("a failed, unknown or reshaped stage falls back to raw JSON", () => {
   const view = readTrace(
     traceWith([

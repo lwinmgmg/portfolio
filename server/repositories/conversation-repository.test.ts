@@ -73,11 +73,18 @@ test("create stores an empty conversation for the session", async () => {
 
   const conversation = await new MongoConversationRepository(() => now).create("session-1");
 
-  expect(stored).toEqual({ sessionId: "session-1", messages: [], createdAt: now, updatedAt: now });
+  expect(stored).toEqual({
+    sessionId: "session-1",
+    messages: [],
+    emailDrafts: [],
+    createdAt: now,
+    updatedAt: now,
+  });
   expect(conversation).toEqual({
     id: conversationId,
     sessionId: "session-1",
     messages: [],
+    emailDrafts: [],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   });
@@ -122,6 +129,109 @@ test("findForSession filters by id and owner and maps dates to ISO strings", asy
       createdAt: now.toISOString(),
     },
   ]);
+});
+
+test("a conversation stored before email drafts reads with none; drafts map to ISO strings", async () => {
+  const documents = [
+    { _id: new TestObjectId(conversationId), sessionId: "s", messages: [], createdAt: now, updatedAt: now },
+    {
+      _id: new TestObjectId(conversationId),
+      sessionId: "s",
+      messages: [],
+      emailDrafts: [
+        { id: "d1", text: "Hi", status: "sent", createdAt: now, sentAt: now },
+        { id: "d2", text: "Hello", status: "pending", createdAt: now, sentAt: null },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  activeCollection = readyCollection({ findOne: async () => documents.shift() ?? null });
+  const repository = new MongoConversationRepository();
+
+  expect((await repository.findForSession(conversationId, "s"))?.emailDrafts).toEqual([]);
+  expect((await repository.findForSession(conversationId, "s"))?.emailDrafts).toEqual([
+    { id: "d1", text: "Hi", status: "sent", createdAt: now.toISOString(), sentAt: now.toISOString() },
+    { id: "d2", text: "Hello", status: "pending", createdAt: now.toISOString(), sentAt: null },
+  ]);
+});
+
+test("addEmailDraft supersedes pending drafts and adds the new one in a single pipeline update", async () => {
+  const calls: unknown[][] = [];
+  activeCollection = readyCollection({
+    updateOne: async (...args: unknown[]) => {
+      calls.push(args);
+      return { matchedCount: 1 };
+    },
+  });
+
+  await new MongoConversationRepository().addEmailDraft(conversationId, {
+    id: "draft-2",
+    text: "$where: I'm Jane",
+    status: "pending",
+    createdAt: "2026-09-29T10:00:05.000Z",
+    sentAt: null,
+  });
+
+  expect(calls).toHaveLength(1);
+  const [filter, update] = calls[0] as [{ _id: TestObjectId }, unknown];
+  expect(filter._id.toHexString()).toBe(conversationId);
+  const createdAt = new Date("2026-09-29T10:00:05.000Z");
+  expect(update).toEqual([
+    {
+      $set: {
+        emailDrafts: {
+          $concatArrays: [
+            {
+              $map: {
+                input: { $ifNull: ["$emailDrafts", []] },
+                as: "draft",
+                in: {
+                  $cond: [
+                    { $eq: ["$$draft.status", "pending"] },
+                    { $mergeObjects: ["$$draft", { status: "superseded" }] },
+                    "$$draft",
+                  ],
+                },
+              },
+            },
+            // A literal, so text starting with `$` is not read as a field path.
+            [
+              {
+                $literal: {
+                  id: "draft-2",
+                  text: "$where: I'm Jane",
+                  status: "pending",
+                  createdAt,
+                  sentAt: null,
+                },
+              },
+            ],
+          ],
+        },
+        updatedAt: { $max: ["$updatedAt", createdAt] },
+      },
+    },
+  ]);
+});
+
+test("addEmailDraft throws for a malformed or missing conversation", async () => {
+  activeCollection = readyCollection({ updateOne: async () => ({ matchedCount: 0 }) });
+  const repository = new MongoConversationRepository();
+  const draft = {
+    id: "d",
+    text: "t",
+    status: "pending" as const,
+    createdAt: "2026-09-29T10:00:00.000Z",
+    sentAt: null,
+  };
+
+  await expect(repository.addEmailDraft("nope", draft)).rejects.toMatchObject({
+    message: 'Conversation id "nope" is not valid.',
+  });
+  await expect(repository.addEmailDraft(conversationId, draft)).rejects.toMatchObject({
+    message: `Conversation "${conversationId}" was not found.`,
+  });
 });
 
 test("findForSession returns null for a malformed id without a query", async () => {

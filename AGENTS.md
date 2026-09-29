@@ -86,7 +86,7 @@ client/                       Browser-side data access.
   query/                      TanStack Query client and provider.
 
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.
-  domain/                     Types and interfaces only, no I/O: auth, blob-store, chat, cv, email, llm, public-session, rag.
+  domain/                     Types and interfaces only, no I/O: agent, auth, blob-store, chat, cv, email, llm, public-session, rag.
   db/                         Mongo client singleton (getDb) and runTransaction / TransactionContext.
   repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace, rag-settings, conversation.
   services/                   Business logic with injected dependencies.
@@ -96,13 +96,14 @@ server/                       All server logic. Layered: domain -> repositories/
     rag-settings-service.ts   The chat's saved retrieval config (parsed on read, defaults on a stale one).
     retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
-    chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, streamed answer, stored turn and trace.
+    chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, answer via runAnswerLoop (tools when email is set), stored turn and trace.
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
   http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers.
   storage/                    VercelBlobStore implements the BlobStore interface.
   llm/                        OpenRouter client (chat, embeddings, rerank, decisions), SSE parser, usage meter, adaptive chat client (drops options an endpoint refuses), llm-env, PDF-to-Markdown, llm-runtime (getLlm).
   email/                      Email env (readEmailEnv), MIME builder, Google OAuth helpers, GmailEmailSender (hand-written fetch adapter, never resends).
+  agent/                      Answer-model tools: EmailDraftTool (send_email, drafts only) and runAnswerLoop (one tool round per turn). Pure.
   cv/                         CV zod schema, ids, markdown rendering, LLM extractor and prompt, issues, legacy migration, download.
   rag/                        Contextual RAG pipeline. Pure; I/O is injected.
     corpus/                   CvCorpusSource: published CV as the corpus.
@@ -130,6 +131,7 @@ server/                       All server logic. Layered: domain -> repositories/
 | A type or interface | `server/domain/<area>.ts` | `server/domain/rag.ts` |
 | Pure logic | `server/<feature>/` with a colocated test | `server/rag/search/bm25-index.ts` |
 | Constants a client form shares with a zod schema | A zod-free sibling module the schema imports | `server/rag/pipeline/retrieval-config-fields.ts` |
+| An answer-model tool | `server/agent/<name>-tool.ts` implementing `AgentTool`; offer it from `chat-runtime.ts` | `server/agent/email-draft-tool.ts` |
 | A new traced RAG stage | Output schema in `trace-stages.ts`, a case in `readTrace`, a panel in `rag/_components/trace-stage-panel.tsx` | the `rerank` stage |
 | A Mongo collection | `server/repositories/`, extend `MongoRepository` | `rag-index-repository.ts` |
 | A use case | `server/services/<name>-service.ts`; wire it in `<name>-runtime.ts` | `cv-service.ts` + `cv-runtime.ts` |

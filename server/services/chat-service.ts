@@ -1,7 +1,11 @@
+import { runAnswerLoop } from "@/server/agent/answer-loop";
+import { SEND_EMAIL_TOOL } from "@/server/agent/email-draft-tool";
+import type { AgentTool } from "@/server/domain/agent";
 import {
   CHAT_MESSAGE_MAX_CHARS,
   CHAT_REASONING_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
+  EMAIL_DRAFT_TTL_MS,
   type ChatEvent,
   type ChatLimitCode,
   type ChatSource,
@@ -13,7 +17,7 @@ import {
   type StoredMessage,
 } from "@/server/domain/chat";
 import type { CvVersionRepository } from "@/server/domain/cv";
-import type { ChatClient, ChatMessage, ReasoningLevel, Usage } from "@/server/domain/llm";
+import type { ChatClient, ChatMessage, ReasoningLevel, ToolCall, Usage } from "@/server/domain/llm";
 import {
   RagError,
   RetrievalError,
@@ -25,12 +29,15 @@ import {
   type RetrievalTrace,
   type RetrievedChunk,
   type TraceObserver,
+  type TraceStage,
 } from "@/server/domain/rag";
 import {
   ANSWER_HISTORY_TURNS,
   ANSWER_TEMPERATURE,
   answerGenerationSettings,
   buildAnswerMessages,
+  buildContactMessages,
+  contactUnavailableReply,
   noInformationReply,
   offTopicReply,
   smalltalkReply,
@@ -42,6 +49,8 @@ import {
   STAGE,
   type GenerateStageInput,
   type GenerateStageOutput,
+  type ToolStageInput,
+  type ToolStageOutput,
 } from "@/server/rag/pipeline/trace-stages";
 
 // Appended to a stored answer the visitor stopped before it finished.
@@ -73,6 +82,9 @@ export type ChatServiceDeps = {
   answerReasoning: ReasoningLevel;
   // User messages across all sessions per UTC day.
   dailyMessageLimit: number;
+  // Offered to the answer model for `cv` and `contact` turns. Empty (the default) when email is
+  // not configured: one plain answer call, and a contact request gets a fixed reply.
+  tools?: readonly AgentTool[];
   now?: () => Date;
   // Monotonic milliseconds for the generate stage. Defaults to performance.now().
   clock?: () => number;
@@ -81,6 +93,7 @@ export type ChatServiceDeps = {
 
 // What one reply works with once retrieval has run.
 type Turn = {
+  sessionId: string;
   conversation: Conversation;
   userMessage: StoredMessage;
   history: ChatTurn[];
@@ -102,11 +115,13 @@ export class ChatService {
   private readonly now: () => Date;
   private readonly clock: () => number;
   private readonly log: Log;
+  private readonly tools: readonly AgentTool[];
 
   constructor(private readonly deps: ChatServiceDeps) {
     this.now = deps.now ?? (() => new Date());
     this.clock = deps.clock ?? (() => performance.now());
     this.log = deps.log ?? ((message, error) => console.error(message, error));
+    this.tools = deps.tools ?? [];
   }
 
   async *reply(request: ChatReplyRequest): AsyncGenerator<ChatEvent, void, undefined> {
@@ -174,6 +189,7 @@ export class ChatService {
     }
 
     const turn: Turn = {
+      sessionId: request.sessionId,
       conversation,
       userMessage,
       history,
@@ -182,15 +198,29 @@ export class ChatService {
       retrievedAt: this.clock(),
       signal: request.signal,
     };
-    if (retrieval.scope === "off_topic") {
-      yield* this.fixedReply(turn, offTopicReply(subjectName));
-    } else if (retrieval.scope === "smalltalk") {
-      yield* this.fixedReply(turn, smalltalkReply(subjectName));
-    } else if (retrieval.scope === "cv" && retrieval.chunks.length === 0) {
-      // Nothing passed retrieval, e.g. every chunk scored below `minRerankScore`.
-      yield* this.fixedReply(turn, noInformationReply(subjectName));
-    } else {
-      yield* this.generate(turn);
+    switch (retrieval.scope) {
+      case "off_topic":
+        yield* this.fixedReply(turn, offTopicReply(subjectName));
+        return;
+      // Small talk keeps its fixed reply (2.14a), so it never reaches a model that has tools.
+      case "smalltalk":
+        yield* this.fixedReply(turn, smalltalkReply(subjectName));
+        return;
+      case "contact":
+        if (this.tools.length === 0) {
+          yield* this.fixedReply(turn, contactUnavailableReply(subjectName));
+        } else {
+          yield* this.generate(turn, "contact");
+        }
+        return;
+      case "cv":
+        if (retrieval.chunks.length === 0) {
+          // Nothing passed retrieval, e.g. every chunk scored below `minRerankScore`.
+          yield* this.fixedReply(turn, noInformationReply(subjectName));
+        } else {
+          yield* this.generate(turn, "cv");
+        }
+        return;
     }
   }
 
@@ -245,56 +275,106 @@ export class ChatService {
     yield { type: "done" };
   }
 
-  private async *generate(turn: Turn): AsyncGenerator<ChatEvent, void, undefined> {
+  private async *generate(
+    turn: Turn,
+    mode: "cv" | "contact",
+  ): AsyncGenerator<ChatEvent, void, undefined> {
+    // A contact turn is only generated when tools are offered.
+    const { tools } = this;
     const chunks: RetrievedChunk[] = turn.retrieval.chunks;
-    const messages: ChatMessage[] = buildAnswerMessages({
-      subjectName: turn.subjectName,
-      history: turn.history,
-      message: turn.userMessage.text,
-      chunks,
-    });
+    const pendingDraft = tools.length > 0 ? pendingDraftText(turn.conversation, this.now()) : null;
+    const messages: ChatMessage[] =
+      mode === "cv"
+        ? buildAnswerMessages({
+            subjectName: turn.subjectName,
+            history: turn.history,
+            message: turn.userMessage.text,
+            chunks,
+            emailTool: tools.some((tool) => tool.definition.name === SEND_EMAIL_TOOL),
+            pendingDraft,
+          })
+        : buildContactMessages({
+            subjectName: turn.subjectName,
+            history: turn.history,
+            message: turn.userMessage.text,
+            pendingDraft,
+          });
     const input: GenerateStageInput = {
       model: this.deps.answerModel,
-      mode: "cv",
+      mode,
       sources: chunks.length,
       historyTurns: Math.min(turn.history.length, ANSWER_HISTORY_TURNS),
+      tools: tools.map((tool) => tool.definition.name),
+      pendingDraft: pendingDraft !== null,
     };
 
     const started = this.clock();
     const steps = new AnswerSteps(input, started, (t) => onTraceTimeline(turn, t));
+    const toolStages: TraceStage[] = [];
+    let toolStarted = started;
     let text = "";
     let reasoning = "";
     let usage: Usage | null = null;
+    let rounds: number | undefined;
     let outcome: Outcome = "streaming";
     let error: string | null = null;
     let sources: ChatSource[] = [];
     let ended = started;
     try {
       try {
-        const stream = this.deps.chat.stream({
-          model: this.deps.answerModel,
-          messages,
-          ...answerGenerationSettings(this.deps.answerReasoning),
-          temperature: ANSWER_TEMPERATURE,
-          signal: turn.signal,
+        const loop = runAnswerLoop({
+          chat: this.deps.chat,
+          request: {
+            model: this.deps.answerModel,
+            messages,
+            ...answerGenerationSettings(this.deps.answerReasoning),
+            temperature: ANSWER_TEMPERATURE,
+            signal: turn.signal,
+          },
+          tools,
+          context: {
+            conversationId: turn.conversation.id,
+            sessionId: turn.sessionId,
+            now: this.now(),
+          },
         });
-        for await (const event of stream) {
-          if (event.type === "done") {
-            usage = event.usage;
-            continue;
+        for await (const event of loop) {
+          switch (event.type) {
+            case "done":
+              usage = event.usage;
+              rounds = event.rounds;
+              break;
+            // Reasoning is shown to the visitor but is not part of the answer.
+            case "reasoning":
+              yield* steps.reasoningText();
+              reasoning += event.text;
+              yield { type: "reasoning", text: event.text };
+              break;
+            case "delta":
+              yield* steps.answerText(() => this.clock());
+              text += event.text;
+              yield { type: "delta", text: event.text };
+              break;
+            case "tool_started":
+              toolStarted = this.clock();
+              yield* steps.toolStarted(toolStarted);
+              break;
+            case "tool_ended": {
+              const toolEnded = this.clock();
+              const stage = toolStage(turn, event.call, event, toolStarted, toolEnded);
+              toolStages.push(stage);
+              if (event.error !== null) this.log("Chat tool failed.", event.error);
+              yield* steps.toolEnded(stage, toolEnded);
+              if (event.event) yield event.event;
+              break;
+            }
+            // Only in the trace: the visitor sees the call that ran.
+            case "tool_ignored": {
+              const now = this.clock();
+              toolStages.push(toolStage(turn, event.call, ignoredTool, now, now));
+              break;
+            }
           }
-          // Reasoning is shown to the visitor but is not part of the answer.
-          if (event.type === "reasoning") {
-            yield* steps.reasoningText();
-            reasoning += event.text;
-            yield { type: "reasoning", text: event.text };
-            continue;
-          }
-          // No tools are offered here, so a provider cannot legitimately send a call.
-          if (event.type === "tool_call") continue;
-          yield* steps.answerText(() => this.clock());
-          text += event.text;
-          yield { type: "delta", text: event.text };
         }
         // An answer with no text still has a generate step to finish.
         yield* steps.answerText(() => this.clock());
@@ -320,9 +400,10 @@ export class ChatService {
         stopped,
         citedSourceIds: sources.map((source) => source.sourceId),
         reasoning: reasoning ? reasoning.slice(0, CHAT_REASONING_MAX_CHARS) : null,
+        ...(rounds === undefined ? {} : { rounds }),
       };
       ended = this.clock();
-      const trace = withGenerateStage(turn, input, output, error, started, ended);
+      const trace = withGenerateStage(turn, input, output, error, started, ended, toolStages);
       // A failed answer is not stored, so it does not count toward the limits.
       if (outcome !== "failed") {
         await this.appendTurn(turn, stopped ? stoppedText(text) : text, sources, trace.id);
@@ -376,6 +457,39 @@ export class ChatService {
   }
 }
 
+// The newest draft, when it is still pending and young enough to send (Plan 4 draft lifetime).
+function pendingDraftText(conversation: Conversation, now: Date): string | null {
+  const newest = conversation.emailDrafts.at(-1);
+  if (!newest || newest.status !== "pending") return null;
+  return now.getTime() - Date.parse(newest.createdAt) < EMAIL_DRAFT_TTL_MS ? newest.text : null;
+}
+
+const ignoredTool: Pick<ToolStageOutput, "outcome" | "draftId"> & { error: null } = {
+  outcome: "ignored",
+  draftId: null,
+  error: null,
+};
+
+// A `tool` trace stage. A tool that threw keeps its error there; the visitor's step only fails.
+function toolStage(
+  turn: Turn,
+  call: ToolCall,
+  result: Pick<ToolStageOutput, "outcome" | "draftId"> & { error: string | null },
+  started: number,
+  ended: number,
+): TraceStage {
+  const input: ToolStageInput = { name: call.name, arguments: call.arguments };
+  const output: ToolStageOutput = { outcome: result.outcome, draftId: result.draftId };
+  return {
+    name: STAGE.tool,
+    input,
+    output,
+    startedAt: onTraceTimeline(turn, started),
+    durationMs: ended - started,
+    error: result.error,
+  };
+}
+
 function stoppedText(text: string): string {
   const partial = text.trimEnd();
   return partial ? `${partial} ${STOPPED_SUFFIX}` : STOPPED_SUFFIX;
@@ -407,35 +521,58 @@ function stepEvents(step: ChatStep | null): ChatEvent[] {
 type AnswerStepName = Extract<ChatStepName, "reasoning" | "generate">;
 
 // The visitor's steps for the answer: `reasoning` while the model thinks, then `generate` from
-// the first answer text. Each method returns the step events to send; times are clock readings.
+// the first answer text. A tool call adds a `tool` step between them. Each method returns the
+// step events to send; times are clock readings.
+//
+// The client lists one step per name, so each name is sent once: round 2's reasoning streams
+// without a second `reasoning` step, and `generate` stays running across a tool call when
+// round 1 already wrote text.
 class AnswerSteps {
   private current: { name: AnswerStepName; startedAt: number } | null = null;
+  private reasoned = false;
+  // When the next step starts: the ask, then the end of the tool call.
+  private resumeAt: number;
 
   constructor(
     private readonly input: GenerateStageInput,
     // When the model was asked. Its reasoning, or else its answer, is timed from here.
     private readonly started: number,
     private readonly onTimeline: (t: number) => number,
-  ) {}
+  ) {
+    this.resumeAt = started;
+  }
 
   // Before each reasoning text. Only the first, before any answer text, starts the step.
   reasoningText(): ChatEvent[] {
-    if (this.current) return [];
-    return this.start("reasoning", this.started);
+    if (this.current || this.reasoned) return [];
+    this.reasoned = true;
+    return this.start("reasoning", this.resumeAt);
   }
 
-  // Before each answer text. The first ends `reasoning`, if it ran, and starts `generate`.
+  // Before each answer text. The first ends `reasoning`, if it runs, and starts `generate`.
   answerText(clock: () => number): ChatEvent[] {
     if (this.current?.name === "generate") return [];
-    if (this.current === null) return this.start("generate", this.started);
+    if (this.current === null) return this.start("generate", this.resumeAt);
     const now = clock();
     return [...this.finish(now, null), ...this.start("generate", now)];
+  }
+
+  // Round 1's reasoning ends where the tool starts; a running `generate` goes on.
+  toolStarted(t: number): ChatEvent[] {
+    const events = this.current?.name === "reasoning" ? this.finish(t, null) : [];
+    return [...events, ...stepEvents(runningStep("tool", this.onTimeline(t)))];
+  }
+
+  // `stage` is the tool's trace stage, projected like the others.
+  toolEnded(stage: TraceStage, t: number): ChatEvent[] {
+    this.resumeAt = t;
+    return stepEvents(finishedStep(stage));
   }
 
   // Finishes the running step, or fails it with `error`. A failure before any step started is
   // the generate step's.
   end(ended: number, error: string | null): ChatEvent[] {
-    this.current ??= { name: "generate", startedAt: this.started };
+    this.current ??= { name: "generate", startedAt: this.resumeAt };
     return this.finish(ended, error);
   }
 
@@ -469,6 +606,8 @@ function withGenerateStage(
   error: string | null,
   started: number,
   ended: number,
+  // Tool calls made during generation, in start order, so after the generate stage.
+  toolStages: readonly TraceStage[],
 ): RetrievalTrace {
   const { trace } = turn.retrieval;
   const startedAt = onTraceTimeline(turn, started);
@@ -478,6 +617,7 @@ function withGenerateStage(
     stages: [
       ...trace.stages,
       { name: STAGE.generate, input, output, startedAt, durationMs, error },
+      ...toolStages,
     ],
     totalMs: startedAt + durationMs,
   };

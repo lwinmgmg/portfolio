@@ -7,6 +7,7 @@ import {
   SCORE_HINTS,
   scopeLabel,
   searchScale,
+  toolDetailText,
   type ScoreScale,
 } from "@/app/(public)/_components/chat/chat-steps-text";
 import { sourceSectionLabel } from "@/app/(public)/_components/chat/chat-text";
@@ -143,6 +144,8 @@ export function ChatStepDetailView({
             : `Answered from ${detail.sources} ${detail.sources === 1 ? "source" : "sources"}.`}
         </p>
       );
+    case "tool":
+      return <p>{toolDetailText(detail.outcome)}</p>;
   }
 }
 

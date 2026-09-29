@@ -17,7 +17,7 @@ export const GoldenItemSchema = z
     // Earlier turns, oldest first, for follow-up questions.
     history: z.array(ChatTurnSchema).default([]),
     // How the chat should classify the question. Only `cv` items are scored for retrieval.
-    expectedScope: z.enum(["cv", "smalltalk", "off_topic"]).default("cv"),
+    expectedScope: z.enum(["cv", "smalltalk", "off_topic", "contact"]).default("cv"),
     // A retrieved chunk is relevant when it carries any of these keys.
     relevantEntityKeys: z.array(nonBlank).default([]),
     tags: z.array(nonBlank).default([]),

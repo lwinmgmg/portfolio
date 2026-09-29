@@ -41,6 +41,11 @@ test("only a non-cv item may leave out its relevant keys", () => {
     { id: "hi", question: "hi!", expectedScope: "smalltalk", tags: ["scope"] },
   ]);
   expect(greeting?.relevantEntityKeys).toEqual([]);
+  const [contact] = parseGoldenSet([
+    { id: "reach", question: "Tell him I'd like to talk. I'm Sam, sam@x.io", expectedScope: "contact" },
+  ]);
+  expect(contact?.expectedScope).toBe("contact");
+  expect(contact?.relevantEntityKeys).toEqual([]);
   expect(errorOf([{ id: "q1", question: "Where?" }]).message).toContain("relevant entity key");
   errorOf([item("q1", { expectedScope: "weather" })]);
 });

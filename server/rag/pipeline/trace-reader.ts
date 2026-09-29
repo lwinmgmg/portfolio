@@ -12,6 +12,8 @@ import {
   RouteStageOutputSchema,
   SearchStageOutputSchema,
   STAGE,
+  ToolStageInputSchema,
+  ToolStageOutputSchema,
   type EmbedStageOutput,
   type FilterStageOutput,
   type FuseStageOutput,
@@ -21,6 +23,8 @@ import {
   type RouteStageInput,
   type RouteStageOutput,
   type SearchStageOutput,
+  type ToolStageInput,
+  type ToolStageOutput,
 } from "@/server/rag/pipeline/trace-stages";
 
 export type StageTiming = {
@@ -38,6 +42,7 @@ export type StageDetail =
   | { kind: "fuse"; output: FuseStageOutput }
   | { kind: "rerank"; output: RerankStageOutput }
   | { kind: "filter"; output: FilterStageOutput }
+  | { kind: "tool"; input: ToolStageInput; output: ToolStageOutput }
   // A failed stage, a stage this reader does not know, or one whose stored shape changed.
   | { kind: "raw"; input: string; output: string };
 
@@ -88,6 +93,11 @@ function detailOf(stage: TraceStage): StageDetail | null {
       return withOutput("rerank", RerankStageOutputSchema, stage.output);
     case STAGE.filter:
       return withOutput("filter", FilterStageOutputSchema, stage.output);
+    case STAGE.tool: {
+      const input = parsed(ToolStageInputSchema, stage.input);
+      const output = parsed(ToolStageOutputSchema, stage.output);
+      return input && output ? { kind: "tool", input, output } : null;
+    }
     default:
       return null;
   }
