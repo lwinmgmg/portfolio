@@ -290,6 +290,8 @@ export class ChatService {
             yield { type: "reasoning", text: event.text };
             continue;
           }
+          // No tools are offered here, so a provider cannot legitimately send a call.
+          if (event.type === "tool_call") continue;
           yield* steps.answerText(() => this.clock());
           text += event.text;
           yield { type: "delta", text: event.text };

@@ -16,7 +16,7 @@ export async function preparePdfChatRequest(
 
   const messages: ChatMessage[] = [];
   for (const message of request.messages) {
-    if (typeof message.content === "string") {
+    if (message.role === "tool" || typeof message.content === "string") {
       messages.push(message);
       continue;
     }

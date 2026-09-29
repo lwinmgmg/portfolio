@@ -17,6 +17,9 @@ import {
   type ReasoningSetting,
   type RerankClient,
   type RerankResult,
+  type ToolCall,
+  type ToolChoice,
+  type ToolDefinition,
   type Usage,
 } from "@/server/domain/llm";
 import { parseSse } from "@/server/llm/sse";
@@ -60,10 +63,18 @@ type WireFilePart = {
   };
 };
 
-type WireMessage = {
-  role: ChatMessage["role"];
-  content: string | Array<WireTextPart | WireFilePart>;
+type WireContent = string | Array<WireTextPart | WireFilePart>;
+
+type WireToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
 };
+
+type WireMessage =
+  | { role: "system" | "user"; content: WireContent }
+  | { role: "assistant"; content: WireContent | null; tool_calls?: WireToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
 
 type ChatBody = {
   model: string;
@@ -85,6 +96,8 @@ type ChatBody = {
     pdf: { engine: Exclude<PdfEngine, "pdf-to-md"> };
   }>;
   reasoning?: { effort: ReasoningEffort } | { enabled: false };
+  tools?: Array<{ type: "function"; function: ToolDefinition }>;
+  tool_choice?: ToolChoice;
 };
 
 type OpenRouterPath = "/chat/completions" | "/embeddings" | "/rerank" | typeof DECISIONS_PATH;
@@ -247,10 +260,12 @@ export class OpenRouterClient
     }
 
     let usage: Usage | null = null;
+    const toolCalls = new ToolCallAssembly();
     for await (const data of parseSse(body)) {
       const chunk = interpretChunk(data);
       if (chunk.error) throw chunk.error;
       if (chunk.usage) usage = chunk.usage;
+      for (const fragment of chunk.toolCalls) toolCalls.add(fragment);
       // One chunk can carry both; the reasoning came first.
       if (chunk.reasoning !== null) {
         onYield();
@@ -262,6 +277,11 @@ export class OpenRouterClient
       }
     }
 
+    // Calls are only complete once the stream ends. Until they are yielded, a failure can still retry.
+    for (const call of toolCalls.calls()) {
+      onYield();
+      yield { type: "tool_call", call };
+    }
     onYield();
     yield { type: "done", usage };
   }
@@ -349,6 +369,14 @@ function chatBody(request: ChatRequest, stream: boolean): ChatBody {
     body.plugins = [{ id: "file-parser", pdf: { engine: request.pdfEngine } }];
   }
   if (request.reasoning) body.reasoning = wireReasoning(request.reasoning);
+  // `tool_choice` without `tools` is refused by some providers, so it only goes with them.
+  if (request.tools && request.tools.length > 0) {
+    body.tools = request.tools.map((tool) => ({
+      type: "function",
+      function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+    }));
+    if (request.toolChoice) body.tool_choice = request.toolChoice;
+  }
   return body;
 }
 
@@ -357,10 +385,30 @@ function wireReasoning(setting: ReasoningSetting): NonNullable<ChatBody["reasoni
 }
 
 function mapMessage(message: ChatMessage): WireMessage {
-  if (typeof message.content === "string") {
-    return { role: message.role, content: message.content };
+  switch (message.role) {
+    case "tool":
+      return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
+    case "assistant": {
+      const content = mapContent(message.content);
+      if (!message.toolCalls || message.toolCalls.length === 0) return { role: "assistant", content };
+      // A call-only turn has no text. Some providers refuse an empty text block; null is "no text".
+      return {
+        role: "assistant",
+        content: content === "" ? null : content,
+        tool_calls: message.toolCalls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      };
+    }
+    default:
+      return { role: message.role, content: mapContent(message.content) };
   }
-  return { role: message.role, content: message.content.map(mapPart) };
+}
+
+function mapContent(content: string | ContentPart[]): WireContent {
+  return typeof content === "string" ? content : content.map(mapPart);
 }
 
 function mapPart(part: ContentPart): WireTextPart | WireFilePart {
@@ -389,15 +437,22 @@ function parseChatResult(payload: unknown, fallbackModel: string): ChatResult {
   if (!choice || !isRecord(choice.message)) {
     throw failed("OpenRouter chat response is missing a message");
   }
-  if (typeof choice.message.content !== "string") {
+  const content = choice.message.content;
+  const toolCalls = Array.isArray(choice.message.tool_calls)
+    ? choice.message.tool_calls.filter(isRecord).map((item) => toolCallFields(item))
+    : [];
+  // A call-only answer may carry null content; anything else still needs text.
+  if (typeof content !== "string" && !(content == null && toolCalls.length > 0)) {
     throw failed("OpenRouter chat response is missing text");
   }
 
-  return {
-    text: choice.message.content,
+  const result: ChatResult = {
+    text: typeof content === "string" ? content : "",
     usage: readUsage(record),
     model: typeof record.model === "string" && record.model.length > 0 ? record.model : fallbackModel,
   };
+  if (toolCalls.length > 0) result.toolCalls = toolCalls;
+  return result;
 }
 
 function parseEmbeddings(
@@ -510,9 +565,13 @@ function readDecisionUsage(payload: Record<string, unknown>): Usage | null {
 type StreamChunk = {
   reasoning: string | null;
   delta: string | null;
+  toolCalls: ToolCallFragment[];
   usage: Usage | null;
   error: LlmProviderError | null;
 };
+
+/** One `delta.tool_calls` entry. The first fragment of a call has the id and name. */
+type ToolCallFragment = ToolCall & { index: number | null };
 
 function interpretChunk(data: string): StreamChunk {
   let payload: unknown;
@@ -530,9 +589,67 @@ function interpretChunk(data: string): StreamChunk {
   return {
     reasoning: readDeltaText(record, "reasoning"),
     delta: readDeltaText(record, "content"),
+    toolCalls: readToolCallFragments(record),
     usage: readUsage(record),
     error: readStreamError(record),
   };
+}
+
+function readToolCallFragments(payload: Record<string, unknown>): ToolCallFragment[] {
+  const choice = firstChoice(payload);
+  if (!choice || !isRecord(choice.delta) || !Array.isArray(choice.delta.tool_calls)) return [];
+  return choice.delta.tool_calls
+    .filter(isRecord)
+    .map((item) => ({ ...toolCallFields(item), index: integerValue(item.index) }));
+}
+
+// Fields a provider leaves out become "". Arguments stay raw text; an object is serialized back.
+function toolCallFields(item: Record<string, unknown>): ToolCall {
+  const fn = isRecord(item.function) ? item.function : {};
+  const args = fn.arguments;
+  return {
+    id: typeof item.id === "string" ? item.id : "",
+    name: typeof fn.name === "string" ? fn.name : "",
+    arguments: typeof args === "string" ? args : isRecord(args) ? JSON.stringify(args) : "",
+  };
+}
+
+/**
+ * Joins streamed tool-call fragments by `index`. The id and name are taken from the first fragment
+ * that has them (some providers repeat them); arguments are appended in arrival order.
+ */
+class ToolCallAssembly {
+  private readonly byIndex = new Map<number, ToolCall>();
+  private lastIndex: number | null = null;
+
+  add(fragment: ToolCallFragment): void {
+    const index = fragment.index ?? this.implicitIndex(fragment.id);
+    let call = this.byIndex.get(index);
+    if (!call) {
+      call = { id: "", name: "", arguments: "" };
+      this.byIndex.set(index, call);
+    }
+    if (call.id === "") call.id = fragment.id;
+    if (call.name === "") call.name = fragment.name;
+    call.arguments += fragment.arguments;
+    this.lastIndex = index;
+  }
+
+  calls(): ToolCall[] {
+    return [...this.byIndex.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, call]) => ({ ...call }));
+  }
+
+  // Without an index, a fragment continues the last call unless it brings a different id.
+  private implicitIndex(id: string): number {
+    if (this.lastIndex === null) return 0;
+    const last = this.byIndex.get(this.lastIndex);
+    if (id !== "" && last && last.id !== "" && last.id !== id) {
+      return Math.max(...this.byIndex.keys()) + 1;
+    }
+    return this.lastIndex;
+  }
 }
 
 // Empty strings are skipped; providers send them alongside finish_reason and usage.

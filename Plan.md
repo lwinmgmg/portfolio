@@ -1500,6 +1500,19 @@ mistake cannot send mail by itself.
 5. Tests: body mapping with and without tools; fragments split across SSE chunks; two parallel calls; content before a tool call; reasoning (Phase 3.1) interleaved with tool-call fragments.
 6. **Live check:** one `stream()` call to `LLM_ANSWER_MODEL` with a trivial tool and a message that needs it. The model lists `tools` and `tool_choice` on OpenRouter. Record under **As built** whether it calls the tool, streams the call in fragments, and honours `tool_choice: "none"`. If it does not call tools reliably, report it and do not change the model.
 
+**Status:** Done
+
+**As built**
+- `ToolDefinition`, `ToolCall`, `ToolChoice` and the role-discriminated `ChatMessage` are in `server/domain/llm.ts`. `ChatRole` is now `ChatMessage["role"]`. `ChatResult.toolCalls` is optional and set only when the model called a tool, so existing results and test fakes are unchanged.
+- Body: `tools` is sent only when the list is non-empty, and `tool_choice` only together with `tools`. Some providers refuse a choice with no tools. An assistant message with `toolCalls` and empty text is sent as `content: null`, because some providers refuse an empty text block. An empty `toolCalls` list maps to a plain assistant message.
+- Stream: `interpretChunk` reads `delta.tool_calls`, and a private `ToolCallAssembly` in `openrouter-client.ts` joins the fragments by `index`. The first non-empty id and name are kept, since some providers repeat them, and arguments are appended in order. A fragment with no `index` continues the last call unless it brings a new id. Calls are emitted in index order at the end of the stream, after every `delta` and before `done`. Until they are emitted nothing is visible, so a failure mid-call still retries. `sse.ts` is unchanged.
+- `complete()` accepts `content: null` when `tool_calls` is present (text `""`). An `arguments` object from a provider is serialized back to JSON text.
+- Outside the listed files: `ChatService.generate` skips `tool_call` events, since it offers no tools until 4.3. `pdf-chat-request.ts` passes tool messages through unchanged.
+- **Live check, 2026-09-29.** `.env.local` sets `LLM_ANSWER_MODEL=z-ai/glm-5.3-flash`, not the §1.1 default, so the check ran on GLM. All 34 of its OpenRouter endpoints list `tools` and `tool_choice`. The tool was `get_word_count({ text })`, with the answer settings at `low` reasoning and 3 runs:
+  - `auto`: 3/3 called the tool. The call arrived in 4, 10 and 4 raw fragments, and the arguments parsed (`{"text":"the quick brown fox jumps"}`). There was no reasoning and no text in that round, and it took 1.5–7.0 s.
+  - Follow-up (assistant `toolCalls`, a `tool` result, `tool_choice: "none"`): 3/3 returned text ("There are **5 words** …") with no call, in 1.0–1.3 s.
+  - `tool_choice: "none"` on the first question: 3/3 answered with no call, with reasoning and then text. **The prompt tokens fell from 200 to 28**, so the provider drops the tool definitions under `none`. The model even said it had no tool. For 4.3, round 2 does not see the tool description, so the "never say it was sent" rule must be in the system prompt as well (step 6 already puts the tool rules there).
+
 **Done when**
 - The live check yields a `tool_call` event with parseable arguments, and a follow-up request with the tool result yields a text answer.
 

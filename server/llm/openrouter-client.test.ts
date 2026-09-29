@@ -573,6 +573,327 @@ test("complete returns only the content and ignores reasoning", async () => {
   expect(result.text).toBe("Answer");
 });
 
+const LOOKUP_TOOL = {
+  name: "lookup",
+  description: "Look a word up.",
+  parameters: { type: "object", properties: { word: { type: "string" } }, required: ["word"] },
+};
+
+function toolFragment(fragment: {
+  index?: number;
+  id?: string;
+  name?: string;
+  arguments?: string;
+}): string {
+  const call: Record<string, unknown> = { function: {} };
+  if (fragment.index !== undefined) call.index = fragment.index;
+  if (fragment.id !== undefined) {
+    call.id = fragment.id;
+    call.type = "function";
+  }
+  const fn: Record<string, unknown> = {};
+  if (fragment.name !== undefined) fn.name = fragment.name;
+  if (fragment.arguments !== undefined) fn.arguments = fragment.arguments;
+  call.function = fn;
+  return event({ choices: [{ delta: { tool_calls: [call] } }] });
+}
+
+const TOOL_CALLS_FINISH = event({
+  choices: [{ delta: {}, finish_reason: "tool_calls" }],
+  usage: { prompt_tokens: 20, completion_tokens: 8 },
+});
+
+test("maps tools, tool choice, assistant tool calls and tool results to the body", async () => {
+  const { fetch, requests } = createFetch([jsonResult(200, completion("It means hello."))]);
+  const { client } = createClient(fetch);
+
+  await client.complete(
+    chatRequest({
+      messages: [
+        { role: "user", content: "What is 'hola'?" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "call_1", name: "lookup", arguments: '{"word":"hola"}' }],
+        },
+        { role: "tool", toolCallId: "call_1", content: '{"meaning":"hello"}' },
+        {
+          role: "assistant",
+          content: "Checking.",
+          toolCalls: [{ id: "call_2", name: "lookup", arguments: "{}" }],
+        },
+        { role: "assistant", content: "Plain", toolCalls: [] },
+      ],
+      tools: [LOOKUP_TOOL],
+      toolChoice: "none",
+    }),
+  );
+
+  expect(requireRequest(requests).body).toEqual({
+    model: "requested/model",
+    messages: [
+      { role: "user", content: "What is 'hola'?" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "lookup", arguments: '{"word":"hola"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: '{"meaning":"hello"}' },
+      {
+        role: "assistant",
+        content: "Checking.",
+        tool_calls: [{ id: "call_2", type: "function", function: { name: "lookup", arguments: "{}" } }],
+      },
+      { role: "assistant", content: "Plain" },
+    ],
+    tools: [{ type: "function", function: LOOKUP_TOOL }],
+    tool_choice: "none",
+  });
+});
+
+test("leaves the body unchanged without tools, even with a tool choice", async () => {
+  for (const tools of [undefined, []]) {
+    const { fetch, requests } = createFetch([jsonResult(200, completion("ok"))]);
+    const { client } = createClient(fetch);
+    await client.complete(chatRequest({ tools, toolChoice: "auto" }));
+    expect(requireRequest(requests).body).toEqual({
+      model: "requested/model",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+  }
+});
+
+test("sends tools without tool_choice when no choice is given", async () => {
+  const { fetch, requests } = createFetch([jsonResult(200, completion("ok"))]);
+  const { client } = createClient(fetch);
+
+  await client.complete(chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  const body = requireRequest(requests).body as Record<string, unknown>;
+  expect(body.tools).toEqual([{ type: "function", function: LOOKUP_TOOL }]);
+  expect(Object.keys(body)).not.toContain("tool_choice");
+});
+
+test("assembles a tool call from fragments split across SSE chunks", async () => {
+  const middle = toolFragment({ index: 0, arguments: '"word":"ho' });
+  const { fetch } = createFetch([
+    sseResult([
+      toolFragment({ index: 0, id: "call_1", name: "lookup", arguments: "" }),
+      toolFragment({ index: 0, arguments: "{" }),
+      middle.slice(0, 20),
+      middle.slice(20),
+      toolFragment({ index: 0, arguments: 'la"}' }),
+      TOOL_CALLS_FINISH,
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events, error } = await collectStream(
+    client,
+    chatRequest({ tools: [LOOKUP_TOOL], toolChoice: "auto" }),
+  );
+
+  expect(error).toBeNull();
+  expect(events).toEqual([
+    { type: "tool_call", call: { id: "call_1", name: "lookup", arguments: '{"word":"hola"}' } },
+    { type: "done", usage: { promptTokens: 20, completionTokens: 8, cost: null } },
+  ]);
+});
+
+test("emits parallel calls in index order", async () => {
+  const { fetch } = createFetch([
+    sseResult([
+      toolFragment({ index: 1, id: "call_b", name: "lookup", arguments: '{"word":' }),
+      toolFragment({ index: 0, id: "call_a", name: "lookup", arguments: '{"word":"a"}' }),
+      toolFragment({ index: 1, arguments: '"b"}' }),
+      TOOL_CALLS_FINISH,
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events } = await collectStream(client, chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  expect(events.filter((item) => item.type === "tool_call")).toEqual([
+    { type: "tool_call", call: { id: "call_a", name: "lookup", arguments: '{"word":"a"}' } },
+    { type: "tool_call", call: { id: "call_b", name: "lookup", arguments: '{"word":"b"}' } },
+  ]);
+});
+
+test("streams content before the tool call it precedes", async () => {
+  const { fetch } = createFetch([
+    sseResult([
+      event({ choices: [{ delta: { content: "Let me " } }] }),
+      event({ choices: [{ delta: { content: "check." } }] }),
+      toolFragment({ index: 0, id: "call_1", name: "lookup", arguments: '{"word":"hola"}' }),
+      TOOL_CALLS_FINISH,
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events } = await collectStream(client, chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  expect(events.map((item) => item.type)).toEqual(["delta", "delta", "tool_call", "done"]);
+});
+
+test("streams reasoning interleaved with tool-call fragments", async () => {
+  const { fetch } = createFetch([
+    sseResult([
+      event({ choices: [{ delta: { reasoning: "Need a lookup." } }] }),
+      event({
+        choices: [
+          {
+            delta: {
+              reasoning: " Calling it.",
+              tool_calls: [
+                { index: 0, id: "call_1", type: "function", function: { name: "lookup", arguments: "{" } },
+              ],
+            },
+          },
+        ],
+      }),
+      event({ choices: [{ delta: { reasoning: " Almost." } }] }),
+      toolFragment({ index: 0, arguments: '"word":"hola"}' }),
+      TOOL_CALLS_FINISH,
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events } = await collectStream(
+    client,
+    chatRequest({ tools: [LOOKUP_TOOL], reasoning: { effort: "low" } }),
+  );
+
+  expect(events).toEqual([
+    { type: "reasoning", text: "Need a lookup." },
+    { type: "reasoning", text: " Calling it." },
+    { type: "reasoning", text: " Almost." },
+    { type: "tool_call", call: { id: "call_1", name: "lookup", arguments: '{"word":"hola"}' } },
+    { type: "done", usage: { promptTokens: 20, completionTokens: 8, cost: null } },
+  ]);
+});
+
+test("emits a call with no id, no name and unparseable arguments as it came", async () => {
+  const { fetch } = createFetch([
+    sseResult([toolFragment({ index: 0, arguments: '{"word": ' }), "data: [DONE]\n\n"]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events } = await collectStream(client, chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  expect(events).toEqual([
+    { type: "tool_call", call: { id: "", name: "", arguments: '{"word": ' } },
+    { type: "done", usage: null },
+  ]);
+});
+
+test("keeps the first id and name when a provider repeats them", async () => {
+  const { fetch } = createFetch([
+    sseResult([
+      toolFragment({ index: 0, id: "call_1", name: "lookup", arguments: '{"word":' }),
+      toolFragment({ index: 0, id: "call_1", name: "lookup", arguments: '"hola"}' }),
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events } = await collectStream(client, chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  expect(events[0]).toEqual({
+    type: "tool_call",
+    call: { id: "call_1", name: "lookup", arguments: '{"word":"hola"}' },
+  });
+});
+
+test("joins fragments without an index to the last call unless a new id starts one", async () => {
+  const { fetch } = createFetch([
+    sseResult([
+      toolFragment({ id: "call_a", name: "lookup", arguments: '{"word":' }),
+      toolFragment({ arguments: '"a"}' }),
+      toolFragment({ id: "call_b", name: "lookup", arguments: '{"word":"b"}' }),
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client } = createClient(fetch);
+
+  const { events } = await collectStream(client, chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  expect(events.filter((item) => item.type === "tool_call")).toEqual([
+    { type: "tool_call", call: { id: "call_a", name: "lookup", arguments: '{"word":"a"}' } },
+    { type: "tool_call", call: { id: "call_b", name: "lookup", arguments: '{"word":"b"}' } },
+  ]);
+});
+
+test("retries a stream that fails after tool fragments but before any event", async () => {
+  const { fetch, requests } = createFetch([
+    failingStream(
+      [toolFragment({ index: 0, id: "call_1", name: "lookup", arguments: '{"wo' })],
+      "socket hang up",
+    ),
+    sseResult([
+      toolFragment({ index: 0, id: "call_2", name: "lookup", arguments: '{"word":"hola"}' }),
+      "data: [DONE]\n\n",
+    ]),
+  ]);
+  const { client, delays } = createClient(fetch);
+
+  const { events, error } = await collectStream(client, chatRequest({ tools: [LOOKUP_TOOL] }));
+
+  expect(error).toBeNull();
+  expect(events).toEqual([
+    { type: "tool_call", call: { id: "call_2", name: "lookup", arguments: '{"word":"hola"}' } },
+    { type: "done", usage: null },
+  ]);
+  expect(requests.length).toBe(2);
+  expect(delays).toEqual([500]);
+});
+
+test("complete returns tool calls with null content and no toolCalls key otherwise", async () => {
+  const { fetch } = createFetch([
+    jsonResult(200, {
+      model: "served/model",
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "call_1", type: "function", function: { name: "lookup", arguments: '{"word":"hola"}' } },
+              { id: "call_2", type: "function", function: { name: "lookup", arguments: { word: "adios" } } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    }),
+    jsonResult(200, completion("Hello")),
+    jsonResult(200, { choices: [{ message: { role: "assistant", content: null } }] }),
+  ]);
+  const { client } = createClient(fetch);
+
+  const called = await client.complete(chatRequest({ tools: [LOOKUP_TOOL] }));
+  expect(called).toEqual({
+    text: "",
+    usage: null,
+    model: "served/model",
+    toolCalls: [
+      { id: "call_1", name: "lookup", arguments: '{"word":"hola"}' },
+      { id: "call_2", name: "lookup", arguments: '{"word":"adios"}' },
+    ],
+  });
+
+  const plain = await client.complete(chatRequest());
+  expect(Object.keys(plain)).not.toContain("toolCalls");
+
+  const empty = await capture(() => client.complete(chatRequest()));
+  expect(empty.message).toBe("OpenRouter chat response is missing text");
+});
+
 test("orders embedding vectors by index", async () => {
   const { fetch, requests } = createFetch([
     jsonResult(200, {

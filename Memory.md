@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.14 steps 3–9 (decision-model scope router on `typesafe/jev-1.13`) on `master`, after 2.14a (fixed small-talk reply) and 2.14 steps 1–2.
+Last updated after Phase 4.1 (tool calling in the LLM client) on `master`, after 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
 
 ## How to work
 
@@ -25,6 +25,7 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
+| (next) | Phase 4.1. Tools, tool choice, tool messages and streamed `tool_call` events in `OpenRouterClient`. Done; live-checked on `z-ai/glm-5.3-flash`. |
 | (next) | Phase 2.14 steps 3–9. `DecisionScopeRouter`, `scopeRouter` / `minRouteConfidence`, `route` stage, trace panel, public step, playground fields, eval scope columns; router default `typesafe/jev-1.13`. Built, not browser-checked. |
 | (next) | Phase 2.14a. Small talk gets the fixed `smalltalkReply` (no answer-model call) and, like off topic, stops retrieval after `rewrite`. Built, not live-checked. |
 | `26fa3fa` | Phase 2.14 steps 1–2. `OpenRouterClient.decide` (Decisions API), `LLM_ROUTER_MODEL`, route question and cutoff rule, `scripts/probe-scope-router.ts`. Probe: no-go for `respan/span-01-lite:free`; waiting on the owner. |
@@ -70,7 +71,9 @@ Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Pla
 
 Phase 2.14 (scope routing) is built, not Done: the owner chose `typesafe/jev-1.13` after Respan failed the probe, Jev passed, and steps 3–9 are in. Its done-when still needs the playground in a browser and a chat turn with `scopeRouter: "decision"` saved through "Use for chat", which only the owner should do. The owner's `.env.local` still names Respan as router model (see the Phase 2.14 section). Phase 2.14a (fixed small-talk reply, owner's request) is built, not Done: its done-when needs a live chat turn.
 
-Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check, then Phase 4.1 when the owner asks. Restart `next dev` first so it runs the post-3.1 LLM client (see Phase 3.3).
+Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check.
+
+Phase 4.1 (tool calling in the LLM client) is **Done**. The Plan.md §3 checkpoint comes next: the owner confirms the Phase 4 fixed decisions (draft then Send, limits, Gmail API over SMTP). Then Phase 4.2 when the owner asks.
 
 ## Environment
 
@@ -449,6 +452,18 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 - Eval effect: a golden CV question the rewriter misreads as small talk now retrieves nothing, so it counts as a miss (before, it retrieved but the chat ignored the chunks). That matches what the chat does.
 - Not checked live: no chat turn was sent.
 - **"Can he do X?" vs "do X for me".** "Can LWIN MAUNG MAUNG help me set up a VM on GCP?" risked `off_topic` (the definition listed "coding help"), which now means a canned reply to a possible client. `scopeDefinitions` now puts "whether <name> can help with some work (skills, services, availability)" under `cv` and "asking this assistant itself to do a task" under `off_topic`. `offTopicReply` adds "If you'd like <name>'s help with something, you can contact <name> directly." as a safety net. Live check 2026-09-29 on `z-ai/glm-5.3-flash`: the GCP pair (`cv-can-help`, `off-do-task` in `scope-probe.json`) and two controls all classified as expected, 1.0–1.8 s each. The golden set still holds only the Jane examples, so no golden item was added.
+
+## Tool calling in the LLM client (Phase 4.1)
+
+- **Types.** `ChatMessage` is a union keyed on `role`: assistant messages may carry `toolCalls`, and `tool` messages have `toolCallId`. Code that switches on `content` alone no longer narrows; check `role === "tool"` first (see `pdf-chat-request.ts`). `ChatResult.toolCalls` is present only when the model called a tool.
+- **Transport only.** The client never parses tool arguments. A call with no id or name, or arguments that are not valid JSON, is still emitted (`""` for missing fields). 4.3's tools validate the arguments.
+- **Stream order.** `tool_call` events come at the end of the stream, after all `delta`s and before `done`. Until then a failure is still retried; once one is yielded, it is not.
+- **Wire details.** `tool_choice` is sent only with a non-empty `tools`. A call-only assistant message is sent with `content: null`.
+- **Consumers.** Any `for await` over `stream()` that treats "not reasoning, not done" as a delta must now skip `tool_call`. `ChatService.generate` does this until 4.3 offers tools.
+- **Live behaviour of `z-ai/glm-5.3-flash`** (the configured answer model, 2026-09-29):
+  - It called the tool 3/3 times with `auto`, in 4–10 fragments, with no text in that round.
+  - A follow-up with the tool result and `none` answered in text.
+  - Under `none` the tool definitions are dropped from the prompt (200 → 28 prompt tokens). In 4.3, put the tool rules in the system prompt, not only in the tool description.
 
 ## Scaffold removal
 

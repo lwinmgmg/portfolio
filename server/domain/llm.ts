@@ -1,13 +1,28 @@
-export type ChatRole = "system" | "user" | "assistant";
-
 export type ContentPart =
   | { type: "text"; text: string; cacheControl?: boolean }
   | { type: "file"; filename: string; dataUrl: string };
 
-export type ChatMessage = {
-  role: ChatRole;
-  content: string | ContentPart[];
+/** A function the model may call. `parameters` is a JSON Schema object. */
+export type ToolDefinition = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
 };
+
+/**
+ * A call the model made. `arguments` is the model's raw JSON text, unparsed: the client is a
+ * transport, so the caller validates it. `id` and `name` are "" when the provider sent none.
+ */
+export type ToolCall = { id: string; name: string; arguments: string };
+
+export type ToolChoice = "auto" | "none";
+
+export type ChatMessage =
+  | { role: "system" | "user"; content: string | ContentPart[] }
+  | { role: "assistant"; content: string | ContentPart[]; toolCalls?: ToolCall[] }
+  | { role: "tool"; toolCallId: string; content: string };
+
+export type ChatRole = ChatMessage["role"];
 
 export type JsonSchemaFormat = {
   name: string;
@@ -35,6 +50,10 @@ export type ChatRequest = {
   pdfEngine?: PdfEngine;
   /** Absent: the body has no `reasoning` key and the model uses its own default. */
   reasoning?: ReasoningSetting;
+  /** Absent or empty: the body has no `tools` key. */
+  tools?: ToolDefinition[];
+  /** Maps to OpenRouter `tool_choice`. */
+  toolChoice?: ToolChoice;
   signal?: AbortSignal;
 };
 
@@ -48,11 +67,15 @@ export type ChatResult = {
   text: string;
   usage: Usage | null;
   model: string;
+  /** Present only when the model called at least one tool. */
+  toolCalls?: ToolCall[];
 };
 
+/** `tool_call` events come after every `delta`, one per assembled call, just before `done`. */
 export type ChatStreamEvent =
   | { type: "reasoning"; text: string }
   | { type: "delta"; text: string }
+  | { type: "tool_call"; call: ToolCall }
   | { type: "done"; usage: Usage | null };
 
 export interface ChatClient {
