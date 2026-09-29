@@ -15,16 +15,30 @@ type ChatComposerProps = {
   onSend: (message: string) => void;
   onStop: () => void;
   inputRef: React.Ref<HTMLTextAreaElement>;
+  // Called only when the trimmed text turns empty or non-empty (the robot listens while typing).
+  onTypingChange: (typing: boolean) => void;
 };
 
-export function ChatComposer({ streaming, onSend, onStop, inputRef }: ChatComposerProps) {
+export function ChatComposer({
+  streaming,
+  onSend,
+  onStop,
+  inputRef,
+  onTypingChange,
+}: ChatComposerProps) {
   const [value, setValue] = useState("");
   const empty = value.trim().length === 0;
+
+  function change(next: string) {
+    const nextEmpty = next.trim().length === 0;
+    setValue(next);
+    if (nextEmpty !== empty) onTypingChange(!nextEmpty);
+  }
 
   function submit() {
     if (streaming || empty) return;
     onSend(value);
-    setValue("");
+    change("");
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -50,7 +64,7 @@ export function ChatComposer({ streaming, onSend, onStop, inputRef }: ChatCompos
         ref={inputRef}
         id="chat-input"
         value={value}
-        onChange={(event) => setValue(event.target.value)}
+        onChange={(event) => change(event.target.value)}
         onKeyDown={handleKeyDown}
         readOnly={streaming}
         aria-disabled={streaming}

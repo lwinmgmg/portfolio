@@ -7,6 +7,7 @@ import { ChatMessages } from "@/app/(public)/_components/chat/chat-messages";
 import { CHAT_NOTICES } from "@/app/(public)/_components/chat/chat-state";
 import { useChat } from "@/app/(public)/_components/chat/use-chat";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
+import { Robot } from "@/app/(public)/_components/robot/robot";
 import { answerPreview } from "@/app/(public)/_components/robot/robot-answer-preview";
 import { RobotBubble, type BubbleContent } from "@/app/(public)/_components/robot/robot-bubble";
 import {
@@ -47,6 +48,8 @@ export function ChatWidget({
   // A drag that starts in the panel and ends on the backdrop must not close it.
   const pressedBackdrop = useRef(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  // The composer has text, so the header robot listens.
+  const [typing, setTyping] = useState(false);
   // An answer that finished while the panel was closed, until the panel opens again.
   const [unread, setUnread] = useState(false);
   // The robot's bubble previews that answer until the visitor opens the chat or closes it.
@@ -152,8 +155,12 @@ export function ChatWidget({
         className="right-0 left-auto h-dvh max-h-none w-full max-w-none bg-white text-zinc-900 shadow-2xl backdrop:bg-zinc-950/40 md:w-[28rem] md:border-l md:border-zinc-200 md:backdrop:bg-zinc-950/20 dark:bg-zinc-950 dark:text-zinc-100 dark:md:border-zinc-800"
       >
         <div className="flex h-full flex-col">
-          <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-            <h2 id="chat-title" className="flex-1 text-sm font-semibold">
+          <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
+            <Robot
+              mood={robotMood({ chat: state, typing, greeting: false })}
+              className="size-10 shrink-0"
+            />
+            <h2 id="chat-title" className="min-w-0 flex-1 truncate text-sm font-semibold">
               {TITLE}
             </h2>
             <button
@@ -195,6 +202,7 @@ export function ChatWidget({
             onSend={(message) => void send(message)}
             onStop={stopAnswer}
             inputRef={input}
+            onTypingChange={setTyping}
           />
         </div>
       </dialog>

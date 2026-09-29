@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import {
   greetingLines,
   greetingTarget,
+  panelIntro,
   type GreetingTarget,
 } from "@/app/(public)/_components/robot/robot-greeting-text";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
@@ -65,5 +66,17 @@ test("without the owner's name the greeting names no one", () => {
 test("the robot's name comes from the caller", () => {
   expect(greetingLines({ robotName: "Pip", ownerName: null, target: null }).opening).toBe(
     "Hi! I'm Pip. Ask me anything about this CV.",
+  );
+  expect(panelIntro({ robotName: "Pip", ownerName: null })).toBe(
+    "Hi, I'm Pip. Ask me anything about this CV.",
+  );
+});
+
+test("the empty chat's intro names the owner when there is one", () => {
+  expect(panelIntro({ robotName: "Bit", ownerName: "Lwin" })).toBe(
+    "Hi, I'm Bit. Ask me about Lwin's experience, skills or projects.",
+  );
+  expect(panelIntro({ robotName: "Bit", ownerName: null })).toBe(
+    "Hi, I'm Bit. Ask me anything about this CV.",
   );
 });

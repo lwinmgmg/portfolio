@@ -44,6 +44,19 @@ export function greetingLines({
   };
 }
 
+// The robot's line above the suggestions in an empty chat.
+export function panelIntro({
+  robotName,
+  ownerName,
+}: {
+  robotName: string;
+  ownerName: string | null;
+}): string {
+  return ownerName
+    ? `Hi, I'm ${robotName}. Ask me about ${ownerName}'s experience, skills or projects.`
+    : `Hi, I'm ${robotName}. Ask me anything about this CV.`;
+}
+
 function openingLine(robotName: string, ownerName: string | null, target: GreetingTarget | null) {
   if (!ownerName) {
     return target

@@ -7,6 +7,9 @@ import { ChatEmailDraft } from "@/app/(public)/_components/chat/chat-email-draft
 import type { ChatEntry } from "@/app/(public)/_components/chat/chat-state";
 import { stepAnnouncement } from "@/app/(public)/_components/chat/chat-steps-text";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
+import { Robot } from "@/app/(public)/_components/robot/robot";
+import { panelIntro } from "@/app/(public)/_components/robot/robot-greeting-text";
+import { ROBOT_NAME } from "@/app/(public)/_components/robot/robot-mood";
 
 // How close to the bottom (px) still counts as following the answer.
 const FOLLOW_THRESHOLD = 48;
@@ -66,10 +69,16 @@ export function ChatMessages({
       </p>
       {entries.length === 0 ? (
         <div className="flex min-h-full flex-col justify-end gap-4">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Ask about my experience, projects or skills. An AI assistant answers from this CV and
-            links each answer to its sources. It can make mistakes.
-          </p>
+          <div className="flex flex-col items-center gap-2 text-center">
+            <Robot mood="waving" className="size-24" />
+            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              {panelIntro({ robotName: ROBOT_NAME, ownerName })}
+            </p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              I&apos;m an AI assistant. I answer from this CV and link each answer to its sources.
+              I can make mistakes.
+            </p>
+          </div>
           <ul className="space-y-2" aria-label="Suggested questions">
             {suggestions.map((question) => (
               <li key={question}>

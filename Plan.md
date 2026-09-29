@@ -1923,13 +1923,22 @@ The no-information reply has no marker in the stream, so it gets `idle`, not `pu
 
 ## Phase 5.5: Robot in the chat panel
 
-**Files:** `app/(public)/_components/chat/chat-widget.tsx`, `chat-composer.tsx`, `chat-messages.tsx`.
+**Files:** `app/(public)/_components/chat/chat-widget.tsx`, `chat-composer.tsx`, `chat-messages.tsx`, `app/(public)/_components/robot/robot-greeting-text.ts` (+ test).
 
 **Steps**
 1. `ChatComposer` gains `onTypingChange(typing: boolean)`. It is called when the trimmed value turns empty or non-empty, including the clear after a send.
 2. Header: a 40 px robot before the title, with `robotMood({ chat, typing, greeting: false })`. The title text does not change.
 3. Empty chat: above the suggestions, a 96 px waving robot and "Hi, I'm Bit. Ask me about Lwin's experience, skills or projects." The name-less wording is as in 5.4.
 4. The robot has no live region. The existing `role="status"` in `chat-messages.tsx` still announces the steps.
+
+**Status:** Built. The done-when's browser checks (the moods through a real turn, 375 px, dark mode, keyboard, reduced motion) wait for the owner.
+
+**As built**
+- **Typing.** `ChatComposer` routes every change, and the clear after a send, through one `change()` that calls `onTypingChange` only when the trimmed text turns empty or non-empty. `ChatWidget` keeps `typing` and passes it to the header robot's mood; the launcher still gets `typing: false`. The composer keeps its text when the panel closes, so `typing` stays true with it and the robot listens again on reopening.
+- **Header.** `Robot` at `size-10 shrink-0` before the title. The header's padding went from `py-3` to `py-2`, so it grows by 8 px, not 16. The title gained `min-w-0 truncate`, so on a very narrow screen it shortens instead of wrapping.
+- **Empty chat.** The intro line is `panelIntro({ robotName, ownerName })` in `robot-greeting-text.ts`, next to the greeting lines; without a name it reads "Hi, I'm Bit. Ask me anything about this CV." `ChatMessages` already had `ownerName`, so it builds the line itself. The robot and line are centred above the suggestions. The old intro ("Ask about my experience, projects or skills. An AI assistant answers …") repeated the robot's line, so it became a smaller note in the robot's voice: "I'm an AI assistant. I answer from this CV and link each answer to its sources. I can make mistakes."
+- **Checked, 2026-09-30:** on the dev server, a headless Chrome DOM dump: the header robot is `idle`, the empty-chat robot is `waving`, and the intro reads "Hi, I'm Bit. Ask me about Lwin's experience, skills or projects." Estimated header width at 375 px: about 335 of the 343 px available.
+- **Not checked:** anything that needs the panel open or a real turn (headless Chrome cannot click): the moods through a turn, happy, puzzled and sad, 375 px, dark mode, keyboard and reduced motion.
 
 **Done when**
 - Through one turn the header robot listens while the visitor types, thinks during the steps, talks while the answer streams, and is idle after it.
