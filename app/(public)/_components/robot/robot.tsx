@@ -1,3 +1,5 @@
+import type { Ref } from "react";
+
 import type { RobotMood } from "@/app/(public)/_components/robot/robot-mood";
 import styles from "@/app/(public)/_components/robot/robot.module.css";
 
@@ -11,13 +13,16 @@ type RobotProps = {
   theme?: RobotTheme;
   // The reduced-motion view without the media query: nothing moves, the face still changes.
   still?: boolean;
+  // The launcher's eye tracking sets its variables on the element.
+  ref?: Ref<SVGSVGElement>;
 };
 
 // Every part is drawn once and the stylesheet picks what shows for `data-mood`, so a mood change
 // is a cross-fade, not a remount. The viewBox is 100 × 100; part origins in the CSS use its units.
-export function Robot({ mood, className, theme, still = false }: RobotProps) {
+export function Robot({ mood, className, theme, still = false, ref }: RobotProps) {
   return (
     <svg
+      ref={ref}
       aria-hidden="true"
       focusable="false"
       viewBox="0 0 100 100"

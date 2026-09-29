@@ -1849,6 +1849,17 @@ The no-information reply has no marker in the stream, so it gets `idle`, not `pu
    - On only for `(pointer: fine)` without reduced motion. The listener is removed on unmount.
 5. Tests: `eyeOffset` (direction, clamping, pointer on the centre).
 
+**Status:** Built. The done-when's browser checks (keyboard, eye tracking, 375 px, dark mode) wait for the owner.
+
+**As built**
+- The launcher is 56 px (`size-14`), 64 px from `md`, so at 375 px it covers less of the CV than the old pill button did.
+- The 3 px limit is in the drawing's 100-unit viewBox (about 2 px at launcher size), and the pupils reach it only when the pointer is at least `EYE_REACH_PX` (240 px) away, so they settle instead of snapping as the pointer crosses the robot. One eye centre (the middle of the face) serves both eyes.
+- Tracking is also off while the panel is open (the backdrop covers the launcher). It follows the media query live, so turning on reduced motion stops it.
+- While there is an unread answer, the accessible name becomes "Ask about my experience, new answer", so the dot is not visual only.
+- `unread` is set during render when `streaming` turns false with the panel closed (React's "adjust state on change" pattern), not in an effect. A failed or stopped turn also counts, since the panel then has something new to show.
+- Hover (only where the device can hover) and `:focus-visible` tilt the head and hop the whole SVG once; a press squashes the button. The rules sit in `robot.module.css` under `.launcher`, and reduced motion turns them off.
+- `Robot` gained a `ref` prop (React 19 ref as a prop) for the tracking hook.
+
 **Done when**
 - The robot replaces the button. Tab reaches it, Enter and Space open the chat, Esc closes it, and focus returns to the robot.
 - Eyes follow the mouse on desktop. Nothing tracks on a phone or with reduced motion.

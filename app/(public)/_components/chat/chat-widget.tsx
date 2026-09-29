@@ -1,12 +1,14 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { ChatComposer } from "@/app/(public)/_components/chat/chat-composer";
 import { ChatMessages } from "@/app/(public)/_components/chat/chat-messages";
 import { CHAT_NOTICES } from "@/app/(public)/_components/chat/chat-state";
 import { useChat } from "@/app/(public)/_components/chat/use-chat";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
+import { RobotLauncher } from "@/app/(public)/_components/robot/robot-launcher";
+import { robotMood } from "@/app/(public)/_components/robot/robot-mood";
 
 // Tailwind's `md`: from here the panel is a side sheet and the CV stays visible beside it.
 const WIDE_VIEWPORT = "(min-width: 48rem)";
@@ -17,7 +19,7 @@ function isWide(): boolean {
   return window.matchMedia(WIDE_VIEWPORT).matches;
 }
 
-// A floating button that opens the chat in a modal <dialog>. showModal() makes the page behind
+// A floating robot that opens the chat in a modal <dialog>. showModal() makes the page behind
 // inert (so focus stays in the panel) and closes on Esc; focus then returns to the button.
 export function ChatWidget({
   suggestions,
@@ -33,6 +35,14 @@ export function ChatWidget({
   const input = useRef<HTMLTextAreaElement>(null);
   // A drag that starts in the panel and ends on the backdrop must not close it.
   const pressedBackdrop = useRef(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  // An answer that finished while the panel was closed, until the panel opens again.
+  const [unread, setUnread] = useState(false);
+  const [wasStreaming, setWasStreaming] = useState(state.streaming);
+  if (wasStreaming !== state.streaming) {
+    setWasStreaming(state.streaming);
+    if (!state.streaming && !panelOpen) setUnread(true);
+  }
 
   // On a phone, focusing the input would open the keyboard over the suggestions.
   function focusInputIfWide() {
@@ -41,6 +51,8 @@ export function ChatWidget({
 
   function open() {
     restore();
+    setPanelOpen(true);
+    setUnread(false);
     dialog.current?.showModal();
     focusInputIfWide();
   }
@@ -73,20 +85,21 @@ export function ChatWidget({
 
   return (
     <>
-      <button
+      <RobotLauncher
         ref={trigger}
-        type="button"
+        mood={robotMood({ chat: state, typing: false, greeting: false })}
+        label={TITLE}
+        unread={unread}
+        tracking={!panelOpen}
         onClick={open}
-        aria-haspopup="dialog"
-        className={`${focusRing} fixed right-4 bottom-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-sm font-medium text-accent-foreground shadow-lg transition-opacity hover:opacity-90 motion-reduce:transition-none print:hidden`}
-      >
-        <ChatIcon />
-        {TITLE}
-      </button>
+      />
       <dialog
         ref={dialog}
         aria-labelledby="chat-title"
-        onClose={() => trigger.current?.focus({ preventScroll: true })}
+        onClose={() => {
+          setPanelOpen(false);
+          trigger.current?.focus({ preventScroll: true });
+        }}
         // A press on the dialog itself, not its content, is a press on the backdrop.
         onPointerDown={(event) => {
           pressedBackdrop.current = event.target === event.currentTarget;
@@ -144,14 +157,6 @@ export function ChatWidget({
         </div>
       </dialog>
     </>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="size-4">
-      <path d="M3.5 4A1.5 1.5 0 0 1 5 2.5h10A1.5 1.5 0 0 1 16.5 4v8a1.5 1.5 0 0 1-1.5 1.5H9.2l-3.4 3.1a.5.5 0 0 1-.8-.4v-2.7A1.5 1.5 0 0 1 3.5 12V4Z" />
-    </svg>
   );
 }
 

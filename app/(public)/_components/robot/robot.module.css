@@ -167,9 +167,10 @@
   transition: transform 200ms ease-out;
 }
 
-/* Where the eyes look. Zero until 5.3's eye tracking sets the variables on the launcher. */
+/* Where the eyes look: set on the SVG by the launcher's eye tracking, zero elsewhere. */
 .pupil {
   transform: translate(var(--eye-x, 0px), var(--eye-y, 0px));
+  transition: transform 120ms ease-out;
 }
 
 /* Face shapes: each is shown for its moods and cross-fades in 150 ms */
@@ -347,15 +348,61 @@
   animation-duration: 5s;
 }
 
+/* The launcher button: hover and keyboard focus tilt the head and hop once, a press squashes.
+   These come after the mood poses so they win the tie while they apply. */
+
+.launcher {
+  transform-origin: 50% 100%;
+  transition: transform 100ms ease-out;
+}
+
+.launcher:active {
+  transform: scale(1.08, 0.9);
+}
+
+.launcher:focus-visible .head {
+  transform: rotate(-8deg);
+}
+
+.launcher:focus-visible .robot {
+  animation: hop-once 450ms ease-out;
+}
+
+@media (hover: hover) {
+  .launcher:hover .head {
+    transform: rotate(-8deg);
+  }
+
+  .launcher:hover .robot {
+    animation: hop-once 450ms ease-out;
+  }
+}
+
 .robot[data-still] * {
   animation: none !important;
   transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .robot * {
+  .robot,
+  .robot *,
+  .launcher {
     animation: none !important;
     transition: none !important;
+  }
+
+  .launcher:active {
+    transform: none;
+  }
+}
+
+@keyframes hop-once {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-5px);
   }
 }
 
