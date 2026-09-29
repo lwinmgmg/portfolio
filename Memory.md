@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 4.4 (send endpoint) on `master`, after 4.2a, 4.3, 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
+Last updated after Phase 4.5 (draft card in the chat UI) on `master`, after 4.4, 4.2a, 4.3, 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 4.4. `POST /api/public/chat/email` (send or discard a draft), `ContactEmailService`, `EmailDraftStore` (atomic claim, marks, counts, stuck sweep) on the conversation repository, `EmailService.outbox()`. Built; the real-send done-when waits for the owner. |
+| (next) | Phase 4.5. Draft card under the answer (`chat-email-draft.tsx`), `email_draft` guard, `postPublicJson`, `client/api/contact-email.ts`, draft states in the reducer and storage, `ownerFirstName`. Built, not browser-checked. |
+| `857019f` | Phase 4.4. `POST /api/public/chat/email` (send or discard a draft), `ContactEmailService`, `EmailDraftStore` (atomic claim, marks, counts, stuck sweep) on the conversation repository, `EmailService.outbox()`. Built; the real-send done-when waits for the owner. |
 | `e316ee3` | Phase 4.2a. `/admin/email` connects Gmail through OAuth routes; the refresh token moves from the env to `email_connections`; `EmailService`; the two email scripts removed; chat tools looked up per turn. Gmail connected by 2026-09-30. |
 | `55b4ec8` | Phase 4.3. `send_email` draft tool, `runAnswerLoop`, `contact` scope, email drafts on conversations, `tool` trace stage and step. Built; the done-when waits on the email settings. |
 | `58890ae` | Phase 4.2. `EmailSender` domain, `readEmailEnv`, MIME builder, `GmailEmailSender`, OAuth helpers, `email:token` and `email:test` scripts (the scripts were removed in 4.2a). Built. |
@@ -77,7 +78,7 @@ Phase 2.14 (scope routing) is built, not Done: the owner chose `typesafe/jev-1.1
 
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check.
 
-Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built. On 2026-09-29 the owner chose to keep the Gmail API (not SMTP with an app password) but to connect Gmail from the admin UI, so Phase 4.2a replaced the token script and carries the done-when: a Google OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback`, Gmail API on, publishing status In production), the values in `.env.local` and Vercel, then **Connect Gmail** and **Send test email** on `/admin/email`. By 2026-09-30 the owner had connected Gmail. Phase 4.3 (tools in the chat turn) is **Done**: the owner tested it and reported that it works. Phase 4.4 (send endpoint) is built. Its done-when needs the owner: send a real draft with curl, see it arrive, and see a second Send do nothing. Next: that check, then Phase 4.5 (draft card) when the owner asks.
+Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built. On 2026-09-29 the owner chose to keep the Gmail API (not SMTP with an app password) but to connect Gmail from the admin UI, so Phase 4.2a replaced the token script and carries the done-when: a Google OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback`, Gmail API on, publishing status In production), the values in `.env.local` and Vercel, then **Connect Gmail** and **Send test email** on `/admin/email`. By 2026-09-30 the owner had connected Gmail. Phase 4.3 (tools in the chat turn) is **Done**: the owner tested it and reported that it works. Phase 4.4 (send endpoint) is built. Its done-when needs the owner: send a real draft with curl, see it arrive, and see a second Send do nothing. Phase 4.5 (draft card) is built but not browser-checked. Its done-when needs the owner in a browser: Send from the card, Discard, a second Send, 375 px and keyboard only. Next: those checks. Phase 4 has no further sub-phase in Plan.md.
 
 ## Environment
 
@@ -519,6 +520,19 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
   - a malformed conversation id on discard got 404.
 
   Agents must not send a real draft unless the owner asks.
+
+## Draft card in the chat UI (Phase 4.5)
+
+- **Where.**
+  - `app/(public)/_components/chat/chat-email-draft.tsx` holds the card. Its pure text is in `chat-email-text.ts`: `ownerFirstName`, `sendDraftLabel` and `draftResultText`.
+  - `chat-state.ts` has `EmailDraftState`, `EmailDraftCard`, `isDraftSendable`, `draftStateFor` and the `draft` action.
+  - `use-chat.ts` has `actOnDraft`.
+  - The client calls are `client/api/contact-email.ts` (`sendContactEmail`, `contactEmailOutcome`) and `postPublicJson` in `public-http.ts`.
+- **The card is the confirmation.** Send asks nothing more. The draft text is plain text (`whitespace-pre-wrap`), never Markdown, since the visitor and the model wrote it.
+- **Retry is safe because of 4.4's claim.** A `failed` card keeps Send. If the first request reached Gmail, the server answers 404 and the card reads "can no longer be sent". Do not add a client-side resend or a second claim path.
+- **States the plan did not list.** `sending` ("Sending…") and `discarded` ("Discarded."). `not_found` shows as `expired`, and `unavailable` shows as `failed`. Discard does not wait for the server.
+- **Focus.** It moves to the result line only after a button press (the `acted` ref), so a restored or superseded card never moves focus.
+- **Not browser-checked** (no browser tool here). The home page renders with `ownerName: "Lwin"` on the owner's dev server. Agents must not press Send on a real draft unless the owner asks.
 
 ## Scaffold removal
 

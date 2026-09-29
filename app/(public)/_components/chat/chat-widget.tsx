@@ -19,8 +19,15 @@ function isWide(): boolean {
 
 // A floating button that opens the chat in a modal <dialog>. showModal() makes the page behind
 // inert (so focus stays in the panel) and closes on Esc; focus then returns to the button.
-export function ChatWidget({ suggestions }: { suggestions: readonly string[] }) {
-  const { state, restore, send, stop, reset } = useChat();
+export function ChatWidget({
+  suggestions,
+  ownerName,
+}: {
+  suggestions: readonly string[];
+  // The CV owner's first name, for the draft card ("Send to Lwin"). Null when the CV has none.
+  ownerName: string | null;
+}) {
+  const { state, restore, send, stop, reset, actOnDraft } = useChat();
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -117,6 +124,8 @@ export function ChatWidget({ suggestions }: { suggestions: readonly string[] }) 
             suggestions={suggestions}
             onSuggestion={ask}
             onNavigate={handleNavigate}
+            ownerName={ownerName}
+            onDraft={(entryId, action) => void actOnDraft(entryId, action)}
           />
           {state.notice ? (
             <p

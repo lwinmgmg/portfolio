@@ -101,6 +101,16 @@ export async function getPublicJson<T>(
   return body;
 }
 
+export type PublicJsonResponse = { status: number; body: unknown };
+
+// Unlike getPublicJson, every status comes back with its body (undefined when it is not JSON),
+// so the caller maps its own codes. Throws only when the request never got a response.
+export async function postPublicJson(path: string, body: string): Promise<PublicJsonResponse> {
+  const response = await sessionFetch(path, { method: "POST", json: body });
+  const parsed: unknown = await response.json().catch(() => undefined);
+  return { status: response.status, body: parsed };
+}
+
 // Returns the response as soon as its headers arrive; the caller reads (or cancels) the body.
 // To stop early, cancel the body rather than aborting the fetch, for the reason on sessionFetch.
 export function postPublicStream(path: string, body: string): Promise<Response> {

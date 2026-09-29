@@ -150,6 +150,12 @@ test("parseChatEvent accepts known events and rejects the rest", () => {
     type: "sources",
     sources: [SOURCE],
   });
+  expect(parseChatEvent({ type: "email_draft", draft: { id: "d1", text: "Hi", extra: 1 } })).toEqual({
+    type: "email_draft",
+    draft: { id: "d1", text: "Hi" },
+  });
+  expect(parseChatEvent({ type: "email_draft", draft: { id: "d1" } })).toBeNull();
+  expect(parseChatEvent({ type: "email_draft", draft: "Hi" })).toBeNull();
   expect(parseChatEvent({ type: "error", code: "boom" })).toBeNull();
   expect(parseChatEvent({ type: "delta", text: 3 })).toBeNull();
   expect(parseChatEvent({ type: "trace", id: "t1" })).toBeNull();

@@ -52,6 +52,7 @@ const ANSWER: AssistantEntry = {
     { name: "rerank", status: "failed", startedAt: 800, durationMs: 20, detail: null },
   ],
   reasoning: "The CV says Acme.",
+  emailDraft: null,
 };
 
 // Stopped while reasoning: no text, and the running step marked stopped.
@@ -63,6 +64,7 @@ const STOPPED: AssistantEntry = {
   status: "stopped",
   steps: [{ name: "reasoning", status: "stopped", startedAt: 5, durationMs: null, detail: null }],
   reasoning: "Looking",
+  emailDraft: { id: "d1", text: "Hi Lwin,\nI'm Jane.", state: "sent" },
 };
 
 const ENTRIES: ChatEntry[] = [
@@ -130,6 +132,32 @@ test("an entry stored before steps existed loads with none", () => {
     QUESTION,
     { ...ANSWER, steps: [], reasoning: "" },
   ]);
+});
+
+test("an entry stored before drafts existed, or with an unreadable draft, loads without one", () => {
+  const storage = new MemoryStorage();
+  for (const emailDraft of [
+    undefined,
+    { id: "d1", text: "Hi", state: "queued" },
+    { id: 7, text: "Hi", state: "pending" },
+    "draft",
+  ]) {
+    storedWith(storage, { emailDraft });
+    expect(readStoredChat(storage).entries).toEqual([QUESTION, ANSWER]);
+  }
+});
+
+test("a draft saved mid-send comes back sendable; other states are kept", () => {
+  const storage = new MemoryStorage();
+  const draft = { id: "d1", text: "Hi", state: "sending" };
+  storedWith(storage, { emailDraft: draft });
+  expect(readStoredChat(storage).entries[1]).toMatchObject({
+    emailDraft: { ...draft, state: "pending" },
+  });
+  for (const state of ["pending", "failed", "expired", "discarded", "superseded", "limit"]) {
+    storedWith(storage, { emailDraft: { ...draft, state } });
+    expect(readStoredChat(storage).entries[1]).toMatchObject({ emailDraft: { ...draft, state } });
+  }
 });
 
 test("a stored step this client cannot read is skipped, and a bad detail is dropped", () => {

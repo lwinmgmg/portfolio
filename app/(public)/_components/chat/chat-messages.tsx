@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { ChatAnswer } from "@/app/(public)/_components/chat/chat-answer";
+import { ChatEmailDraft } from "@/app/(public)/_components/chat/chat-email-draft";
 import type { ChatEntry } from "@/app/(public)/_components/chat/chat-state";
 import { stepAnnouncement } from "@/app/(public)/_components/chat/chat-steps-text";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
@@ -16,6 +17,8 @@ type ChatMessagesProps = {
   suggestions: readonly string[];
   onSuggestion: (question: string) => void;
   onNavigate: () => void;
+  ownerName: string | null;
+  onDraft: (entryId: string, action: "send" | "discard") => void;
 };
 
 export function ChatMessages({
@@ -24,6 +27,8 @@ export function ChatMessages({
   suggestions,
   onSuggestion,
   onNavigate,
+  ownerName,
+  onDraft,
 }: ChatMessagesProps) {
   const scroller = useRef<HTMLDivElement>(null);
   // Follows the stream only while the reader is at the bottom, so scrolling up to reread is not
@@ -94,6 +99,15 @@ export function ChatMessages({
               <li key={entry.id}>
                 <span className="sr-only">Assistant: </span>
                 <ChatAnswer entry={entry} onNavigate={onNavigate} />
+                {entry.emailDraft ? (
+                  <ChatEmailDraft
+                    draft={entry.emailDraft}
+                    ownerName={ownerName}
+                    disabled={entry.status === "streaming"}
+                    onSend={() => onDraft(entry.id, "send")}
+                    onDiscard={() => onDraft(entry.id, "discard")}
+                  />
+                ) : null}
               </li>
             ),
           )}

@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 
 import {
   chatReducer,
+  draftStateFor,
+  EMAIL_DRAFT_STATES,
   INITIAL_CHAT_STATE,
+  isDraftSendable,
   type AssistantEntry,
   type ChatAction,
   type ChatState,
@@ -60,9 +63,66 @@ test("a streamed answer collects deltas and sources, then settles", () => {
         status: "done",
         steps: [],
         reasoning: "",
+        emailDraft: null,
       },
     ],
   });
+});
+
+function drafted(n: number, id: string): ChatAction[] {
+  return [
+    send(`Tell Lwin ${n}`, n),
+    event({ type: "meta", conversationId: "c1" }),
+    event({ type: "email_draft", draft: { id, text: `Hi Lwin ${n}` } }),
+    event({ type: "delta", text: "Check the draft and press Send." }),
+    { type: "end", outcome: "complete" },
+  ];
+}
+
+function draftOf(state: ChatState, entryId: string): AssistantEntry["emailDraft"] {
+  const entry = state.entries.find((item) => item.id === entryId);
+  return entry?.role === "assistant" ? entry.emailDraft : null;
+}
+
+test("an email_draft event puts a pending draft card on the streaming answer", () => {
+  const state = run(INITIAL_CHAT_STATE, ...drafted(1, "d1"));
+  expect(draftOf(state, "a1")).toEqual({ id: "d1", text: "Hi Lwin 1", state: "pending" });
+  expect(pending(state).text).toBe("Check the draft and press Send.");
+});
+
+test("a newer draft supersedes older sendable cards and leaves settled ones", () => {
+  const state = run(
+    INITIAL_CHAT_STATE,
+    ...drafted(1, "d1"),
+    ...drafted(2, "d2"),
+    { type: "draft", entryId: "a2", draftId: "d2", state: "sent" },
+    ...drafted(3, "d3"),
+    { type: "draft", entryId: "a3", draftId: "d3", state: "failed" },
+    ...drafted(4, "d4"),
+  );
+  expect(draftOf(state, "a1")?.state).toBe("superseded");
+  expect(draftOf(state, "a2")?.state).toBe("sent");
+  expect(draftOf(state, "a3")?.state).toBe("superseded");
+  expect(draftOf(state, "a4")?.state).toBe("pending");
+});
+
+test("a draft action changes only the card with that entry and draft id", () => {
+  const start = run(INITIAL_CHAT_STATE, ...drafted(1, "d1"));
+  const sending = run(start, { type: "draft", entryId: "a1", draftId: "d1", state: "sending" });
+  expect(draftOf(sending, "a1")?.state).toBe("sending");
+  expect(run(sending, { type: "draft", entryId: "a1", draftId: "other", state: "sent" })).toEqual(sending);
+  expect(run(sending, { type: "draft", entryId: "u1", draftId: "d1", state: "sent" })).toEqual(sending);
+});
+
+test("draft outcomes map to card states; only pending and failed cards can be sent", () => {
+  expect(draftStateFor("sent")).toBe("sent");
+  expect(draftStateFor("discarded")).toBe("discarded");
+  expect(draftStateFor("limit")).toBe("limit");
+  expect(draftStateFor("expired")).toBe("expired");
+  expect(draftStateFor("not_found")).toBe("expired");
+  expect(draftStateFor("failed")).toBe("failed");
+  expect(draftStateFor("unavailable")).toBe("failed");
+  expect(EMAIL_DRAFT_STATES.filter(isDraftSendable)).toEqual(["pending", "failed"]);
 });
 
 function running(name: ChatStepName, startedAt = 0): ChatAction {

@@ -70,6 +70,12 @@ export function parseChatEvent(value: unknown): ChatEvent | null {
       return typeof value.text === "string" ? { type: "reasoning", text: value.text } : null;
     case "delta":
       return typeof value.text === "string" ? { type: "delta", text: value.text } : null;
+    case "email_draft": {
+      const draft = value.draft;
+      return isRecord(draft) && typeof draft.id === "string" && typeof draft.text === "string"
+        ? { type: "email_draft", draft: { id: draft.id, text: draft.text } }
+        : null;
+    }
     case "sources":
       return Array.isArray(value.sources) && value.sources.every(isChatSource)
         ? { type: "sources", sources: value.sources }

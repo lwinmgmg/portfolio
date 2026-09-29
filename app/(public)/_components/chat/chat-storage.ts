@@ -2,8 +2,10 @@ import { isChatSource } from "@/client/api/chat";
 import { isRecord, readChatStep } from "@/client/api/chat-steps";
 import {
   ANSWER_STEP_STATUSES,
+  EMAIL_DRAFT_STATES,
   type AssistantStatus,
   type ChatEntry,
+  type EmailDraftCard,
 } from "@/app/(public)/_components/chat/chat-state";
 import { CHAT_REASONING_MAX_CHARS } from "@/server/domain/chat";
 
@@ -91,5 +93,17 @@ function readStoredEntry(value: unknown): ChatEntry | null {
     status,
     steps: steps.flatMap((step) => readChatStep(step, ANSWER_STEP_STATUSES) ?? []),
     reasoning: reasoning.slice(0, CHAT_REASONING_MAX_CHARS),
+    emailDraft: readStoredDraft(value.emailDraft),
   };
+}
+
+// Null for a missing (stored before drafts existed) or unreadable draft; the answer still shows.
+// A draft saved mid-send comes back sendable: the server decides whether it went out.
+function readStoredDraft(value: unknown): EmailDraftCard | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.text !== "string") {
+    return null;
+  }
+  const state = EMAIL_DRAFT_STATES.find((known) => known === value.state);
+  if (state === undefined) return null;
+  return { id: value.id, text: value.text, state: state === "sending" ? "pending" : state };
 }

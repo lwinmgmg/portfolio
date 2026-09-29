@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { ownerFirstName } from "@/app/(public)/_components/chat/chat-email-text";
 import { chatSuggestions } from "@/app/(public)/_components/chat/chat-suggestions";
 import { ChatWidget } from "@/app/(public)/_components/chat/chat-widget";
 import { CvComingSoon } from "@/app/(public)/_components/cv/cv-coming-soon";
@@ -34,7 +35,9 @@ export default async function HomePage() {
           {cv ? <CvDocument data={cv} /> : <CvComingSoon />}
         </main>
       </div>
-      {suggestions ? <ChatWidget suggestions={suggestions} /> : null}
+      {cv && suggestions ? (
+        <ChatWidget suggestions={suggestions} ownerName={ownerFirstName(cv.profile.fullName)} />
+      ) : null}
     </div>
   );
 }

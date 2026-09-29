@@ -1700,6 +1700,30 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
 5. The Phase 3 step row for `tool` reads "Drafted an email" and expands to "Waiting for you to press Send", not the text.
 6. Tests: the guard, reducer states and supersede, storage round trip, the text helpers.
 
+**Status:** Built. Not browser-checked: this workspace has no browser. The done-when (a real send from the card, 375 px, keyboard only) waits for the owner.
+
+**As built**
+- **Guard.** `parseChatEvent` accepts `email_draft` when `draft.id` and `draft.text` are strings, and keeps only those two fields.
+- **`postPublicJson(path, body)`** returns `{ status, body }` for every status, with `body` undefined when it is not JSON. It throws only when no response came. It uses the same `sessionFetch` (lock, 401 → issue → retry) as `postPublicStream`.
+- **`client/api/contact-email.ts`.** `sendContactEmail` never throws. `contactEmailOutcome` maps the codes:
+  - 200 with `sent` or `discarded` → that result. Any other 200 body → `failed`.
+  - 404 → `not_found`, 410 → `expired`, 503 → `unavailable`.
+  - Any 429 → `limit`, including the public session's own limits.
+  - Anything else, or a network error → `failed`.
+- **Card states.** `draftStateFor` turns `not_found` into `expired` ("This draft can no longer be sent. Ask for a new one.") and `unavailable` into `failed`.
+  - A `failed` card keeps its buttons (`isDraftSendable`: `pending` or `failed`). "Try again later" works when the request never reached Gmail. A draft Gmail may have taken is refused by the server's claim, never sent twice.
+  - `sending` shows "Sending…", and `discarded` shows "Discarded.". Neither is in the plan's text list.
+- **Supersede.** An `email_draft` event marks every sendable card `superseded` before it adds the new one, as the server does.
+- **Discard** marks the card `discarded` at once and sends the request without waiting for the answer. A draft the request missed expires on the server in an hour.
+- **Buttons.** Both are disabled while sending, and while the answer that drafted them is still streaming.
+- **Focus.** The result line is a `role="status"` paragraph with `tabIndex={-1}`. It is always rendered, so its text changes are announced. It takes focus only after the visitor presses a button, so a restored or superseded card never moves focus.
+- **Where the card goes.** `ChatMessages` renders it after `ChatAnswer`, below the sources. The header reads "Email to <first name>".
+- **First name.** `ownerFirstName(profile.fullName)` (in `chat-email-text.ts`) takes the first word, turns an all-capitals word into title case ("LWIN" → "Lwin") and cuts it at 24 characters. `page.tsx` passes it to `ChatWidget`. Without a name, the button reads "Send" and the sent line names no one.
+- **Storage.** A draft saved while `sending` comes back `pending`. An unreadable or missing draft loads as null and keeps the answer.
+- **Step 5** was already done in 4.3 (`toolDetailText`: "Waiting for you to press Send.").
+- **Checked, 2026-09-30:** the dev server's home page renders the widget with `ownerName: "Lwin"`. No draft was sent.
+- **Not checked:** the card in a browser at 375 px and 1440 px, dark mode and keyboard only.
+
 **Done when**
 - In a browser, a visitor asks to contact the owner, sees the draft, presses Send, and the email arrives. Discard and a second Send do nothing. Checked at 375 px and keyboard only, or listed as not checked, as in 2.10.
 

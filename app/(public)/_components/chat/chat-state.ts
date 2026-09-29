@@ -1,5 +1,6 @@
 import type { ChatStreamEnd } from "@/client/api/chat";
 import { CHAT_STEP_STATUSES } from "@/client/api/chat-steps";
+import type { ContactEmailOutcome } from "@/client/api/contact-email";
 import {
   CHAT_MESSAGE_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
@@ -25,6 +26,52 @@ export const ANSWER_STEP_STATUSES: readonly AnswerStepStatus[] = [
 
 export type AnswerStep = Omit<ChatStep, "status"> & { status: AnswerStepStatus };
 
+// What the draft card shows. `expired` also covers a draft the server no longer has (404);
+// `failed` covers a refused send and a request that never got an answer.
+export type EmailDraftState =
+  | "pending"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "expired"
+  | "discarded"
+  | "superseded"
+  | "limit";
+
+export const EMAIL_DRAFT_STATES: readonly EmailDraftState[] = [
+  "pending",
+  "sending",
+  "sent",
+  "failed",
+  "expired",
+  "discarded",
+  "superseded",
+  "limit",
+];
+
+export type EmailDraftCard = { id: string; text: string; state: EmailDraftState };
+
+// Only these can still be sent. The server claims a draft once, so a second Send after a
+// `failed` that did reach Gmail is refused there, never sent twice.
+export function isDraftSendable(state: EmailDraftState): boolean {
+  return state === "pending" || state === "failed";
+}
+
+export function draftStateFor(outcome: ContactEmailOutcome): EmailDraftState {
+  switch (outcome) {
+    case "sent":
+    case "discarded":
+    case "limit":
+    case "expired":
+    case "failed":
+      return outcome;
+    case "not_found":
+      return "expired";
+    case "unavailable":
+      return "failed";
+  }
+}
+
 export type AssistantEntry = {
   id: string;
   role: "assistant";
@@ -36,6 +83,8 @@ export type AssistantEntry = {
   steps: AnswerStep[];
   // The answer model's reasoning, streamed before the text.
   reasoning: string;
+  // The email the answer drafted, shown as a card with Send and Discard.
+  emailDraft: EmailDraftCard | null;
 };
 
 export type ChatEntry = UserEntry | AssistantEntry;
@@ -57,6 +106,7 @@ export type ChatAction =
   | { type: "event"; event: ChatEvent }
   | { type: "end"; outcome: ChatStreamEnd }
   | { type: "fail"; notice: ChatNotice }
+  | { type: "draft"; entryId: string; draftId: string; state: EmailDraftState }
   | { type: "reset" };
 
 export const INITIAL_CHAT_STATE: ChatState = {
@@ -99,11 +149,21 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             status: "streaming",
             steps: [],
             reasoning: "",
+            emailDraft: null,
           },
         ],
       };
     case "event":
       return applyEvent(state, action.event);
+    case "draft":
+      return {
+        ...state,
+        entries: state.entries.map((entry) =>
+          entry.role === "assistant" && entry.id === action.entryId && entry.emailDraft?.id === action.draftId
+            ? { ...entry, emailDraft: { ...entry.emailDraft, state: action.state } }
+            : entry,
+        ),
+      };
     case "end":
       return state.streaming ? endStream({ ...state, streaming: false }, action.outcome) : state;
     case "fail":
@@ -137,9 +197,11 @@ function applyEvent(state: ChatState, event: ChatEvent): ChatState {
       return updatePending(state, (entry) => ({ ...entry, text: entry.text + event.text }));
     case "sources":
       return updatePending(state, (entry) => ({ ...entry, sources: event.sources }));
-    // The draft card is Phase 4.5; until then `parseChatEvent` drops this event anyway.
     case "email_draft":
-      return state;
+      return updatePending(supersedeDrafts(state), (entry) => ({
+        ...entry,
+        emailDraft: { id: event.draft.id, text: event.draft.text, state: "pending" },
+      }));
     case "done":
       return updatePending(state, (entry) => settle(entry, "done"));
     case "error":
@@ -158,6 +220,19 @@ function endStream(state: ChatState, outcome: ChatStreamEnd): ChatState {
     case "interrupted":
       return settlePending({ ...state, notice: state.notice ?? "interrupted" });
   }
+}
+
+// The server supersedes every older pending draft when it stores a new one, so older cards that
+// could still be sent say they were replaced.
+function supersedeDrafts(state: ChatState): ChatState {
+  return {
+    ...state,
+    entries: state.entries.map((entry) =>
+      entry.role === "assistant" && entry.emailDraft && isDraftSendable(entry.emailDraft.state)
+        ? { ...entry, emailDraft: { ...entry.emailDraft, state: "superseded" } }
+        : entry,
+    ),
+  };
 }
 
 // Adds a step, or replaces the one of its name. A running event never replaces a step that

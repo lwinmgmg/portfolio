@@ -59,7 +59,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     page.tsx                  Published CV at /, plus the chat widget when an index is active.
     projects/[projectId]/     Project detail pages.
     _components/cv/           CV section components. Pure helpers: cv-format, cv-sections, cv-seo.
-    _components/chat/         Chat widget (<dialog> panel, use-chat hook, steps panel in chat-activity). Pure: chat-markdown, chat-text, chat-state, chat-storage, chat-suggestions, chat-steps-text.
+    _components/chat/         Chat widget (<dialog> panel, use-chat hook, steps panel in chat-activity, email draft card in chat-email-draft). Pure: chat-markdown, chat-text, chat-state, chat-storage, chat-suggestions, chat-steps-text, chat-email-text.
   admin/
     login/                    Login page, form, action, state.
     (panel)/                  Admin shell (nav layout). Pages call requireAdmin().
@@ -81,8 +81,9 @@ app/                          Routes. Keep them thin: parse input, call a servic
   cv/download/                Public CV PDF download.
 
 client/                       Browser-side data access.
-  api/public-http.ts          getPublicJson and postPublicStream, the base for public fetchers (session lock, 401 -> issue -> retry).
+  api/public-http.ts          getPublicJson, postPublicJson (every status + body) and postPublicStream, the base for public fetchers (session lock, 401 -> issue -> retry).
   api/chat.ts                 streamChat: NDJSON chat events (reader in api/ndjson.ts, hand-written step guards in api/chat-steps.ts).
+  api/contact-email.ts        sendContactEmail: Send or Discard a draft, status codes mapped to outcomes; never throws.
   query/                      TanStack Query client and provider.
 
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.

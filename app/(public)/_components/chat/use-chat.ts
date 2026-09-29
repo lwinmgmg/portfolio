@@ -3,10 +3,13 @@
 import { useEffect, useReducer, useRef } from "react";
 
 import { streamChat } from "@/client/api/chat";
+import { sendContactEmail } from "@/client/api/contact-email";
 import { PublicApiError } from "@/client/api/public-http";
 import {
   chatReducer,
+  draftStateFor,
   INITIAL_CHAT_STATE,
+  isDraftSendable,
   type ChatNotice,
 } from "@/app/(public)/_components/chat/chat-state";
 import {
@@ -61,13 +64,32 @@ export function useChat() {
     controller.current?.abort();
   }
 
+  // Send or Discard on an answer's draft card. The server claims a draft once, so a repeated
+  // Send can never mail it twice.
+  async function actOnDraft(entryId: string, action: "send" | "discard") {
+    const { conversationId } = state;
+    const entry = state.entries.find((item) => item.id === entryId);
+    const draft = entry?.role === "assistant" ? entry.emailDraft : null;
+    if (!conversationId || !draft || !isDraftSendable(draft.state)) return;
+    const request = { conversationId, draftId: draft.id, action };
+    if (action === "discard") {
+      // Nothing the server answers changes the card; a draft left pending expires in an hour.
+      dispatch({ type: "draft", entryId, draftId: draft.id, state: "discarded" });
+      void sendContactEmail(request);
+      return;
+    }
+    dispatch({ type: "draft", entryId, draftId: draft.id, state: "sending" });
+    const outcome = await sendContactEmail(request);
+    dispatch({ type: "draft", entryId, draftId: draft.id, state: draftStateFor(outcome) });
+  }
+
   function reset() {
     if (state.streaming) return;
     restored.current = true;
     dispatch({ type: "reset" });
   }
 
-  return { state, restore, send, stop, reset };
+  return { state, restore, send, stop, reset, actOnDraft };
 }
 
 let lastEntry = 0;
