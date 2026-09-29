@@ -21,7 +21,6 @@ function positiveIntWithDefault(fallback: number) {
 export const EmailEnvSchema = z.object({
   GMAIL_CLIENT_ID: required(z.string().min(1)),
   GMAIL_CLIENT_SECRET: required(z.string().min(1)),
-  GMAIL_REFRESH_TOKEN: required(z.string().min(1)),
   CONTACT_EMAIL_TO: required(z.email()),
   CONTACT_EMAIL_DAILY_LIMIT: positiveIntWithDefault(DEFAULT_DAILY_LIMIT),
   CONTACT_EMAIL_SESSION_LIMIT: positiveIntWithDefault(DEFAULT_SESSION_LIMIT),
@@ -33,14 +32,16 @@ export function parseEmailEnv(env: Record<string, string | undefined> = process.
   return EmailEnvSchema.safeParse({
     GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID,
     GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET,
-    GMAIL_REFRESH_TOKEN: env.GMAIL_REFRESH_TOKEN,
     CONTACT_EMAIL_TO: env.CONTACT_EMAIL_TO,
     CONTACT_EMAIL_DAILY_LIMIT: env.CONTACT_EMAIL_DAILY_LIMIT,
     CONTACT_EMAIL_SESSION_LIMIT: env.CONTACT_EMAIL_SESSION_LIMIT,
   });
 }
 
-/** Null when email is not configured (or configured wrongly): the email tool is then not offered. */
+/**
+ * Null when email is not configured (or configured wrongly): the email tool is then not offered.
+ * The refresh token is not here; the owner connects Gmail on the admin Email page.
+ */
 export function readEmailEnv(
   env: Record<string, string | undefined> = process.env,
 ): EmailEnv | null {

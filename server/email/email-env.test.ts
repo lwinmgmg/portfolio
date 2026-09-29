@@ -5,7 +5,6 @@ import { parseEmailEnv, readEmailEnv } from "@/server/email/email-env";
 const complete = {
   GMAIL_CLIENT_ID: "client-id.apps.googleusercontent.com",
   GMAIL_CLIENT_SECRET: "client-secret",
-  GMAIL_REFRESH_TOKEN: "1//refresh-token",
   CONTACT_EMAIL_TO: "owner@example.com",
 };
 
@@ -33,7 +32,6 @@ test("trims values and keeps explicit limits", () => {
     readEmailEnv({
       GMAIL_CLIENT_ID: "  id  ",
       GMAIL_CLIENT_SECRET: "  secret  ",
-      GMAIL_REFRESH_TOKEN: "  token  ",
       CONTACT_EMAIL_TO: "  owner@example.com  ",
       CONTACT_EMAIL_DAILY_LIMIT: "  5  ",
       CONTACT_EMAIL_SESSION_LIMIT: " 1 ",
@@ -41,7 +39,6 @@ test("trims values and keeps explicit limits", () => {
   ).toEqual({
     GMAIL_CLIENT_ID: "id",
     GMAIL_CLIENT_SECRET: "secret",
-    GMAIL_REFRESH_TOKEN: "token",
     CONTACT_EMAIL_TO: "owner@example.com",
     CONTACT_EMAIL_DAILY_LIMIT: 5,
     CONTACT_EMAIL_SESSION_LIMIT: 1,
@@ -67,7 +64,15 @@ test("rejects limits that are not positive integers", () => {
 });
 
 test("parseEmailEnv names the variable that failed", () => {
-  const parsed = parseEmailEnv({ ...complete, GMAIL_REFRESH_TOKEN: undefined });
+  const parsed = parseEmailEnv({ ...complete, GMAIL_CLIENT_SECRET: undefined });
   expect(parsed.success).toBe(false);
-  expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(["GMAIL_REFRESH_TOKEN"]);
+  expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(["GMAIL_CLIENT_SECRET"]);
+});
+
+test("ignores a leftover GMAIL_REFRESH_TOKEN", () => {
+  expect(readEmailEnv({ ...complete, GMAIL_REFRESH_TOKEN: "1//old" })).toEqual({
+    ...complete,
+    CONTACT_EMAIL_DAILY_LIMIT: 20,
+    CONTACT_EMAIL_SESSION_LIMIT: 2,
+  });
 });

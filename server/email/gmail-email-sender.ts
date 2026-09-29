@@ -4,8 +4,7 @@ import {
   type OutgoingEmail,
   type SentEmail,
 } from "@/server/domain/email";
-import type { EmailEnv } from "@/server/email/email-env";
-import { GOOGLE_TOKEN_URL, readOAuthError, REFRESH_TOKEN_COMMAND } from "@/server/email/gmail-oauth";
+import { GOOGLE_TOKEN_URL, readOAuthError, RECONNECT_HINT } from "@/server/email/gmail-oauth";
 import { buildGmailRaw, MimeHeaderError } from "@/server/email/mime-message";
 
 export const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
@@ -14,10 +13,8 @@ const TOKEN_REFRESH_MARGIN_MS = 60_000;
 
 export type GmailFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type GmailCredentials = Pick<
-  EmailEnv,
-  "GMAIL_CLIENT_ID" | "GMAIL_CLIENT_SECRET" | "GMAIL_REFRESH_TOKEN"
->;
+/** The OAuth client from the env and the refresh token saved when the owner connected Gmail. */
+export type GmailCredentials = { clientId: string; clientSecret: string; refreshToken: string };
 
 export type GmailEmailSenderOptions = {
   fetch?: GmailFetch;
@@ -33,8 +30,8 @@ type CachedToken = { value: string; refreshAt: number };
 type Phase = "token" | "send";
 
 /**
- * Sends through the Gmail API as the owner's account, with an OAuth refresh token limited to the
- * gmail.send scope. It never retries a send that may have reached Gmail.
+ * Sends through the Gmail API as the owner's account, with the refresh token from the admin connect
+ * flow (gmail.send, plus openid and email). It never retries a send that may have reached Gmail.
  */
 export class GmailEmailSender implements EmailSender {
   private readonly credentials: GmailCredentials;
@@ -84,9 +81,9 @@ export class GmailEmailSender implements EmailSender {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           grant_type: "refresh_token",
-          client_id: this.credentials.GMAIL_CLIENT_ID,
-          client_secret: this.credentials.GMAIL_CLIENT_SECRET,
-          refresh_token: this.credentials.GMAIL_REFRESH_TOKEN,
+          client_id: this.credentials.clientId,
+          client_secret: this.credentials.clientSecret,
+          refresh_token: this.credentials.refreshToken,
         }),
       },
       signal,
@@ -164,7 +161,7 @@ function tokenError(status: number, payload: unknown): EmailSendError {
   if (error === "invalid_grant") {
     return new EmailSendError(
       `Google refused the Gmail refresh token (invalid_grant): it was revoked or has expired. ` +
-        `Run \`${REFRESH_TOKEN_COMMAND}\` again and update GMAIL_REFRESH_TOKEN.`,
+        RECONNECT_HINT,
       { status, retryable: false },
     );
   }

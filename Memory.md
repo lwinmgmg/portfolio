@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 4.3 (tools in the chat turn) on `master`, after 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
+Last updated after Phase 4.2a (connect Gmail from the admin page) on `master`, after 4.3, 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
 
 ## How to work
 
@@ -25,8 +25,9 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 4.3. `send_email` draft tool, `runAnswerLoop`, `contact` scope, email drafts on conversations, `tool` trace stage and step. Built; the done-when waits on the email settings. |
-| `58890ae` | Phase 4.2. `EmailSender` domain, `readEmailEnv`, MIME builder, `GmailEmailSender`, OAuth helpers, `email:token` and `email:test` scripts. Built; waiting on the owner's Google OAuth setup and test email. |
+| (next) | Phase 4.2a. `/admin/email` connects Gmail through OAuth routes; the refresh token moves from the env to `email_connections`; `EmailService`; the two email scripts removed; chat tools looked up per turn. Built; waiting on the owner's Google OAuth client. |
+| `55b4ec8` | Phase 4.3. `send_email` draft tool, `runAnswerLoop`, `contact` scope, email drafts on conversations, `tool` trace stage and step. Built; the done-when waits on the email settings. |
+| `58890ae` | Phase 4.2. `EmailSender` domain, `readEmailEnv`, MIME builder, `GmailEmailSender`, OAuth helpers, `email:token` and `email:test` scripts (the scripts were removed in 4.2a). Built. |
 | `557bbe4` | Phase 4.1. Tools, tool choice, tool messages and streamed `tool_call` events in `OpenRouterClient`. Done; live-checked on `z-ai/glm-5.3-flash`. |
 | `03a5e16` | Phase 2.14 steps 3–9. `DecisionScopeRouter`, `scopeRouter` / `minRouteConfidence`, `route` stage, trace panel, public step, playground fields, eval scope columns; router default `typesafe/jev-1.13`. Built, not browser-checked. |
 | `03a5e16` | Phase 2.14a. Small talk gets the fixed `smalltalkReply` (no answer-model call) and, like off topic, stops retrieval after `rewrite`. Built, not live-checked. |
@@ -75,7 +76,7 @@ Phase 2.14 (scope routing) is built, not Done: the owner chose `typesafe/jev-1.1
 
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check.
 
-Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built but not Done. Its done-when is the owner's 4.2 checkpoint: a Google OAuth client (Desktop app, Gmail API on, publishing status In production), `bun run email:token`, the values in `.env.local` and Vercel, then `bun run email:test` arriving in the inbox. Phase 4.3 (tools in the chat turn) is built but not Done. Its done-when needs working email settings: on 2026-09-29 `.env.local` had the six email names with blank values. Next: the 4.2 checkpoint, then the 4.3 done-when curl, then Phase 4.4 when the owner asks.
+Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built. On 2026-09-29 the owner chose to keep the Gmail API (not SMTP with an app password) but to connect Gmail from the admin UI, so Phase 4.2a replaced the token script and carries the done-when: a Google OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback`, Gmail API on, publishing status In production), the values in `.env.local` and Vercel, then **Connect Gmail** and **Send test email** on `/admin/email`. Phase 4.3 (tools in the chat turn) is built but not Done. Its done-when needs email set up and Gmail connected: on 2026-09-29 `.env.local` had the email names with blank values. Next: the 4.2a checkpoint, then the 4.3 done-when curl, then Phase 4.4 when the owner asks.
 
 ## Environment
 
@@ -469,16 +470,25 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 
 ## Gmail sender (Phase 4.2)
 
-- **Where.** `server/domain/email.ts` (types, `EmailSendError`) and `server/email/`: `email-env.ts`, `mime-message.ts`, `gmail-oauth.ts` (shared by the sender and the token script), and `gmail-email-sender.ts`. None of them imports `server-only`, so scripts can use them. No runtime wiring exists yet; 4.3 and 4.4 add it.
-- **Env.** `readEmailEnv()` is null unless all four of `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` and `CONTACT_EMAIL_TO` are set and valid. It also reads `CONTACT_EMAIL_SESSION_LIMIT` (default 2), which step 2 left out but the fixed decisions name. On 2026-09-29 `.env.local` had none of the email variables.
+- **Where.** `server/domain/email.ts` (types, `EmailSendError`, `GmailConnection`) and `server/email/`: `email-env.ts`, `mime-message.ts`, `gmail-oauth.ts`, `google-oauth-client.ts` and `gmail-email-sender.ts`. None of them imports `server-only`. The runtime wiring is `server/services/email-runtime.ts` (4.2a).
+- **Env.** `readEmailEnv()` is null unless `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` and `CONTACT_EMAIL_TO` are set and valid (`GMAIL_REFRESH_TOKEN` was removed in 4.2a; a leftover value is ignored). It also reads `CONTACT_EMAIL_SESSION_LIMIT` (default 2), which step 2 left out but the fixed decisions name.
 - **At most once.** `EmailSendError.retryable` is true only when Gmail cannot have taken the message: token-request failures, and a 429 on send. A timeout, network error or 5xx on the send request is final, and the sender never retries a send itself. The one resend is after a Gmail 401, which Gmail refused before sending. 4.4's claim (`pending` → `sending`) relies on this.
 - **Headers.** Only `To` and `Subject` are built from input, and a line break in either throws before any request. The body is base64, so its text cannot add headers. No `From` or `Date`: Gmail fills them in.
-- **Scripts.** `bun run email:token` (`scripts/gmail-refresh-token.ts`) is for the owner and needs a browser. Agents must not run it against real credentials. It listens on `127.0.0.1` port 0 with `node:http`, since there are no Bun global types. `bun run email:test` sends a real email, so run it only when the owner asks.
-- **Test matchers.** The new tests use only the matchers in `server/auth/bun-test.d.ts`. `test.each`, `toMatch`, `toStartWith` and `resolves` pass at runtime but fail `tsc` and the build.
+- **Scripts.** The 4.2 scripts (`email:token`, `email:test`) were removed in 4.2a.
+- **Test matchers.** The new tests use only the matchers in `server/auth/bun-test.d.ts`. `test.each`, `toMatch`, `toStartWith`, `toContainEqual` and `resolves` pass at runtime but fail `tsc` and the build.
+
+## Connect Gmail from the admin page (Phase 4.2a)
+
+- **Flow.** `/admin/email` links to `GET /api/admin/email/connect`, which puts `state.verifier` in the HttpOnly `gmail_connect` cookie (path `/api/admin/email`, 10 minutes) and redirects to Google. `GET /api/admin/email/callback` checks the state, exchanges the code with PKCE, requires `gmail.send` and a refresh token, saves the connection and redirects back with `connected=1` or `error=<ConnectFailure>`. Both routes need the admin session. The redirect URI is built from the request's origin, so it must be registered on the Google client for every address the owner connects from.
+- **Storage.** One document `{ _id: "gmail" }` in `email_connections`, holding the refresh token as Google returned it. This is safe without encryption because the token is useless without `GMAIL_CLIENT_SECRET`, which only the env holds. Never return the token from `status()` or render it.
+- **Do not revoke on reconnect.** Revoking any token ends the whole grant for that client and account, which would kill the new token too. Disconnect revokes (best effort) and then deletes the document.
+- **Chat.** `ChatService.tools` is async and called per turn (`contact`, and `cv` with sources). The runtime offers `EmailDraftTool` only when `getEmail().isReady()`: the env is set and a connection is stored. A failed lookup logs and answers without tools.
+- **Sending (for 4.4).** Get the sender from `getEmail().sender()`: it is null when email is not ready, and it reuses one `GmailEmailSender` per refresh token so the access token stays cached.
+- **Agents must not click Connect or Send test email** with real credentials. Only the owner does that. Without an admin session, both routes redirect to login (checked with curl on 2026-09-29).
 
 ## Tools in the chat turn (Phase 4.3)
 
-- **Where.** `server/domain/agent.ts` (`AgentTool`, `ToolContext`, `ToolOutcome`), `server/agent/email-draft-tool.ts` (`EmailDraftTool`, `SEND_EMAIL_TOOL`) and `server/agent/answer-loop.ts` (`runAnswerLoop`). `chat-runtime.ts` offers the tool only when `readEmailEnv()` is non-null.
+- **Where.** `server/domain/agent.ts` (`AgentTool`, `ToolContext`, `ToolOutcome`), `server/agent/email-draft-tool.ts` (`EmailDraftTool`, `SEND_EMAIL_TOOL`) and `server/agent/answer-loop.ts` (`runAnswerLoop`). `chat-runtime.ts` offers the tool only when email is ready (since 4.2a: env set and Gmail connected, looked up per turn).
 - **The model only drafts.** `run` stores a `pending` draft on the conversation (`emailDrafts`, kept out of `messages`) and sends `email_draft` to the visitor. Nothing in 4.3 sends mail; 4.4 adds the Send endpoint. A draft holds visitor contact details: it lives in `chat_conversations` (30-day TTL) and the admin trace, never in a public step.
 - **Scopes.** The rewriter has four scopes; the decision router keeps three (`RouteScope`) and reads a contact request as `cv`, so it defers. Small talk keeps its fixed reply and gets no tools (Plan deviation: step 6 listed small talk). Without email settings, `contact` gets `contactUnavailableReply`.
 - **One tool round.** Round 1 has the tools on `auto`; round 2, only after a call, has them on `none` and must see a `tool` message for every call id. Tool rules are in the system prompt because the provider drops tool definitions under `none` (4.1).

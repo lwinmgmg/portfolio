@@ -82,9 +82,10 @@ export type ChatServiceDeps = {
   answerReasoning: ReasoningLevel;
   // User messages across all sessions per UTC day.
   dailyMessageLimit: number;
-  // Offered to the answer model for `cv` and `contact` turns. Empty (the default) when email is
-  // not configured: one plain answer call, and a contact request gets a fixed reply.
-  tools?: readonly AgentTool[];
+  // Offered to the answer model for `cv` and `contact` turns, looked up per turn because the owner
+  // can connect or disconnect Gmail at any time. None (the default, or a failed lookup): one plain
+  // answer call, and a contact request gets a fixed reply.
+  tools?: () => Promise<readonly AgentTool[]>;
   now?: () => Date;
   // Monotonic milliseconds for the generate stage. Defaults to performance.now().
   clock?: () => number;
@@ -115,13 +116,11 @@ export class ChatService {
   private readonly now: () => Date;
   private readonly clock: () => number;
   private readonly log: Log;
-  private readonly tools: readonly AgentTool[];
 
   constructor(private readonly deps: ChatServiceDeps) {
     this.now = deps.now ?? (() => new Date());
     this.clock = deps.clock ?? (() => performance.now());
     this.log = deps.log ?? ((message, error) => console.error(message, error));
-    this.tools = deps.tools ?? [];
   }
 
   async *reply(request: ChatReplyRequest): AsyncGenerator<ChatEvent, void, undefined> {
@@ -206,21 +205,34 @@ export class ChatService {
       case "smalltalk":
         yield* this.fixedReply(turn, smalltalkReply(subjectName));
         return;
-      case "contact":
-        if (this.tools.length === 0) {
+      case "contact": {
+        const tools = await this.offeredTools();
+        if (tools.length === 0) {
           yield* this.fixedReply(turn, contactUnavailableReply(subjectName));
         } else {
-          yield* this.generate(turn, "contact");
+          yield* this.generate(turn, "contact", tools);
         }
         return;
+      }
       case "cv":
         if (retrieval.chunks.length === 0) {
           // Nothing passed retrieval, e.g. every chunk scored below `minRerankScore`.
           yield* this.fixedReply(turn, noInformationReply(subjectName));
         } else {
-          yield* this.generate(turn, "cv");
+          yield* this.generate(turn, "cv", await this.offeredTools());
         }
         return;
+    }
+  }
+
+  // A failed lookup answers without tools rather than failing the turn.
+  private async offeredTools(): Promise<readonly AgentTool[]> {
+    if (!this.deps.tools) return [];
+    try {
+      return await this.deps.tools();
+    } catch (error) {
+      this.log("Chat tools lookup failed.", error);
+      return [];
     }
   }
 
@@ -278,9 +290,9 @@ export class ChatService {
   private async *generate(
     turn: Turn,
     mode: "cv" | "contact",
-  ): AsyncGenerator<ChatEvent, void, undefined> {
     // A contact turn is only generated when tools are offered.
-    const { tools } = this;
+    tools: readonly AgentTool[],
+  ): AsyncGenerator<ChatEvent, void, undefined> {
     const chunks: RetrievedChunk[] = turn.retrieval.chunks;
     const pendingDraft = tools.length > 0 ? pendingDraftText(turn.conversation, this.now()) : null;
     const messages: ChatMessage[] =

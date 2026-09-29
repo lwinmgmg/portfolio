@@ -82,9 +82,8 @@ Instructions for coding agents. Execute one sub-phase at a time, in order.
 | `CHAT_DAILY_MESSAGE_LIMIT` | no | `500` | global chat cost guard |
 | `LLM_ANSWER_REASONING` | no | `low` | `off` \| `low` \| `medium` \| `high`; answer-model reasoning shown as "Thinking" (Phase 3) |
 | `BLOB_READ_WRITE_TOKEN` | yes | — | `handleUpload` client tokens (pull with `vercel env pull`) |
-| `GMAIL_CLIENT_ID` | no | — | Google OAuth client for the Gmail sender (Phase 4). Without the Gmail values the email tool is not offered. |
+| `GMAIL_CLIENT_ID` | no | — | Google OAuth client (type Web application) for the Gmail sender (Phase 4). Without the email values, or until the owner connects Gmail on `/admin/email`, the email tool is not offered. The refresh token is stored in MongoDB, not the env (4.2a). |
 | `GMAIL_CLIENT_SECRET` | no | — | Google OAuth client secret (Phase 4) |
-| `GMAIL_REFRESH_TOKEN` | no | — | `gmail.send` refresh token from `scripts/gmail-refresh-token.ts` (Phase 4) |
 | `CONTACT_EMAIL_TO` | no | — | where visitor messages go, normally the owner's Gmail address (Phase 4) |
 | `CONTACT_EMAIL_DAILY_LIMIT` | no | `20` | site-wide cap on emails sent from the chat per UTC day (Phase 4) |
 | `CONTACT_EMAIL_SESSION_LIMIT` | no | `2` | emails sent per public session (Phase 4) |
@@ -169,7 +168,9 @@ server/
 app/
   admin/(panel)/cv/...        CV admin pages
   admin/(panel)/rag/...       RAG admin pages (indexes, playground, traces)
+  admin/(panel)/email/...     connect Gmail, disconnect, test email (4.2a)
   api/admin/cv/upload/route.ts
+  api/admin/email/connect/route.ts, api/admin/email/callback/route.ts  Gmail OAuth (4.2a)
   api/public/chat/route.ts
   api/public/chat/email/route.ts
   cv/download/route.ts
@@ -178,8 +179,6 @@ app/
 client/api/chat.ts
 scripts/rag-eval.ts
 scripts/probe-scope-router.ts
-scripts/gmail-refresh-token.ts
-scripts/send-test-email.ts
 evals/cv-retrieval.golden.json
 evals/scope-probe.json
 ```
@@ -1470,7 +1469,7 @@ mistake cannot send mail by itself.
 |---|---|
 | Tool | `send_email({ text: string })`, 1–2,000 characters. No other parameters: the recipient, sender and subject are fixed on the server. |
 | Confirmation | The tool call stores a draft and shows it. Only the visitor's Send click sends it. The model is told never to claim that a message was sent. |
-| Provider | **Gmail API** through a hand-written `fetch` adapter (`users.messages.send`), with an OAuth refresh token for the owner's Google account and only the `https://www.googleapis.com/auth/gmail.send` scope. It sends from the owner's Gmail to `CONTACT_EMAIL_TO` (normally the same address). No package is added. Fallback if the OAuth setup is not acceptable: Gmail SMTP with an app password, which needs `nodemailer` (owner approval, §0.1). |
+| Provider | **Gmail API** through a hand-written `fetch` adapter (`users.messages.send`), with an OAuth refresh token for the owner's Google account and the `https://www.googleapis.com/auth/gmail.send` scope (plus `openid email` to name the account, 4.2a). The owner connects the account on the admin Email page, which stores the token in MongoDB (4.2a replaced the 4.2 token script on 2026-09-29). It sends from the owner's Gmail to `CONTACT_EMAIL_TO` (normally the same address). No package is added. Fallback if the OAuth setup is not acceptable: Gmail SMTP with an app password, which needs `nodemailer` (owner approval, §0.1). |
 | Message | Plain text, UTF-8. Subject: `Portfolio chat: message from a visitor`. The body is the draft text, then a footer with the conversation id and the send time. No visitor input goes into a header. |
 | Limits | At most 2 sent emails per public session (`CONTACT_EMAIL_SESSION_LIMIT`) and `CONTACT_EMAIL_DAILY_LIMIT` (default 20) per UTC day for the whole site. Only one draft per turn. |
 | At most once | Gmail has no idempotency key. A draft is claimed atomically (`pending` → `sending`) before the send. A draft left in `sending` (the function died mid-send) becomes `failed` and is never resent. |
@@ -1534,7 +1533,7 @@ mistake cannot send mail by itself.
 5. `scripts/gmail-refresh-token.ts` (run by the owner, not the agent): reads the client id and secret from `.env.local`, starts a loopback server with `Bun.serve` on a free port (never 3000), prints the Google consent URL for the `gmail.send` scope with `access_type=offline&prompt=consent`, exchanges the returned code, and prints `GMAIL_REFRESH_TOKEN=...` for `.env.local`. It uses PKCE and a `state` check.
 6. `scripts/send-test-email.ts` (`bun run email:test`): sends one fixed test email to `CONTACT_EMAIL_TO` through `GmailEmailSender`. It needs no Mongo, so no shim.
 
-**Status:** Built. Waiting for the owner's 4.2 checkpoint: the OAuth client, `bun run email:token`, then `bun run email:test`.
+**Status:** Built, then changed by 4.2a: the owner connects Gmail on the admin page instead of pasting a refresh token into the env. Steps 5 and 6 (both scripts) were removed, and the done-when moved to 4.2a.
 
 **As built**
 - `server/domain/email.ts`: `OutgoingEmail`, `SentEmail` (`{ messageId }`), `EmailSender`, and `EmailSendError` with `status` and `retryable`, shaped like `LlmProviderError`. `retryable` is true only when Gmail cannot have taken the message.
@@ -1550,7 +1549,38 @@ mistake cannot send mail by itself.
 - Checked without Google: both scripts fail with a clear message when unconfigured. With a fake client id the loopback server printed the consent URL, returned 404 for `/favicon.ico`, and rejected a wrong `state` with 400. The real OAuth flow and the test email wait for the owner.
 
 **Done when**
-- The owner runs `bun run email:test` and the test email arrives in their Gmail inbox.
+- The owner runs `bun run email:test` and the test email arrives in their Gmail inbox. (Replaced by 4.2a's done-when.)
+
+## Phase 4.2a: Connect Gmail from the admin page
+
+The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of running a script and copying a refresh token into `.env.local`. The Gmail API sender, the scope and the at-most-once rules are unchanged.
+
+**Files:** `server/email/gmail-oauth.ts`, `server/email/google-oauth-client.ts` (new), `server/email/email-env.ts`, `server/email/gmail-email-sender.ts`, `server/domain/email.ts`, `server/repositories/gmail-connection-repository.ts` (new), `server/services/email-service.ts` (new), `server/services/email-runtime.ts` (new), `server/http/gmail-connect-cookie.ts` (new), `app/api/admin/email/connect/route.ts`, `app/api/admin/email/callback/route.ts`, `app/admin/(panel)/email/*`, `server/services/chat-service.ts`, `server/services/chat-runtime.ts`, tests, `.env.example`, `package.json`.
+
+**Steps**
+1. The env keeps `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `CONTACT_EMAIL_TO` and the two limits. `GMAIL_REFRESH_TOKEN` is gone. The OAuth client is now of type **Web application**, with `<origin>/api/admin/email/callback` registered as a redirect URI for each site address.
+2. `GET /api/admin/email/connect` (admin session required): makes a PKCE pair and a `state`, keeps both in an HttpOnly, SameSite=Lax cookie on `/api/admin/email` for 10 minutes, and redirects to Google's consent URL. Scopes: `openid email gmail.send`, with `access_type=offline&prompt=consent`.
+3. `GET /api/admin/email/callback` (admin session required): checks `state` against the cookie, exchanges the code with the verifier, requires `gmail.send` and a refresh token, reads the address from the ID token, saves the connection, clears the cookie and redirects to `/admin/email` with `connected=1` or `error=<reason>`.
+4. The connection lives in `email_connections` (one document, `_id: "gmail"`): address, refresh token, scopes and time.
+5. `/admin/email` (nav "Email"): the missing env names and setup steps; or the connected account with Connect/Reconnect, Disconnect (revokes the token at Google, best effort, then deletes the document) and "Send test email".
+6. The chat offers the email tool only when the env is set **and** Gmail is connected, looked up on each turn that could use it.
+
+**Status:** Built. Waiting for the owner: the Google OAuth client, the env values, then Connect Gmail and "Send test email".
+
+**As built**
+- `gmail-oauth.ts` gains the paths, the connect cookie's name, path, lifetime and encoding (`state.verifier`, both base64url), `readTokenGrant` and the `ConnectFailure` reasons (`unconfigured`, `failed`, `state`, `denied`, `no_code`, `exchange`, `scope`, `no_refresh_token`). The admin page words each one. `readConsentCallback` now returns a reason instead of a message.
+- The ID token is decoded with jose's `decodeJwt` without a signature check. It came straight from Google's token endpoint over TLS (OpenID Connect Core 3.1.3.7), and it only labels the account. A missing address still connects.
+- `GoogleOAuthClient` makes the code exchange and the revocation. A refused exchange's status and error go to the server log only. A 400 from the revoke endpoint counts as revoked, since Google answers that for a token that is already invalid.
+- **Reconnect does not revoke the old token.** Revoking a token ends the whole grant for the client and account, which would take the new token with it. The new token replaces the old one in the document.
+- **The refresh token is stored as Google returned it.** It cannot be exchanged for an access token without `GMAIL_CLIENT_SECRET`, which only the env holds, so a database leak alone cannot send mail. The admin page and `status()` never return it.
+- `EmailService` (constructor-injected: env, OAuth client, repository, sender factory, clock, random bytes) holds the flow, `disconnect`, `sendTest`, `isReady` and `sender()`. `sender()` reuses one `GmailEmailSender` per refresh token, so its access-token cache survives between sends; Phase 4.4 gets its sender from here. `GmailEmailSender` now takes `{ clientId, clientSecret, refreshToken }`, and `invalid_grant` tells the owner to connect Gmail again on `/admin/email`.
+- `ChatService.tools` is now `() => Promise<AgentTool[]>`, called for `contact` turns and for `cv` turns with sources. A failed lookup logs "Chat tools lookup failed." and answers without tools.
+- The connect route is a plain `<a>` link, not a `Link`, so it is never prefetched. Both routes answer `Cache-Control: private, no-store`, and without an admin session they redirect to the login page (checked on the dev server).
+- `scripts/gmail-refresh-token.ts`, `scripts/send-test-email.ts` and the `email:token` / `email:test` package scripts were removed. "Send test email" on the admin page replaces `email:test`.
+- The page reuses the RAG admin styles, `ActionMessage` and `RagActionState`.
+
+**Done when**
+- The owner clicks **Connect Gmail** on `/admin/email`, the page shows the connected address, and **Send test email** arrives in the inbox.
 
 ## Phase 4.3: Tools in the chat turn
 
@@ -1591,7 +1621,7 @@ mistake cannot send mail by itself.
 7. Trace: a new `tool` stage per call. Input: name and raw arguments. Output: `{ outcome: "drafted" | "invalid" | "unknown_tool" | "ignored", draftId }`. Add it to `trace-stages.ts`, `readTrace` and a panel in `trace-stage-panel.tsx` (the "new traced stage" pattern in AGENTS.md). Phase 3's `ChatStepName` gains `"tool"`, with detail `{ kind: "tool"; name: string; outcome }`. It never includes the draft text.
 8. Tests with fakes: a contact turn yields `tool` steps, `email_draft`, then round-2 `delta`s and `done`; invalid arguments; an unknown tool; a second call ignored; tools not offered without email env; the draft stored and older ones superseded; the pending draft reaches the prompt; off-topic is unchanged.
 
-**Status:** Built. The done-when waits on the email settings: on 2026-09-29 the six `GMAIL_*` / `CONTACT_EMAIL_*` names in `.env.local` were blank, so the tool is not offered yet.
+**Status:** Built. The done-when waits on the email settings: on 2026-09-29 the `GMAIL_*` / `CONTACT_EMAIL_*` names in `.env.local` were blank, so the tool is not offered yet. Since 4.2a the tool also needs Gmail connected on `/admin/email`.
 
 **As built**
 - **Small talk keeps its fixed reply.** Step 6 offers the tool for `smalltalk` too, but since 2.14a small talk never calls the answer model. The tool goes with `cv` and `contact` only. A visitor who wants to reach the owner is classified `contact`, not small talk.
@@ -1666,7 +1696,7 @@ mistake cannot send mail by itself.
 | 3.1 | Confirm the Phase 3 fixed decisions, the `LLM_ANSWER_REASONING` level, and the fix for the utility model (if it is needed). |
 | 3.5 | Check the workflow panel on a phone and on desktop. |
 | 4.1 | Confirm the Phase 4 fixed decisions (draft-then-Send, limits, Gmail API over SMTP). |
-| 4.2 | Create a Google Cloud OAuth client (Desktop app) with the Gmail API enabled, set the app's publishing status to **In production**, run `scripts/gmail-refresh-token.ts`, put the values in `.env.local` and Vercel, then run `bun run email:test`. |
+| 4.2a | Create a Google Cloud OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback` per site address) with the Gmail API enabled, set the app's publishing status to **In production**, put the client id, secret and `CONTACT_EMAIL_TO` in `.env.local` and Vercel, then click **Connect Gmail** and **Send test email** on `/admin/email`. |
 
 ## 4. Known risks
 
@@ -1675,7 +1705,7 @@ mistake cannot send mail by itself.
 - **Function duration on Vercel.** Extraction and index builds run in `after()`; if the plan limit is lower than needed, report it rather than splitting jobs.
 - **Visible reasoning (Phase 3).** Reasoning text is not filtered. It can paraphrase the system prompt or discuss the prompt-injection rules, even though the answer prompt says never to reveal them. The owner accepts this by keeping `LLM_ANSWER_REASONING` on; setting it to `off` removes the Thinking step. Reasoning also adds latency and output tokens to every answer.
 - **Public retrieval detail (Phase 3).** Visitors see chunk titles and scores. Everything comes from the public CV, but it shows how the retrieval works. Chunk text, context notes, errors and config stay admin-only.
-- **Gmail refresh token lifetime (Phase 4).** While the Google OAuth app is in *Testing* status, refresh tokens expire after 7 days and the email tool stops working. Set the app to *In production* (an unverified app is fine for the owner's own account; Google shows a warning on the consent screen). Changing the Google password or revoking access also revokes the token.
+- **Gmail refresh token lifetime (Phase 4).** While the Google OAuth app is in *Testing* status, refresh tokens expire after 7 days and the email tool stops working. Set the app to *In production* (an unverified app is fine for the owner's own account; Google shows a warning on the consent screen). Changing the Google password or revoking access also revokes the token; the owner then connects Gmail again on `/admin/email`.
 - **Email abuse (Phase 4).** Anyone can draft and send up to the limits, and the text is visitor-written. The fixed recipient, the Send click, the per-session and daily caps, and the public-session gate bound it; spam can still reach the owner's inbox up to `CONTACT_EMAIL_DAILY_LIMIT` a day.
 - **Tool-calling reliability (Phase 4).** The free answer model lists `tools`, but it may call the tool too eagerly or not at all. 4.1 records how it behaves. Changing the model is the owner's decision.
 - **Decisions API is alpha (2.14).** The endpoint, request and response shapes may change without notice, and the default router model is new and free-tier (tight rate limits). The router is opt-in and every failure falls back to the rewriter, so a break costs the short-circuit, not the turn. Visitor messages and recent history go to that provider, like the rewriter's.

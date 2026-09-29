@@ -50,8 +50,6 @@ proxy.ts                      Optimistic /admin redirect only. No server-only, M
 scripts/hash-admin-password.ts  Produces ADMIN_PASSWORD_HASH for .env.local.
 scripts/rag-eval.ts           `bun run eval:rag`: retrieval eval against the real DB, wired from rag-composition.
 scripts/probe-scope-router.ts `bun --env-file=.env.local`: go/no-go probe of the decision model on evals/scope-probe.json. No DB.
-scripts/gmail-refresh-token.ts  `bun run email:token`: owner-only OAuth loopback flow that prints GMAIL_REFRESH_TOKEN.
-scripts/send-test-email.ts    `bun run email:test`: sends one real test email to CONTACT_EMAIL_TO. No DB.
 scripts/bun-v8-snapshot-shim.ts  Preload for Bun scripts that use Mongo (BSON's v8 probe throws in Bun).
 evals/                        Golden set (cv-retrieval.golden.json), scope probe set (scope-probe.json), usage README; reports/ is git-ignored.
 
@@ -73,9 +71,11 @@ app/                          Routes. Keep them thin: parse input, call a servic
         [indexId]/            Index detail with chunks.
         playground/           Retrieval playground: run the pipeline with any config and index, see its trace; "Use for chat" saves the config.
         _components/          Shared trace view (summary, timing bars, stage panels, final sources).
+      email/                  Connect Gmail (link to the connect route), disconnect, test email; reuses the RAG admin styles.
   api/
     admin/cv/upload/          Vercel Blob client-upload token and callback.
     admin/cv/[versionId]/pdf/ Admin PDF download.
+    admin/email/              Gmail OAuth: connect/ (state + PKCE cookie, redirect to Google) and callback/ (saves the token).
     public/session/           Public session status; issue/ creates one (rate limited).
     public/chat/              Chat turn: withPublicSession, NDJSON stream of ChatEvents.
   cv/download/                Public CV PDF download.
@@ -88,7 +88,7 @@ client/                       Browser-side data access.
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.
   domain/                     Types and interfaces only, no I/O: agent, auth, blob-store, chat, cv, email, llm, public-session, rag.
   db/                         Mongo client singleton (getDb) and runTransaction / TransactionContext.
-  repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace, rag-settings, conversation.
+  repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace, rag-settings, conversation, gmail-connection.
   services/                   Business logic with injected dependencies.
     auth-service.ts           requireAdmin, withAdmin (server-action wrapper).
     cv-service.ts             Upload registration, extraction, edit, publish.
@@ -96,13 +96,14 @@ server/                       All server logic. Layered: domain -> repositories/
     rag-settings-service.ts   The chat's saved retrieval config (parsed on read, defaults on a stale one).
     retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
-    chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, answer via runAnswerLoop (tools when email is set), stored turn and trace.
+    chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, answer via runAnswerLoop (tools looked up per turn), stored turn and trace.
+    email-service.ts          Gmail connection: OAuth connect/callback, disconnect, test email, isReady, the cached sender (email-runtime wires it).
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
-  http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers.
+  http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers, Gmail connect cookie.
   storage/                    VercelBlobStore implements the BlobStore interface.
   llm/                        OpenRouter client (chat, embeddings, rerank, decisions), SSE parser, usage meter, adaptive chat client (drops options an endpoint refuses), llm-env, PDF-to-Markdown, llm-runtime (getLlm).
-  email/                      Email env (readEmailEnv), MIME builder, Google OAuth helpers, GmailEmailSender (hand-written fetch adapter, never resends).
+  email/                      Email env (readEmailEnv), MIME builder, Google OAuth helpers and GoogleOAuthClient (code exchange, revoke), GmailEmailSender (hand-written fetch adapter, never resends).
   agent/                      Answer-model tools: EmailDraftTool (send_email, drafts only) and runAnswerLoop (one tool round per turn). Pure.
   cv/                         CV zod schema, ids, markdown rendering, LLM extractor and prompt, issues, legacy migration, download.
   rag/                        Contextual RAG pipeline. Pure; I/O is injected.

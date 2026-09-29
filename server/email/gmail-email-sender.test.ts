@@ -6,9 +6,9 @@ import { GOOGLE_TOKEN_URL } from "@/server/email/gmail-oauth";
 import { buildMimeMessage } from "@/server/email/mime-message";
 
 const credentials = {
-  GMAIL_CLIENT_ID: "client-id",
-  GMAIL_CLIENT_SECRET: "client-secret",
-  GMAIL_REFRESH_TOKEN: "refresh-token",
+  clientId: "client-id",
+  clientSecret: "client-secret",
+  refreshToken: "refresh-token",
 };
 const email = { to: "owner@example.com", subject: "Hello", text: "Hi Lwin.\nJane" };
 
@@ -170,7 +170,7 @@ describe("401 from Gmail", () => {
 });
 
 describe("token errors", () => {
-  test("invalid_grant names the command that makes a new refresh token", async () => {
+  test("invalid_grant says to connect Gmail again on the admin page", async () => {
     const { sender, urls } = setup([
       () => json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, 400),
     ]);
@@ -178,8 +178,7 @@ describe("token errors", () => {
     expect(error.retryable).toBe(false);
     expect(error.status).toBe(400);
     expect(error.message).toContain("invalid_grant");
-    expect(error.message).toContain("bun run email:token");
-    expect(error.message).toContain("GMAIL_REFRESH_TOKEN");
+    expect(error.message).toContain("/admin/email");
     expect(urls()).toEqual(["token"]);
   });
 

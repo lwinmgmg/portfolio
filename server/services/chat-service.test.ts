@@ -221,6 +221,8 @@ type SetupOptions = {
   answer?: ScriptedAnswer | ScriptedAnswer[];
   // Built with the test's conversations, like the runtime's email tool.
   tools?: (conversations: MemoryConversations) => AgentTool[];
+  // The per-turn tools lookup throws, e.g. Mongo is down while reading the Gmail connection.
+  toolsFail?: boolean;
   // `stage`: the embed stage fails; `no-index`: the active index is gone by the time it runs.
   retrievalFails?: "stage" | "no-index";
   // Awaited before each stage starts, e.g. to hold the pipeline mid-run.
@@ -246,6 +248,8 @@ function setup(options: SetupOptions = {}) {
     },
   );
   let tick = 0;
+  const offered = options.tools?.(conversations) ?? null;
+  let toolLookups = 0;
   const service = new ChatService({
     conversations,
     pipeline: {
@@ -294,13 +298,21 @@ function setup(options: SetupOptions = {}) {
     answerModel: "answer-model",
     answerReasoning: options.answerReasoning ?? "low",
     dailyMessageLimit: options.dailyMessageLimit ?? 500,
-    ...(options.tools ? { tools: options.tools(conversations) } : {}),
+    ...(offered || options.toolsFail
+      ? {
+          tools: async () => {
+            toolLookups += 1;
+            if (options.toolsFail) throw new Error("mongo down");
+            return offered ?? [];
+          },
+        }
+      : {}),
     now: () => now,
     // Each reading advances 5 ms.
     clock: () => (tick += 5),
     log: (message) => logged.push(message),
   });
-  return { service, conversations, retrievals, saved, logged, chat };
+  return { service, conversations, retrievals, saved, logged, chat, toolLookups: () => toolLookups };
 }
 
 const published: CvVersion = {
@@ -1163,6 +1175,33 @@ test("without email configured no tools are offered and a contact request gets a
   ]);
   expect(contact.chat.requests).toHaveLength(0);
   expect(contact.saved[0]?.stages.map((stage) => stage.name)).toEqual(["rewrite"]);
+});
+
+test("tools are looked up on each turn that could use them, and only then", async () => {
+  const cv = setup({ tools: emailTool });
+  await collect(cv.service.reply(ask));
+  await collect(cv.service.reply(ask));
+  expect(cv.toolLookups()).toBe(2);
+
+  const smalltalk = setup({ scope: "smalltalk", tools: emailTool });
+  await collect(smalltalk.service.reply(ask));
+  expect(smalltalk.toolLookups()).toBe(0);
+});
+
+test("a failed tools lookup is logged and the turn goes on without tools", async () => {
+  const contact = setup({ scope: "contact", toolsFail: true });
+  const events = await collect(contact.service.reply(contactAsk));
+  expect(withoutSteps(events)[1]).toEqual({
+    type: "delta",
+    text: "I can't pass messages on from this chat. You can contact Jane Doe directly with the details on this page.",
+  });
+  expect(contact.chat.requests).toHaveLength(0);
+  expect(contact.logged).toEqual(["Chat tools lookup failed."]);
+
+  const cv = setup({ toolsFail: true });
+  await collect(cv.service.reply(ask));
+  expect(Object.keys(cv.chat.requests[0] ?? {})).not.toContain("tools");
+  expect(cv.logged).toEqual(["Chat tools lookup failed."]);
 });
 
 test("off topic and small talk keep their fixed replies with tools offered", async () => {

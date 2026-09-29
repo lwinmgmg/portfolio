@@ -8,9 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "bun test",
-    "eval:rag": "bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local scripts/rag-eval.ts",
-    "email:token": "bun --env-file=.env.local scripts/gmail-refresh-token.ts",
-    "email:test": "bun --env-file=.env.local scripts/send-test-email.ts"
+    "eval:rag": "bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local scripts/rag-eval.ts"
   },
   "dependencies": {
     "@opendocsg/pdf2md": "0.3.2",

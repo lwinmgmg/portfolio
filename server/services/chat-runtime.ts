@@ -6,7 +6,6 @@ import { connection } from "next/server";
 import { EmailDraftTool } from "@/server/agent/email-draft-tool";
 import type { AgentTool } from "@/server/domain/agent";
 import type { ChatEvent } from "@/server/domain/chat";
-import { readEmailEnv } from "@/server/email/email-env";
 import { getLlm } from "@/server/llm/llm-runtime";
 import { getRag, isRagConfigured } from "@/server/rag/rag-runtime";
 import { MongoConversationRepository } from "@/server/repositories/conversation-repository";
@@ -14,6 +13,7 @@ import { MongoCvVersionRepository } from "@/server/repositories/cv-version-repos
 import { MongoRagIndexRepository } from "@/server/repositories/rag-index-repository";
 import { MongoRagTraceRepository } from "@/server/repositories/rag-trace-repository";
 import { ChatService, type ChatReplyRequest } from "@/server/services/chat-service";
+import { getEmail } from "@/server/services/email-runtime";
 
 const conversations = new MongoConversationRepository();
 const indexes = new MongoRagIndexRepository();
@@ -38,14 +38,17 @@ function getChat(): ChatService {
     answerModel: env.LLM_ANSWER_MODEL,
     answerReasoning: env.LLM_ANSWER_REASONING,
     dailyMessageLimit: env.CHAT_DAILY_MESSAGE_LIMIT,
-    tools: agentTools(),
+    tools: agentTools,
   });
   return chat;
 }
 
-// The email tool only drafts, but it is offered only when a draft could later be sent.
-function agentTools(): AgentTool[] {
-  return readEmailEnv() === null ? [] : [new EmailDraftTool(conversations)];
+const emailDraftTool = new EmailDraftTool(conversations);
+
+// The email tool only drafts, but it is offered only when a draft could later be sent: the email
+// env is set and the owner has connected Gmail.
+async function agentTools(): Promise<AgentTool[]> {
+  return (await getEmail().isReady()) ? [emailDraftTool] : [];
 }
 
 export function isChatConfigured(): boolean {

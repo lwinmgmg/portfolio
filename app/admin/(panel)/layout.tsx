@@ -6,6 +6,7 @@ import { requireAdmin } from "@/server/services/auth-service";
 const adminNav = [
   { href: "/admin/cv", label: "CV" },
   { href: "/admin/rag", label: "RAG" },
+  { href: "/admin/email", label: "Email" },
 ] as const;
 
 export default async function Layout({
