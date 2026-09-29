@@ -7,7 +7,8 @@ import { ChatMessages } from "@/app/(public)/_components/chat/chat-messages";
 import { CHAT_NOTICES } from "@/app/(public)/_components/chat/chat-state";
 import { useChat } from "@/app/(public)/_components/chat/use-chat";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
-import { RobotGreeting } from "@/app/(public)/_components/robot/robot-greeting";
+import { answerPreview } from "@/app/(public)/_components/robot/robot-answer-preview";
+import { RobotBubble, type BubbleContent } from "@/app/(public)/_components/robot/robot-bubble";
 import {
   greetingLines,
   type GreetingTarget,
@@ -48,11 +49,29 @@ export function ChatWidget({
   const [panelOpen, setPanelOpen] = useState(false);
   // An answer that finished while the panel was closed, until the panel opens again.
   const [unread, setUnread] = useState(false);
+  // The robot's bubble previews that answer until the visitor opens the chat or closes it.
+  const [previewing, setPreviewing] = useState(false);
   const [wasStreaming, setWasStreaming] = useState(state.streaming);
   if (wasStreaming !== state.streaming) {
     setWasStreaming(state.streaming);
-    if (!state.streaming && !panelOpen) setUnread(true);
+    if (!state.streaming && !panelOpen) {
+      setUnread(true);
+      setPreviewing(true);
+    }
   }
+
+  // An answer can only be asked for with the panel open, which dismisses the greeting, so the
+  // two never compete for the bubble.
+  const bubble: BubbleContent | null = previewing
+    ? { kind: "answer", preview: answerPreview(state) }
+    : greeting.stage === "hidden"
+      ? null
+      : {
+          kind: "greeting",
+          lines: greetingLines({ robotName: ROBOT_NAME, ownerName, target: greetingTarget }),
+          target: greetingTarget,
+          followed: greeting.stage === "followed",
+        };
 
   // On a phone, focusing the input would open the keyboard over the suggestions.
   function focusInputIfWide() {
@@ -64,6 +83,7 @@ export function ChatWidget({
     restore();
     setPanelOpen(true);
     setUnread(false);
+    setPreviewing(false);
     dialog.current?.showModal();
     focusInputIfWide();
   }
@@ -104,14 +124,14 @@ export function ChatWidget({
         tracking={!panelOpen}
         onClick={open}
       />
-      <RobotGreeting
-        stage={greeting.stage}
-        lines={greetingLines({ robotName: ROBOT_NAME, ownerName, target: greetingTarget })}
-        target={greetingTarget}
+      <RobotBubble
+        content={bubble}
         onFollow={greeting.follow}
-        onAsk={open}
+        onOpenChat={open}
         onClose={(hadFocus) => {
+          // Closing the preview keeps the unread dot: the full answer is still unread.
           greeting.dismiss();
+          setPreviewing(false);
           if (hadFocus) trigger.current?.focus({ preventScroll: true });
         }}
       />

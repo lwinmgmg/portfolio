@@ -63,9 +63,3 @@ function followUpLine(ownerName: string | null, target: GreetingTarget): string 
   }
   return `Here is ${ownerName ? `where ${ownerName} has worked` : "the work history"}. Ask me about any role.`;
 }
-
-// On a phone the bubble sits over the CV text, so it goes once the visitor has scrolled a screen
-// away from where it appeared (or from where the target link landed).
-export function shouldCloseOnScroll(startY: number, y: number, viewportHeight: number): boolean {
-  return viewportHeight > 0 && Math.abs(y - startY) >= viewportHeight;
-}

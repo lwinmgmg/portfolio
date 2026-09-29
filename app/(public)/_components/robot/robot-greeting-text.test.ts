@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import {
   greetingLines,
   greetingTarget,
-  shouldCloseOnScroll,
   type GreetingTarget,
 } from "@/app/(public)/_components/robot/robot-greeting-text";
 import { sampleCv } from "@/server/cv/__fixtures__/sample-cv";
@@ -67,13 +66,4 @@ test("the robot's name comes from the caller", () => {
   expect(greetingLines({ robotName: "Pip", ownerName: null, target: null }).opening).toBe(
     "Hi! I'm Pip. Ask me anything about this CV.",
   );
-});
-
-test("shouldCloseOnScroll closes after one screen height in either direction", () => {
-  expect(shouldCloseOnScroll(100, 100, 700)).toBe(false);
-  expect(shouldCloseOnScroll(100, 799, 700)).toBe(false);
-  expect(shouldCloseOnScroll(100, 800, 700)).toBe(true);
-  expect(shouldCloseOnScroll(900, 200, 700)).toBe(true);
-  expect(shouldCloseOnScroll(900, 201, 700)).toBe(false);
-  expect(shouldCloseOnScroll(0, 5_000, 0)).toBe(false);
 });
