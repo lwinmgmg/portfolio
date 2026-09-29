@@ -58,7 +58,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     page.tsx                  Published CV at /, plus the chat widget when an index is active.
     projects/[projectId]/     Project detail pages.
     _components/cv/           CV section components. Pure helpers: cv-format, cv-sections, cv-seo.
-    _components/chat/         Chat widget (<dialog> panel, use-chat hook). Pure: chat-text, chat-state, chat-storage, chat-suggestions.
+    _components/chat/         Chat widget (<dialog> panel, use-chat hook). Pure: chat-markdown, chat-text, chat-state, chat-storage, chat-suggestions.
   admin/
     login/                    Login page, form, action, state.
     (panel)/                  Admin shell (nav layout). Pages call requireAdmin().

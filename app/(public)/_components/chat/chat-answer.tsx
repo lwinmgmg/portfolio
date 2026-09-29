@@ -1,12 +1,13 @@
 import { Fragment } from "react";
 
-import type { AssistantEntry } from "@/app/(public)/_components/chat/chat-state";
 import {
-  citationNumbers,
   parseAnswer,
-  sourceSectionLabel,
-  type InlinePart,
-} from "@/app/(public)/_components/chat/chat-text";
+  type AnswerBlock,
+  type InlineNode,
+  type ListBlock,
+} from "@/app/(public)/_components/chat/chat-markdown";
+import type { AssistantEntry } from "@/app/(public)/_components/chat/chat-state";
+import { citationNumbers, sourceSectionLabel } from "@/app/(public)/_components/chat/chat-text";
 import { focusRing, textLink } from "@/app/(public)/_components/cv/cv-styles";
 import type { ChatSource } from "@/server/domain/chat";
 
@@ -21,43 +22,29 @@ type NavigateProps = {
   onNavigate: () => void;
 };
 
-// An assistant answer as plain text: the model's output is never parsed as HTML.
+// What citation chips need while an answer's tree is rendered.
+type Citations = NavigateProps & {
+  numbers: ReadonlyMap<string, number>;
+  sources: ReadonlyMap<string, ChatSource>;
+};
+
+// An assistant answer rendered from Markdown as React elements; the model's output never
+// becomes HTML.
 export function ChatAnswer({ entry, onNavigate }: { entry: AssistantEntry } & NavigateProps) {
   const streaming = entry.status === "streaming";
   const blocks = parseAnswer(entry.text, streaming);
-  const numbers = citationNumbers(entry.text, entry.sources);
-  const sources = new Map((entry.sources ?? []).map((source) => [source.sourceId, source]));
-
-  const inline = (parts: readonly InlinePart[]) =>
-    parts.map((part, index) =>
-      part.kind === "text" ? (
-        <Fragment key={index}>{part.text}</Fragment>
-      ) : (
-        <CitationChip
-          key={index}
-          number={numbers.get(part.sourceId)}
-          source={sources.get(part.sourceId)}
-          onNavigate={onNavigate}
-        />
-      ),
-    );
+  const citations: Citations = {
+    numbers: citationNumbers(entry.text, entry.sources),
+    sources: new Map((entry.sources ?? []).map((source) => [source.sourceId, source])),
+    onNavigate,
+  };
 
   return (
     <div className="space-y-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
       {blocks.length === 0 && streaming ? <Thinking /> : null}
-      {blocks.map((block, index) =>
-        block.kind === "paragraph" ? (
-          <p key={index} className="whitespace-pre-line">
-            {inline(block.parts)}
-          </p>
-        ) : (
-          <ul key={index} className="list-disc space-y-1 pl-5 marker:text-zinc-400">
-            {block.items.map((item, itemIndex) => (
-              <li key={itemIndex}>{inline(item)}</li>
-            ))}
-          </ul>
-        ),
-      )}
+      {blocks.map((block, index) => (
+        <Block key={index} block={block} citations={citations} />
+      ))}
       {entry.status === "stopped" ? <Note>Stopped.</Note> : null}
       {entry.status === "interrupted" ? <Note>This answer is incomplete.</Note> : null}
       {entry.sources && entry.sources.length > 0 ? (
@@ -65,6 +52,89 @@ export function ChatAnswer({ entry, onNavigate }: { entry: AssistantEntry } & Na
       ) : null}
     </div>
   );
+}
+
+function Block({ block, citations }: { block: AnswerBlock; citations: Citations }) {
+  switch (block.kind) {
+    case "paragraph":
+      return <p className="whitespace-pre-line">{inline(block.content, citations)}</p>;
+    case "heading":
+      return (
+        <p className="font-semibold text-zinc-950 dark:text-zinc-50">
+          {inline(block.content, citations)}
+        </p>
+      );
+    case "list":
+      return <List list={block} citations={citations} />;
+    case "code":
+      return (
+        <pre className="overflow-x-auto rounded-md bg-zinc-100 p-3 font-mono text-xs dark:bg-zinc-900">
+          <code>{block.text}</code>
+        </pre>
+      );
+    case "rule":
+      return <hr className="border-zinc-200 dark:border-zinc-800" />;
+  }
+}
+
+function List({ list, citations }: { list: ListBlock; citations: Citations }) {
+  const items = list.items.map((item, index) => (
+    <li key={index} className="pl-0.5">
+      {inline(item.content, citations)}
+      {item.lists.map((nested, nestedIndex) => (
+        <List key={nestedIndex} list={nested} citations={citations} />
+      ))}
+    </li>
+  ));
+  const spacing = "mt-1 space-y-1 pl-5 marker:text-zinc-400 first:mt-0";
+  return list.ordered ? (
+    <ol start={list.start} className={`list-decimal ${spacing}`}>
+      {items}
+    </ol>
+  ) : (
+    <ul className={`list-disc ${spacing}`}>{items}</ul>
+  );
+}
+
+function inline(nodes: readonly InlineNode[], citations: Citations): React.ReactNode[] {
+  return nodes.map((node, index) => {
+    switch (node.kind) {
+      case "text":
+        return <Fragment key={index}>{node.text}</Fragment>;
+      case "strong":
+        return (
+          <strong key={index} className="font-semibold text-zinc-950 dark:text-zinc-50">
+            {inline(node.children, citations)}
+          </strong>
+        );
+      case "em":
+        return <em key={index}>{inline(node.children, citations)}</em>;
+      case "code":
+        return (
+          <code
+            key={index}
+            className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-zinc-800"
+          >
+            {node.text}
+          </code>
+        );
+      case "link":
+        return (
+          <a key={index} href={node.href} target="_blank" rel="noopener noreferrer" className={textLink}>
+            {inline(node.children, citations)}
+          </a>
+        );
+      case "cite":
+        return (
+          <CitationChip
+            key={index}
+            number={citations.numbers.get(node.sourceId)}
+            source={citations.sources.get(node.sourceId)}
+            onNavigate={citations.onNavigate}
+          />
+        );
+    }
+  });
 }
 
 function CitationChip({
