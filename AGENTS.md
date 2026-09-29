@@ -60,7 +60,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     projects/[projectId]/     Project detail pages.
     _components/cv/           CV section components. Pure helpers: cv-format, cv-sections, cv-seo.
     _components/chat/         Chat widget (<dialog> panel, use-chat hook, steps panel in chat-activity, email draft card in chat-email-draft). Pure: chat-markdown, chat-text, chat-state, chat-storage, chat-suggestions, chat-steps-text, chat-email-text.
-    _components/robot/        Robot guide (Phase 5). Pure: robot-mood (mood from ChatState, ROBOT_NAME).
+    _components/robot/        Robot guide (Phase 5): Robot SVG (robot.tsx, moods in robot.module.css). Pure: robot-mood (mood from ChatState, ROBOT_NAME).
   admin/
     login/                    Login page, form, action, state.
     (panel)/                  Admin shell (nav layout). Pages call requireAdmin().
@@ -73,6 +73,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
         playground/           Retrieval playground: run the pipeline with any config and index, see its trace; "Use for chat" saves the config.
         _components/          Shared trace view (summary, timing bars, stage panels, final sources).
       email/                  Connect Gmail (link to the connect route), disconnect, test email; reuses the RAG admin styles.
+      robot/                  Preview of every robot mood at two sizes, light and dark, moving and still.
   api/
     admin/cv/upload/          Vercel Blob client-upload token and callback.
     admin/cv/[versionId]/pdf/ Admin PDF download.
@@ -142,6 +143,7 @@ server/                       All server logic. Layered: domain -> repositories/
 | An admin mutation | `actions.ts` wrapped in `withAdmin`, state in `*-state.ts`, form with `useActionState` | `app/admin/(panel)/rag/` |
 | A public JSON API | `app/api/public/**/route.ts` with `withPublicSession` and `publicJson` | `app/api/public/session/route.ts` |
 | A public streaming API | Service returns an `AsyncIterable` of events; route wraps it in `ndjsonStream` and `after(() => finished)` | `app/api/public/chat/route.ts` |
+| Styles Tailwind cannot express (keyframes, SVG part states) | A colocated `*.module.css`: colours as variables on the root class with a dark-mode block, state via `data-*` selectors, a `prefers-reduced-motion` block; no size rules (unlayered CSS beats Tailwind utilities) | `app/(public)/_components/robot/robot.module.css` |
 | A client fetcher | `client/api/*` on `getPublicJson`, query options in `client/query/*` | `client/api/public-http.ts` |
 | A client stream reader | `client/api/*` on `postPublicStream`; stop by cancelling the body, not by aborting the fetch | `client/api/chat.ts` |
 | A script that uses the DB | `scripts/`, run with `bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local`; no `next/*`; logic in pure modules | `scripts/rag-eval.ts` (`eval:rag` in package.json) |

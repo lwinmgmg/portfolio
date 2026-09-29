@@ -1817,6 +1817,15 @@ The no-information reply has no marker in the stream, so it gets `idle`, not `pu
 5. `/admin/robot` (behind `requireAdmin`, linked as "Robot" in the admin nav): every mood at 64 px and 128 px, on a light and a dark panel, so the owner can review the drawing without triggering each state in the chat.
 6. AGENTS.md: extend the `robot/` line (mapped in 5.1) and add a "Where new code goes" row for the CSS module pattern.
 
+**Status:** Built. Waiting for the owner's look checkpoint and a browser check (this workspace has no browser; each mood was rendered still and moving with headless Chrome from the component and module CSS).
+
+**As built**
+- `Robot` also takes `theme` ("light" | "dark", forces a scheme; the admin preview shows both whatever the system is set to) and `still` (the reduced-motion view without the media query; the preview shows a still copy of every mood).
+- Only parts the stylesheet targets carry a class: `figure` (everything but the shadow; floats), `head` (antenna, ears, screen, face), `arm` / `armLeft` / `armRight`, `eye` / `eyeLeft`, `pupil`, the face shapes, `bulb` (on, dim, warn), `mouth`, `question`, `sparkles`. `pupil` already reads `--eye-x` / `--eye-y` (zero until 5.3).
+- Bulb colour changes by cross-fading three stacked bulbs, since only `opacity` and `transform` animate: accent, dim for `sad`, amber for `puzzled` (also the `?`).
+- The module sets no size: its rules are unlayered and would beat Tailwind's layered utilities. The SVG has `width`/`height` 64 as a fallback, and callers size it with a class (`size-16`).
+- Listening's mouth is a short closed line, so at 64 px it does not read as talking's open mouth. The waving arm swings between -110° and -145° (still pose -130°), clear of the head.
+
 **Done when**
 - `/admin/robot` shows all eight moods, each recognisable at 64 px, in light and dark mode.
 - With reduced motion turned on, nothing moves and each mood is still recognisable.

@@ -1,0 +1,469 @@
+/*
+ * Bit, the robot guide. Each mood is a still face (eyes, mouth, bulb) chosen by data-mood, with
+ * motion layered on top. Only transform and opacity animate. Reduced motion, and data-still,
+ * drop every animation and transition and leave the still face.
+ *
+ * The colours follow globals.css: --robot-glow is the site accent. A forced data-theme (the admin
+ * preview) repeats the accent values, since var(--accent) follows the system scheme.
+ */
+
+.robot {
+  --robot-body: #e4e4e7;
+  --robot-line: #52525b;
+  --robot-face: #fafafa;
+  --robot-glow: var(--accent);
+  --robot-highlight: #ffffff;
+  --robot-dim: #a1a1aa;
+  --robot-warn: #d97706;
+  --robot-shadow: rgb(0 0 0 / 0.12);
+  overflow: visible;
+}
+
+.robot[data-theme="light"] {
+  --robot-glow: #0f766e;
+}
+
+@media (prefers-color-scheme: dark) {
+  .robot:not([data-theme="light"]) {
+    --robot-body: #3f3f46;
+    --robot-line: #a1a1aa;
+    --robot-face: #18181b;
+    --robot-highlight: #f0fdfa;
+    --robot-dim: #52525b;
+    --robot-warn: #fbbf24;
+    --robot-shadow: rgb(161 161 170 / 0.2);
+  }
+}
+
+.robot[data-theme="dark"] {
+  --robot-body: #3f3f46;
+  --robot-line: #a1a1aa;
+  --robot-face: #18181b;
+  --robot-glow: #2dd4bf;
+  --robot-highlight: #f0fdfa;
+  --robot-dim: #52525b;
+  --robot-warn: #fbbf24;
+  --robot-shadow: rgb(161 161 170 / 0.2);
+}
+
+@media print {
+  .robot {
+    --robot-body: #ffffff;
+    --robot-line: #000000;
+    --robot-face: #ffffff;
+    --robot-glow: #000000;
+    --robot-shadow: transparent;
+  }
+}
+
+/* Paint */
+
+.shell {
+  fill: var(--robot-body);
+  stroke: var(--robot-line);
+  stroke-width: 2;
+}
+
+.arm {
+  fill: var(--robot-body);
+  stroke: var(--robot-line);
+  stroke-width: 2;
+}
+
+.line {
+  stroke: var(--robot-line);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.screen {
+  fill: var(--robot-face);
+  stroke: var(--robot-line);
+  stroke-width: 1.5;
+}
+
+.glowFill {
+  fill: var(--robot-glow);
+}
+
+.stroke {
+  fill: none;
+  stroke: var(--robot-glow);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.highlight {
+  fill: var(--robot-highlight);
+}
+
+.shadow {
+  fill: var(--robot-shadow);
+}
+
+.cheek {
+  fill: var(--robot-glow);
+  opacity: 0.25;
+}
+
+.bulbOn {
+  fill: var(--robot-glow);
+}
+
+.bulbDim {
+  fill: var(--robot-dim);
+}
+
+.bulbWarn {
+  fill: var(--robot-warn);
+}
+
+.browsSad,
+.browPuzzled {
+  fill: none;
+  stroke: var(--robot-glow);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.questionMark {
+  fill: var(--robot-warn);
+  font: 700 20px ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Moving parts: where each one turns or scales from */
+
+.figure,
+.head,
+.arm {
+  transform-box: view-box;
+  transition: transform 200ms ease-out;
+}
+
+.head {
+  transform-origin: 50px 62px;
+}
+
+.armLeft {
+  transform-origin: 30.5px 68px;
+}
+
+.armRight {
+  transform-origin: 69.5px 68px;
+}
+
+.eye,
+.eyeOpen,
+.mouthTalking,
+.sparkle,
+.question,
+.shadow {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.eye {
+  transition: transform 200ms ease-out;
+}
+
+/* Where the eyes look. Zero until 5.3's eye tracking sets the variables on the launcher. */
+.pupil {
+  transform: translate(var(--eye-x, 0px), var(--eye-y, 0px));
+}
+
+/* Face shapes: each is shown for its moods and cross-fades in 150 ms */
+
+.eyeOpen,
+.eyeHappy,
+.eyeSquint,
+.browsSad,
+.browPuzzled,
+.mouth > *,
+.bulb > *,
+.question,
+.sparkles,
+.cheek {
+  transition: opacity 150ms ease-out;
+}
+
+.eyeHappy,
+.eyeSquint,
+.browsSad,
+.browPuzzled,
+.mouth > *,
+.bulbDim,
+.bulbWarn,
+.question,
+.sparkles {
+  opacity: 0;
+}
+
+.robot[data-mood="waving"] .eyeOpen,
+.robot[data-mood="happy"] .eyeOpen,
+.robot[data-mood="puzzled"] .eyeLeft .eyeOpen {
+  opacity: 0;
+}
+
+.robot[data-mood="waving"] .eyeHappy,
+.robot[data-mood="happy"] .eyeHappy,
+.robot[data-mood="puzzled"] .eyeSquint,
+.robot[data-mood="sad"] .browsSad,
+.robot[data-mood="puzzled"] .browPuzzled,
+.robot[data-mood="idle"] .mouthIdle,
+.robot[data-mood="waving"] .mouthWaving,
+.robot[data-mood="listening"] .mouthListening,
+.robot[data-mood="thinking"] .mouthThinking,
+.robot[data-mood="talking"] .mouthTalking,
+.robot[data-mood="puzzled"] .mouthPuzzled,
+.robot[data-mood="happy"] .mouthHappy,
+.robot[data-mood="sad"] .mouthSad,
+.robot[data-mood="puzzled"] .question,
+.robot[data-mood="happy"] .sparkles {
+  opacity: 1;
+}
+
+.robot[data-mood="waving"] .cheek,
+.robot[data-mood="happy"] .cheek {
+  opacity: 0.5;
+}
+
+.robot[data-mood="sad"] .cheek {
+  opacity: 0;
+}
+
+.robot[data-mood="sad"] .bulbOn,
+.robot[data-mood="puzzled"] .bulbOn {
+  opacity: 0;
+}
+
+.robot[data-mood="sad"] .bulbDim,
+.robot[data-mood="puzzled"] .bulbWarn {
+  opacity: 1;
+}
+
+/* Still poses: also the reduced-motion view */
+
+.robot[data-mood="waving"] .armRight {
+  transform: rotate(-130deg);
+}
+
+.robot[data-mood="happy"] .armLeft {
+  transform: rotate(45deg);
+}
+
+.robot[data-mood="happy"] .armRight {
+  transform: rotate(-45deg);
+}
+
+.robot[data-mood="listening"] .head {
+  transform: translateY(1.5px) scale(1.04);
+}
+
+.robot[data-mood="listening"] .eye {
+  transform: scale(1.2);
+}
+
+.robot[data-mood="thinking"] .eye {
+  transform: translate(0, -3px);
+}
+
+.robot[data-mood="puzzled"] .head {
+  transform: rotate(-8deg);
+}
+
+.robot[data-mood="sad"] .head {
+  transform: translateY(3px) rotate(3deg);
+}
+
+.robot[data-mood="sad"] .eye {
+  transform: translateY(1.5px) scale(0.85);
+}
+
+.robot[data-mood="sad"] .arm {
+  transform: translateY(1.5px);
+}
+
+/* Motion */
+
+.figure {
+  animation: float 3s ease-in-out infinite;
+}
+
+.shadow {
+  animation: shadow-float 3s ease-in-out infinite;
+}
+
+.eyeOpen {
+  animation: blink 4.5s infinite;
+}
+
+.robot[data-mood="waving"] .armRight {
+  animation: wave 0.6s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="thinking"] .eye {
+  animation: scan 1.6s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="thinking"] .bulbOn {
+  animation: pulse 0.9s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="talking"] .figure {
+  animation: bob 0.5s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="talking"] .shadow {
+  animation: none;
+}
+
+.robot[data-mood="talking"] .mouthTalking {
+  animation: talk 0.25s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="happy"] .figure {
+  animation: hop 1.8s ease-out infinite;
+}
+
+.robot[data-mood="happy"] .shadow {
+  animation: shadow-hop 1.8s ease-out infinite;
+}
+
+.robot[data-mood="happy"] .sparkle {
+  animation: twinkle 0.8s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="happy"] .sparkle + .sparkle {
+  animation-delay: 0.4s;
+}
+
+.robot[data-mood="puzzled"] .question {
+  animation: bob 1.2s ease-in-out infinite alternate;
+}
+
+.robot[data-mood="sad"] .figure,
+.robot[data-mood="sad"] .shadow {
+  animation-duration: 5s;
+}
+
+.robot[data-still] * {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .robot * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes shadow-float {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.92);
+  }
+}
+
+@keyframes blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes wave {
+  from {
+    transform: rotate(-110deg);
+  }
+  to {
+    transform: rotate(-145deg);
+  }
+}
+
+@keyframes scan {
+  from {
+    transform: translate(-2px, -3px);
+  }
+  to {
+    transform: translate(2px, -3px);
+  }
+}
+
+@keyframes pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
+}
+
+@keyframes bob {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-1.5px);
+  }
+}
+
+@keyframes talk {
+  from {
+    transform: scaleY(1);
+  }
+  to {
+    transform: scaleY(0.35);
+  }
+}
+
+@keyframes hop {
+  0%,
+  45%,
+  100% {
+    transform: translateY(0);
+  }
+  20% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes shadow-hop {
+  0%,
+  45%,
+  100% {
+    transform: scale(1);
+  }
+  20% {
+    transform: scale(0.8);
+  }
+}
+
+@keyframes twinkle {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0.4;
+    transform: scale(0.6);
+  }
+}
