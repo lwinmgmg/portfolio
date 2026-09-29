@@ -77,7 +77,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     admin/cv/[versionId]/pdf/ Admin PDF download.
     admin/email/              Gmail OAuth: connect/ (state + PKCE cookie, redirect to Google) and callback/ (saves the token).
     public/session/           Public session status; issue/ creates one (rate limited).
-    public/chat/              Chat turn: withPublicSession, NDJSON stream of ChatEvents.
+    public/chat/              Chat turn: withPublicSession, NDJSON stream of ChatEvents. email/: the visitor's Send or Discard on a draft (JSON).
   cv/download/                Public CV PDF download.
 
 client/                       Browser-side data access.
@@ -97,7 +97,8 @@ server/                       All server logic. Layered: domain -> repositories/
     retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
     chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, answer via runAnswerLoop (tools looked up per turn), stored turn and trace.
-    email-service.ts          Gmail connection: OAuth connect/callback, disconnect, test email, isReady, the cached sender (email-runtime wires it).
+    email-service.ts          Gmail connection: OAuth connect/callback, disconnect, test email, isReady, the cached sender and outbox (email-runtime wires it).
+    contact-email-service.ts  Sends a chat draft at most once (atomic claim via EmailDraftStore, limits) or discards it; wired in chat-runtime.
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
   http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers, Gmail connect cookie.

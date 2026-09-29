@@ -4,9 +4,12 @@ import type { Document, WithId } from "mongodb";
 
 import {
   CHAT_CONVERSATION_TTL_SECONDS,
+  EMAIL_DRAFT_TTL_MS,
+  EMAIL_SEND_STUCK_MS,
   type Conversation,
   type ConversationRepository,
   type EmailDraft,
+  type EmailDraftStore,
   type StoredMessage,
 } from "@/server/domain/chat";
 import { parseInstant } from "@/server/repositories/mongo-dates";
@@ -17,7 +20,12 @@ type StoredMessageDocument = Omit<StoredMessage, "createdAt"> & { createdAt: Dat
 type EmailDraftDocument = Omit<EmailDraft, "createdAt" | "sentAt"> & {
   createdAt: Date;
   sentAt: Date | null;
+  // Set when a Send claims the draft. Stored only, so a stuck `sending` draft can be aged.
+  claimedAt?: Date;
 };
+
+// Drafts that hold a place in the send limits: sent, or claimed and still sending.
+const COUNTS_AS_SENT = { $in: ["$$draft.status", ["sending", "sent"]] };
 
 type ConversationDocument = {
   sessionId: string;
@@ -30,13 +38,14 @@ type ConversationDocument = {
 
 export class MongoConversationRepository
   extends MongoRepository<Conversation, ConversationDocument>
-  implements ConversationRepository
+  implements ConversationRepository, EmailDraftStore
 {
   constructor(private readonly now: () => Date = () => new Date()) {
     super("chat_conversations");
   }
 
   protected toEntity(document: WithId<ConversationDocument>): Conversation {
+    const stuckBefore = this.now().getTime() - EMAIL_SEND_STUCK_MS;
     return {
       id: document._id.toHexString(),
       sessionId: document.sessionId,
@@ -50,7 +59,11 @@ export class MongoConversationRepository
       emailDrafts: (document.emailDrafts ?? []).map((draft) => ({
         id: draft.id,
         text: draft.text,
-        status: draft.status,
+        // The claiming function died mid-send; failEmailDraftsStuckSince writes this later.
+        status:
+          draft.status === "sending" && draft.claimedAt && draft.claimedAt.getTime() < stuckBefore
+            ? "failed"
+            : draft.status,
         createdAt: draft.createdAt.toISOString(),
         sentAt: draft.sentAt ? draft.sentAt.toISOString() : null,
       })),
@@ -159,27 +172,133 @@ export class MongoConversationRepository
     }
   }
 
+  // One findOneAndUpdate, so two Sends of the same draft cannot both claim it: the second finds
+  // it no longer `pending`. Gmail has no idempotency key, so this claim is the at-most-once rule.
+  async claimEmailDraft(
+    conversationId: string,
+    sessionId: string,
+    draftId: string,
+    now: Date,
+  ): Promise<EmailDraft | null> {
+    const objectId = this.parseId(conversationId);
+    if (!objectId) return null;
+    await this.ensureReady();
+    const document = await this.collection().findOneAndUpdate(
+      {
+        _id: objectId,
+        sessionId,
+        emailDrafts: {
+          $elemMatch: {
+            id: draftId,
+            status: "pending",
+            createdAt: { $gt: new Date(now.getTime() - EMAIL_DRAFT_TTL_MS) },
+          },
+        },
+        // The newest draft only. A literal, so an id starting with `$` is not a field path.
+        $expr: { $eq: [{ $arrayElemAt: ["$emailDrafts.id", -1] }, { $literal: draftId }] },
+      },
+      {
+        $set: { "emailDrafts.$.status": "sending", "emailDrafts.$.claimedAt": now },
+        $max: { updatedAt: now },
+      },
+      { returnDocument: "after" },
+    );
+    if (!document) return null;
+    return this.toEntity(document).emailDrafts.find((draft) => draft.id === draftId) ?? null;
+  }
+
+  // Only a `sending` draft moves, so a late mark cannot undo a discard or a newer outcome.
+  async markEmailDraft(
+    conversationId: string,
+    draftId: string,
+    status: "sent" | "failed",
+    at: Date,
+  ): Promise<void> {
+    const objectId = this.parseId(conversationId);
+    if (!objectId) throw new Error(`Conversation id "${conversationId}" is not valid.`);
+    await this.ensureReady();
+    await this.collection().updateOne(
+      { _id: objectId, emailDrafts: { $elemMatch: { id: draftId, status: "sending" } } },
+      {
+        $set: {
+          "emailDrafts.$.status": status,
+          "emailDrafts.$.sentAt": status === "sent" ? at : null,
+        },
+        $max: { updatedAt: at },
+      },
+    );
+  }
+
+  async discardEmailDraft(
+    conversationId: string,
+    sessionId: string,
+    draftId: string,
+  ): Promise<boolean> {
+    const objectId = this.parseId(conversationId);
+    if (!objectId) return false;
+    await this.ensureReady();
+    const result = await this.collection().updateOne(
+      {
+        _id: objectId,
+        sessionId,
+        emailDrafts: { $elemMatch: { id: draftId, status: "pending" } },
+      },
+      { $set: { "emailDrafts.$.status": "discarded" } },
+    );
+    return result.matchedCount > 0;
+  }
+
+  async countSentEmailsForSession(sessionId: string): Promise<number> {
+    await this.ensureReady();
+    return this.sumMatching({ sessionId }, "emailDrafts", "draft", COUNTS_AS_SENT);
+  }
+
+  // A claim moves `updatedAt` to the claim time, so the TTL index narrows the scan here too.
+  async countSentEmailsSince(since: Date): Promise<number> {
+    await this.ensureReady();
+    return this.sumMatching({ updatedAt: { $gte: since } }, "emailDrafts", "draft", {
+      $and: [COUNTS_AS_SENT, { $gte: ["$$draft.claimedAt", since] }],
+    });
+  }
+
+  // Scans the collection: it holds 30 days of conversations and runs once per Send.
+  async failEmailDraftsStuckSince(claimedBefore: Date): Promise<void> {
+    await this.ensureReady();
+    await this.collection().updateMany(
+      { emailDrafts: { $elemMatch: { status: "sending", claimedAt: { $lt: claimedBefore } } } },
+      { $set: { "emailDrafts.$[stuck].status": "failed" } },
+      {
+        arrayFilters: [{ "stuck.status": "sending", "stuck.claimedAt": { $lt: claimedBefore } }],
+      },
+    );
+  }
+
   async countUserMessagesForSession(sessionId: string): Promise<number> {
     await this.ensureReady();
-    return this.sumUserMessages({ sessionId }, { $eq: ["$$message.role", "user"] });
+    return this.sumMatching({ sessionId }, "messages", "message", {
+      $eq: ["$$message.role", "user"],
+    });
   }
 
   // A conversation with a message since `since` was updated since then, so the TTL index narrows
   // the scan before the messages are counted.
   async countUserMessagesSince(since: Date): Promise<number> {
     await this.ensureReady();
-    return this.sumUserMessages(
-      { updatedAt: { $gte: since } },
-      {
-        $and: [
-          { $eq: ["$$message.role", "user"] },
-          { $gte: ["$$message.createdAt", since] },
-        ],
-      },
-    );
+    return this.sumMatching({ updatedAt: { $gte: since } }, "messages", "message", {
+      $and: [
+        { $eq: ["$$message.role", "user"] },
+        { $gte: ["$$message.createdAt", since] },
+      ],
+    });
   }
 
-  private async sumUserMessages(match: Document, messageFilter: Document): Promise<number> {
+  // Counts the array items that pass `cond` across the matching conversations.
+  private async sumMatching(
+    match: Document,
+    field: "messages" | "emailDrafts",
+    as: string,
+    cond: Document,
+  ): Promise<number> {
     const [row] = await this.collection()
       .aggregate<{ total: number }>([
         { $match: match },
@@ -187,7 +306,8 @@ export class MongoConversationRepository
           $project: {
             count: {
               $size: {
-                $filter: { input: "$messages", as: "message", cond: messageFilter },
+                // Conversations stored before Phase 4.3 have no `emailDrafts`.
+                $filter: { input: { $ifNull: [`$${field}`, []] }, as, cond },
               },
             },
           },

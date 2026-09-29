@@ -13,6 +13,14 @@ export interface EmailSender {
   send(email: OutgoingEmail, signal?: AbortSignal): Promise<SentEmail>;
 }
 
+/** What the chat's Send needs: a ready sender, the fixed recipient and the send limits. */
+export type ContactOutbox = {
+  sender: EmailSender;
+  to: string;
+  sessionLimit: number;
+  dailyLimit: number;
+};
+
 /** The owner's Gmail account, connected on the admin Email page. Server-only: holds the token. */
 export type GmailConnection = {
   /** The connected address, from the ID token. Null if Google did not return one. */

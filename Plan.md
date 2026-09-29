@@ -1565,7 +1565,7 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
 5. `/admin/email` (nav "Email"): the missing env names and setup steps; or the connected account with Connect/Reconnect, Disconnect (revokes the token at Google, best effort, then deletes the document) and "Send test email".
 6. The chat offers the email tool only when the env is set **and** Gmail is connected, looked up on each turn that could use it.
 
-**Status:** Built. Waiting for the owner: the Google OAuth client, the env values, then Connect Gmail and "Send test email".
+**Status:** Built. Gmail was connected by 2026-09-30: the owner's 4.3 test offered the tool, and 4.4's live check found email ready. No agent has seen "Send test email" arrive.
 
 **As built**
 - `gmail-oauth.ts` gains the paths, the connect cookie's name, path, lifetime and encoding (`state.verifier`, both base64url), `readTokenGrant` and the `ConnectFailure` reasons (`unconfigured`, `failed`, `state`, `denied`, `no_code`, `exchange`, `scope`, `no_refresh_token`). The admin page words each one. `readConsentCallback` now returns a reason instead of a message.
@@ -1621,7 +1621,7 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
 7. Trace: a new `tool` stage per call. Input: name and raw arguments. Output: `{ outcome: "drafted" | "invalid" | "unknown_tool" | "ignored", draftId }`. Add it to `trace-stages.ts`, `readTrace` and a panel in `trace-stage-panel.tsx` (the "new traced stage" pattern in AGENTS.md). Phase 3's `ChatStepName` gains `"tool"`, with detail `{ kind: "tool"; name: string; outcome }`. It never includes the draft text.
 8. Tests with fakes: a contact turn yields `tool` steps, `email_draft`, then round-2 `delta`s and `done`; invalid arguments; an unknown tool; a second call ignored; tools not offered without email env; the draft stored and older ones superseded; the pending draft reaches the prompt; off-topic is unchanged.
 
-**Status:** Built. The done-when waits on the email settings: on 2026-09-29 the `GMAIL_*` / `CONTACT_EMAIL_*` names in `.env.local` were blank, so the tool is not offered yet. Since 4.2a the tool also needs Gmail connected on `/admin/email`.
+**Status:** Done. The owner tested it on 2026-09-30 with email set up and Gmail connected, and reported that it works.
 
 **As built**
 - **Small talk keeps its fixed reply.** Step 6 offers the tool for `smalltalk` too, but since 2.14a small talk never calls the answer model. The tool goes with `cv` and `contact` only. A visitor who wants to reach the owner is classified `contact`, not small talk.
@@ -1659,6 +1659,31 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
    `discard(...)` → `"discarded" | "not_found"`.
 3. `POST /api/public/chat/email`: `withPublicSession`, zod body `{ conversationId: string, draftId: string, action: "send" | "discard" }`, answered with `publicJson`. Status codes: 200 `{ status }`, 429 `limit`, 404 `not_found`, 410 `expired`, 502 `failed`, 503 when email is not configured. `maxDuration = 30`.
 4. Tests: send success, both limits, a draft from another session, a superseded or expired draft, double Send (the second call gets `not_found` and only one send happens), a stuck `sending` draft is not resent, a provider failure, discard.
+
+**Status:** Built. The done-when (a real send) waits for the owner.
+
+**As built**
+- **`EmailDraftStore`, not `ConversationRepository`.** The send-side methods are in their own interface in `domain/chat.ts`, which `MongoConversationRepository` also implements. The chat turn's test fake did not have to grow. It includes `findForSession`, which the service needs to tell `expired` from `not_found`.
+- **Claim.** One `findOneAndUpdate`. The filter is the session's conversation, a `pending` draft with that id younger than 1 hour (`$elemMatch`), and `$expr` requiring it to be the last draft. The update sets `status: "sending"` and a stored-only `claimedAt`, and moves `updatedAt` forward. The draft id goes into `$expr` as a `$literal`, so an id starting with `$` is not a field path.
+- **Stuck sends.** `EMAIL_SEND_STUCK_MS` (2 minutes). `toEntity` reads a draft `sending` since before that as `failed`. `failEmailDraftsStuckSince` writes it with an `arrayFilters` update, and the service runs it before counting on every Send. It scans the collection, which holds 30 days of conversations.
+- **Limits count in-flight sends.** Both counts take `sent` and `sending` drafts, so a send in flight holds its place. The daily count goes by `claimedAt` since UTC midnight, and matches on `updatedAt` first because a claim moves it. Two Sends of different drafts at the same moment can still both pass the check. The limits are soft by one under concurrency. The same draft can never be sent twice.
+- **`markEmailDraft(conversationId, draftId, status, at)`**. It moves only a `sending` draft, with `sentAt: at` for `sent` and null for `failed`.
+- **`ContactEmailService`.** Its dependencies are `drafts: EmailDraftStore` and `outbox: () => Promise<ContactOutbox | null>`. `EmailService.outbox()` returns the cached sender, `CONTACT_EMAIL_TO` and both limits, or null. The service adds an `unavailable` result, which the route answers with 503 `{ error: "unavailable" }`: email is not configured, or Gmail is not connected. It is checked before the claim, so no draft is spent on it. Discard works without email.
+- **Send order and outcomes.**
+  - The order is: outbox → stuck sweep → both counts → claim → send.
+  - If the claim fails, a pending newest draft past the hour is `expired`. Anything else (sent, failed, superseded, discarded, another session, unknown) is `not_found`.
+  - The send has no abort signal: once it may have reached Gmail, stopping it would only hide the result.
+  - A send error is logged ("Contact email failed.") and marks the draft `failed`, even when `retryable`.
+  - If marking the draft fails after a send, that is logged and the result stays `sent`. The draft then reads as `failed` after 2 minutes and is still never resent.
+- **Message.** The subject is `Portfolio chat: message from a visitor`. The body is the draft text, then `--`, a line saying it came from the chat, `Conversation: <id>` and `Sent at: <ISO time>`.
+- **Route.** The route checks the body with zod: both ids are 1–64 characters after a trim, and `action` is `send` or `discard`. An invalid body gets 400 `invalid_request`. Other answers are `{ status }` with the plan's codes, and discard gives 200 `discarded`.
+- **Live check, 2026-09-30, on the owner's dev server, with made-up ids only:**
+  - Without a session: 401.
+  - With a new session:
+    - A bad body got 400.
+    - Send with an unknown draft got 404 `not_found`. That answer means email was ready and the sweep, counts and claim ran against the real database.
+    - Discard with a malformed conversation id got 404.
+  - No email was sent.
 
 **Done when**
 - A draft made in 4.3 is sent with `curl` and arrives in the owner's inbox. Pressing Send again sends nothing.

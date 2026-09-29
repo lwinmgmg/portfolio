@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import {
   EmailSendError,
+  type ContactOutbox,
   type EmailSender,
   type GmailConnection,
   type GmailConnectionRepository,
@@ -166,6 +167,20 @@ export class EmailService {
       this.cachedSender = { refreshToken: connection.refreshToken, sender };
     }
     return this.cachedSender.sender;
+  }
+
+  /** The sender with the recipient and limits, for the chat's Send. Null when email is not ready. */
+  async outbox(): Promise<ContactOutbox | null> {
+    const { env } = this.deps;
+    if (!env) return null;
+    const sender = await this.sender();
+    if (!sender) return null;
+    return {
+      sender,
+      to: env.CONTACT_EMAIL_TO,
+      sessionLimit: env.CONTACT_EMAIL_SESSION_LIMIT,
+      dailyLimit: env.CONTACT_EMAIL_DAILY_LIMIT,
+    };
   }
 
   async sendTest(): Promise<TestEmailResult> {

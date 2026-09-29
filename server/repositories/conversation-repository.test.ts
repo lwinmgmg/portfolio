@@ -330,3 +330,210 @@ test("counts sum the user messages of the matching conversations", async () => {
     $and: [{ $eq: ["$$message.role", "user"] }, { $gte: ["$$message.createdAt", since] }],
   });
 });
+
+test("a draft still sending two minutes after its claim reads as failed", async () => {
+  const draft = (id: string, claimedAt: Date) => ({
+    id,
+    text: "Hi",
+    status: "sending",
+    createdAt: now,
+    sentAt: null,
+    claimedAt,
+  });
+  activeCollection = readyCollection({
+    findOne: async () => ({
+      _id: new TestObjectId(conversationId),
+      sessionId: "s",
+      messages: [],
+      emailDrafts: [
+        draft("stuck", new Date(now.getTime() - 120_001)),
+        draft("in-flight", new Date(now.getTime() - 119_999)),
+      ],
+      createdAt: now,
+      updatedAt: now,
+    }),
+  });
+
+  const conversation = await new MongoConversationRepository(() => now).findForSession(
+    conversationId,
+    "s",
+  );
+
+  expect(conversation?.emailDrafts.map((item) => [item.id, item.status])).toEqual([
+    ["stuck", "failed"],
+    ["in-flight", "sending"],
+  ]);
+});
+
+test("claimEmailDraft moves the session's newest young pending draft to sending in one update", async () => {
+  const calls: unknown[][] = [];
+  activeCollection = readyCollection({
+    findOneAndUpdate: async (...args: unknown[]) => {
+      calls.push(args);
+      return {
+        _id: new TestObjectId(conversationId),
+        sessionId: "s1",
+        messages: [],
+        emailDrafts: [
+          { id: "d1", text: "Old", status: "superseded", createdAt: now, sentAt: null },
+          { id: "d2", text: "Hi", status: "sending", createdAt: now, sentAt: null, claimedAt: now },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+  });
+
+  const draft = await new MongoConversationRepository(() => now).claimEmailDraft(
+    conversationId,
+    "s1",
+    "d2",
+    now,
+  );
+
+  expect(draft).toEqual({
+    id: "d2",
+    text: "Hi",
+    status: "sending",
+    createdAt: now.toISOString(),
+    sentAt: null,
+  });
+  const [filter, update, options] = calls[0] as [Record<string, unknown>, unknown, unknown];
+  expect((filter._id as TestObjectId).toHexString()).toBe(conversationId);
+  expect({ ...filter, _id: undefined }).toEqual({
+    _id: undefined,
+    sessionId: "s1",
+    emailDrafts: {
+      $elemMatch: {
+        id: "d2",
+        status: "pending",
+        createdAt: { $gt: new Date("2026-09-29T09:00:00.000Z") },
+      },
+    },
+    $expr: { $eq: [{ $arrayElemAt: ["$emailDrafts.id", -1] }, { $literal: "d2" }] },
+  });
+  expect(update).toEqual({
+    $set: { "emailDrafts.$.status": "sending", "emailDrafts.$.claimedAt": now },
+    $max: { updatedAt: now },
+  });
+  expect(options).toEqual({ returnDocument: "after" });
+});
+
+test("claimEmailDraft returns null when nothing matched or the id is malformed", async () => {
+  let queried = 0;
+  activeCollection = readyCollection({
+    findOneAndUpdate: async () => {
+      queried += 1;
+      return null;
+    },
+  });
+  const repository = new MongoConversationRepository(() => now);
+
+  expect(await repository.claimEmailDraft(conversationId, "s1", "d1", now)).toBeNull();
+  expect(await repository.claimEmailDraft("nope", "s1", "d1", now)).toBeNull();
+  expect(queried).toBe(1);
+});
+
+test("markEmailDraft moves only a sending draft, with sentAt only when sent", async () => {
+  const calls: unknown[][] = [];
+  activeCollection = readyCollection({
+    updateOne: async (...args: unknown[]) => {
+      calls.push(args);
+      return { matchedCount: 1 };
+    },
+  });
+  const repository = new MongoConversationRepository();
+
+  await repository.markEmailDraft(conversationId, "d1", "sent", now);
+  await repository.markEmailDraft(conversationId, "d2", "failed", now);
+
+  const [sentFilter, sentUpdate] = calls[0] as [Record<string, unknown>, unknown];
+  expect(sentFilter.emailDrafts).toEqual({ $elemMatch: { id: "d1", status: "sending" } });
+  expect(sentUpdate).toEqual({
+    $set: { "emailDrafts.$.status": "sent", "emailDrafts.$.sentAt": now },
+    $max: { updatedAt: now },
+  });
+  expect((calls[1] as [unknown, { $set: unknown }])[1].$set).toEqual({
+    "emailDrafts.$.status": "failed",
+    "emailDrafts.$.sentAt": null,
+  });
+  await expect(repository.markEmailDraft("nope", "d1", "sent", now)).rejects.toMatchObject({
+    message: 'Conversation id "nope" is not valid.',
+  });
+});
+
+test("discardEmailDraft discards the session's pending draft and says whether it matched", async () => {
+  const calls: unknown[][] = [];
+  const matched = [1, 0];
+  activeCollection = readyCollection({
+    updateOne: async (...args: unknown[]) => {
+      calls.push(args);
+      return { matchedCount: matched.shift() ?? 0 };
+    },
+  });
+  const repository = new MongoConversationRepository();
+
+  expect(await repository.discardEmailDraft(conversationId, "s1", "d1")).toBe(true);
+  expect(await repository.discardEmailDraft(conversationId, "s1", "d1")).toBe(false);
+  expect(await repository.discardEmailDraft("nope", "s1", "d1")).toBe(false);
+
+  expect(calls).toHaveLength(2);
+  const [filter, update] = calls[0] as [Record<string, unknown>, unknown];
+  expect(filter.sessionId).toBe("s1");
+  expect(filter.emailDrafts).toEqual({ $elemMatch: { id: "d1", status: "pending" } });
+  expect(update).toEqual({ $set: { "emailDrafts.$.status": "discarded" } });
+});
+
+test("sent-email counts include in-flight sends; the daily one goes by claim time", async () => {
+  const pipelines: unknown[] = [];
+  const totals = [[{ total: 2 }], [{ total: 5 }]];
+  activeCollection = readyCollection({
+    aggregate: (pipeline: unknown) => {
+      pipelines.push(pipeline);
+      const rows = totals.shift() ?? [];
+      return { toArray: async () => rows };
+    },
+  });
+  const repository = new MongoConversationRepository();
+  const since = new Date("2026-09-29T00:00:00.000Z");
+
+  expect(await repository.countSentEmailsForSession("s1")).toBe(2);
+  expect(await repository.countSentEmailsSince(since)).toBe(5);
+
+  type Stage = { $match?: unknown; $project?: { count: { $size: { $filter: unknown } } } };
+  const [forSession, forDay] = pipelines as [Stage[], Stage[]];
+  const sentOrSending = { $in: ["$$draft.status", ["sending", "sent"]] };
+  expect(forSession[0]?.$match).toEqual({ sessionId: "s1" });
+  expect(forSession[1]?.$project?.count.$size.$filter).toEqual({
+    input: { $ifNull: ["$emailDrafts", []] },
+    as: "draft",
+    cond: sentOrSending,
+  });
+  expect(forDay[0]?.$match).toEqual({ updatedAt: { $gte: since } });
+  expect(forDay[1]?.$project?.count.$size.$filter).toEqual({
+    input: { $ifNull: ["$emailDrafts", []] },
+    as: "draft",
+    cond: { $and: [sentOrSending, { $gte: ["$$draft.claimedAt", since] }] },
+  });
+});
+
+test("failEmailDraftsStuckSince fails every draft claimed before the cutoff and still sending", async () => {
+  const calls: unknown[][] = [];
+  activeCollection = readyCollection({
+    updateMany: async (...args: unknown[]) => {
+      calls.push(args);
+      return { matchedCount: 0 };
+    },
+  });
+  const cutoff = new Date("2026-09-29T09:58:00.000Z");
+
+  await new MongoConversationRepository().failEmailDraftsStuckSince(cutoff);
+
+  expect(calls).toEqual([
+    [
+      { emailDrafts: { $elemMatch: { status: "sending", claimedAt: { $lt: cutoff } } } },
+      { $set: { "emailDrafts.$[stuck].status": "failed" } },
+      { arrayFilters: [{ "stuck.status": "sending", "stuck.claimedAt": { $lt: cutoff } }] },
+    ],
+  ]);
+});

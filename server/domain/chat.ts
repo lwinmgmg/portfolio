@@ -29,6 +29,10 @@ export const EMAIL_DRAFT_MAX_CHARS = 2_000;
 // A pending draft older than this can no longer be sent.
 export const EMAIL_DRAFT_TTL_MS = 3_600_000;
 
+// A draft still `sending` this long after its claim reads as `failed`: the function that claimed
+// it died mid-send. It is never resent, since Gmail may have taken the message.
+export const EMAIL_SEND_STUCK_MS = 120_000;
+
 export type EmailDraftStatus = "pending" | "sending" | "sent" | "failed" | "discarded" | "superseded";
 
 export type EmailDraft = {
@@ -60,6 +64,35 @@ export interface ConversationRepository {
   addEmailDraft(conversationId: string, draft: EmailDraft): Promise<void>;
   countUserMessagesForSession(sessionId: string): Promise<number>;
   countUserMessagesSince(since: Date): Promise<number>;
+}
+
+// The Send side of email drafts. The conversation repository implements it too; it is its own
+// interface so the chat turn's fakes need not grow.
+export interface EmailDraftStore {
+  // `pending` -> `sending` in one atomic update. Only the session's conversation, only its newest
+  // draft, and only one younger than EMAIL_DRAFT_TTL_MS. Null when nothing matched.
+  claimEmailDraft(
+    conversationId: string,
+    sessionId: string,
+    draftId: string,
+    now: Date,
+  ): Promise<EmailDraft | null>;
+  // `sending` -> `sent` (with `sentAt: at`) or `failed`.
+  markEmailDraft(
+    conversationId: string,
+    draftId: string,
+    status: "sent" | "failed",
+    at: Date,
+  ): Promise<void>;
+  // `pending` -> `discarded`, for the session's own conversation. False when nothing matched.
+  discardEmailDraft(conversationId: string, sessionId: string, draftId: string): Promise<boolean>;
+  // Drafts `sent` or still `sending` (a send in flight holds its place in the limit).
+  countSentEmailsForSession(sessionId: string): Promise<number>;
+  // The same, claimed at or after `since`.
+  countSentEmailsSince(since: Date): Promise<number>;
+  // Writes `failed` on drafts claimed before `claimedBefore` and still `sending`.
+  failEmailDraftsStuckSince(claimedBefore: Date): Promise<void>;
+  findForSession(id: string, sessionId: string): Promise<Conversation | null>;
 }
 
 // A source an answer cited, linked to its place on the CV page.

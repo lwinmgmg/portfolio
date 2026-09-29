@@ -13,6 +13,12 @@ import { MongoCvVersionRepository } from "@/server/repositories/cv-version-repos
 import { MongoRagIndexRepository } from "@/server/repositories/rag-index-repository";
 import { MongoRagTraceRepository } from "@/server/repositories/rag-trace-repository";
 import { ChatService, type ChatReplyRequest } from "@/server/services/chat-service";
+import {
+  ContactEmailService,
+  type ContactDraftRequest,
+  type DiscardResult,
+  type SendResult,
+} from "@/server/services/contact-email-service";
 import { getEmail } from "@/server/services/email-runtime";
 
 const conversations = new MongoConversationRepository();
@@ -45,6 +51,11 @@ function getChat(): ChatService {
 
 const emailDraftTool = new EmailDraftTool(conversations);
 
+const contactEmail = new ContactEmailService({
+  drafts: conversations,
+  outbox: () => getEmail().outbox(),
+});
+
 // The email tool only drafts, but it is offered only when a draft could later be sent: the email
 // env is set and the owner has connected Gmail.
 async function agentTools(): Promise<AgentTool[]> {
@@ -70,4 +81,13 @@ export const isChatAvailable = cache(async (): Promise<boolean> => {
 
 export function replyToChat(request: ChatReplyRequest): AsyncIterable<ChatEvent> {
   return getChat().reply(request);
+}
+
+// The visitor's Send click on a draft. The model never reaches this.
+export function sendContactEmail(request: ContactDraftRequest): Promise<SendResult> {
+  return contactEmail.send(request);
+}
+
+export function discardContactEmail(request: ContactDraftRequest): Promise<DiscardResult> {
+  return contactEmail.discard(request);
 }

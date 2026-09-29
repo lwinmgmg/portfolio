@@ -257,6 +257,20 @@ test("sender uses the env client and the stored token, and is rebuilt after a re
   expect(await setup().service.sender()).toBeNull();
 });
 
+test("outbox gives the chat's Send the cached sender, the recipient and the limits", async () => {
+  const { service } = setup({ connection: stored });
+  const outbox = await service.outbox();
+  expect(outbox?.sender === (await service.sender())).toBe(true);
+  expect({ ...outbox, sender: null }).toEqual({
+    sender: null,
+    to: "owner@example.com",
+    sessionLimit: 2,
+    dailyLimit: 20,
+  });
+  expect(await setup().service.outbox()).toBeNull();
+  expect(await setup({ configured: false, connection: stored }).service.outbox()).toBeNull();
+});
+
 test("sendTest mails CONTACT_EMAIL_TO through the connected account", async () => {
   const { service, senders } = setup({ connection: stored });
   expect(await service.sendTest()).toEqual({ ok: true, to: "owner@example.com" });

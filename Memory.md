@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 4.2a (connect Gmail from the admin page) on `master`, after 4.3, 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
+Last updated after Phase 4.4 (send endpoint) on `master`, after 4.2a, 4.3, 4.2, 4.1, 2.14 steps 3–9, 2.14a and 2.14 steps 1–2.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 4.2a. `/admin/email` connects Gmail through OAuth routes; the refresh token moves from the env to `email_connections`; `EmailService`; the two email scripts removed; chat tools looked up per turn. Built; waiting on the owner's Google OAuth client. |
+| (next) | Phase 4.4. `POST /api/public/chat/email` (send or discard a draft), `ContactEmailService`, `EmailDraftStore` (atomic claim, marks, counts, stuck sweep) on the conversation repository, `EmailService.outbox()`. Built; the real-send done-when waits for the owner. |
+| `e316ee3` | Phase 4.2a. `/admin/email` connects Gmail through OAuth routes; the refresh token moves from the env to `email_connections`; `EmailService`; the two email scripts removed; chat tools looked up per turn. Gmail connected by 2026-09-30. |
 | `55b4ec8` | Phase 4.3. `send_email` draft tool, `runAnswerLoop`, `contact` scope, email drafts on conversations, `tool` trace stage and step. Built; the done-when waits on the email settings. |
 | `58890ae` | Phase 4.2. `EmailSender` domain, `readEmailEnv`, MIME builder, `GmailEmailSender`, OAuth helpers, `email:token` and `email:test` scripts (the scripts were removed in 4.2a). Built. |
 | `557bbe4` | Phase 4.1. Tools, tool choice, tool messages and streamed `tool_call` events in `OpenRouterClient`. Done; live-checked on `z-ai/glm-5.3-flash`. |
@@ -76,7 +77,7 @@ Phase 2.14 (scope routing) is built, not Done: the owner chose `typesafe/jev-1.1
 
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check.
 
-Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built. On 2026-09-29 the owner chose to keep the Gmail API (not SMTP with an app password) but to connect Gmail from the admin UI, so Phase 4.2a replaced the token script and carries the done-when: a Google OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback`, Gmail API on, publishing status In production), the values in `.env.local` and Vercel, then **Connect Gmail** and **Send test email** on `/admin/email`. Phase 4.3 (tools in the chat turn) is built but not Done. Its done-when needs email set up and Gmail connected: on 2026-09-29 `.env.local` had the email names with blank values. Next: the 4.2a checkpoint, then the 4.3 done-when curl, then Phase 4.4 when the owner asks.
+Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built. On 2026-09-29 the owner chose to keep the Gmail API (not SMTP with an app password) but to connect Gmail from the admin UI, so Phase 4.2a replaced the token script and carries the done-when: a Google OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback`, Gmail API on, publishing status In production), the values in `.env.local` and Vercel, then **Connect Gmail** and **Send test email** on `/admin/email`. By 2026-09-30 the owner had connected Gmail. Phase 4.3 (tools in the chat turn) is **Done**: the owner tested it and reported that it works. Phase 4.4 (send endpoint) is built. Its done-when needs the owner: send a real draft with curl, see it arrive, and see a second Send do nothing. Next: that check, then Phase 4.5 (draft card) when the owner asks.
 
 ## Environment
 
@@ -494,6 +495,30 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 - **One tool round.** Round 1 has the tools on `auto`; round 2, only after a call, has them on `none` and must see a `tool` message for every call id. Tool rules are in the system prompt because the provider drops tool definitions under `none` (4.1).
 - **Steps.** The client lists one step per name, so `AnswerSteps` sends `reasoning` and `generate` once each across both rounds. Ignored calls are in the trace only.
 - **Checked live without email settings** (2026-09-29): the done-when message is rewritten as `contact` and gets the fixed reply; "What is Lwin's email address?" stays `cv`. The tool path (draft, round 2) is covered by unit tests only.
+
+## Send endpoint (Phase 4.4)
+
+- **Where.**
+  - `POST /api/public/chat/email` (`app/api/public/chat/email/route.ts`), with the body `{ conversationId, draftId, action: "send" | "discard" }`.
+  - `server/services/contact-email-service.ts` (`ContactEmailService`), wired in `chat-runtime.ts` as `sendContactEmail` / `discardContactEmail`.
+  - `EmailDraftStore` in `domain/chat.ts`, implemented by `MongoConversationRepository`.
+  - `EmailService.outbox()`, which returns the sender, `to` and the limits, or null.
+- **At most once rests on the claim.** `claimEmailDraft` is one `findOneAndUpdate` from `pending` to `sending`. Never send without winning it. Never put a `sending` or `failed` draft back to `pending`: Gmail may have taken it. A `retryable` error still ends as `failed` (as in Plan.md), so the visitor needs a new draft to try again.
+- **Stuck sends.** A draft `sending` for more than 2 minutes (`EMAIL_SEND_STUCK_MS`, from the stored-only `claimedAt`) reads as `failed`. Every Send first writes that with `failEmailDraftsStuckSince`.
+- **Limits.** They count `sent` plus `sending` drafts, the daily one by `claimedAt` since UTC midnight. They are soft by one when two different drafts are sent at the same moment.
+- **Results and codes.**
+  - `sent` / `discarded` → 200.
+  - `limit` → 429, `not_found` → 404, `expired` → 410, `failed` → 502.
+  - `unavailable` → 503 `{ error: "unavailable" }`. It is not in the plan and means the env is unset or Gmail is not connected.
+  - A bad body → 400.
+  - Only a pending newest draft past the hour is `expired`. Everything else that cannot be claimed is `not_found`.
+- **For 4.5.** The route rotates the public session like the chat route, so call it through `sessionFetch`. Discard works without email settings.
+- **Live check (2026-09-30, made-up ids, no email sent).** Without a session: 401. With a session:
+  - a bad body got 400;
+  - an unknown draft got 404, which means email was ready on the owner's server;
+  - a malformed conversation id on discard got 404.
+
+  Agents must not send a real draft unless the owner asks.
 
 ## Scaffold removal
 
