@@ -27,7 +27,8 @@ const cvVersions = new MongoCvVersionRepository();
 let rag: Rag | null = null;
 
 // Built on first use, not at module init: getLlm() throws when OpenRouter is not configured.
-function getRag(): Rag {
+// Other runtimes (chat) reuse it so the process keeps one pipeline and one search cache.
+export function getRag(): Rag {
   if (rag) return rag;
   const llm = getLlm();
   rag = createRag(llm.env, {

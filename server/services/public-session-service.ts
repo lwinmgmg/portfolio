@@ -40,6 +40,8 @@ export type IssuedPublicSession = {
 };
 
 export type RotatedPublicSession = {
+  // The session document id. It stays the same while the key rotates.
+  sessionId: string;
   sessionKey: string;
   expiresAt: Date;
 };
@@ -130,7 +132,11 @@ export class PublicSessionService {
       now,
     );
     if (updated) {
-      return { sessionKey: nextKey, expiresAt: new Date(updated.expiresAt) };
+      return {
+        sessionId: updated.id,
+        sessionKey: nextKey,
+        expiresAt: new Date(updated.expiresAt),
+      };
     }
 
     const existing = await this.sessions.findByKeyHash(hashPublicSessionKey(sessionKey));

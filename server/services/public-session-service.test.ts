@@ -157,10 +157,23 @@ test("the second consume of the same key is invalid", async () => {
   const rotated = await sessions.consume(issued.sessionKey, null);
 
   expect(rotated.sessionKey).not.toBe(issued.sessionKey);
+  expect(rotated.sessionId).toBe(repo.rows[0]?.id ?? "");
   await expect(sessions.consume(issued.sessionKey, null)).rejects.toMatchObject({
     reason: "invalid",
   });
   expect(repo.rows[0]?.keyHash).toBe(hashPublicSessionKey(rotated.sessionKey));
+});
+
+test("the session id stays the same while the key rotates", async () => {
+  const repo = new MemorySessions();
+  const sessions = service(repo, allowAll, () => new Date("2026-01-01T00:00:00Z"));
+  await sessions.issue(null);
+  const other = await sessions.issue(null);
+  const first = await sessions.consume(other.sessionKey, null);
+  const second = await sessions.consume(first.sessionKey, null);
+
+  expect(first.sessionId).toBe("2");
+  expect(second.sessionId).toBe("2");
 });
 
 test("the 60th accept succeeds and the next is exhausted without rotating", async () => {

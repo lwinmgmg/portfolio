@@ -11,6 +11,8 @@ export const STAGE = {
   fuse: "fuse",
   rerank: "rerank",
   filter: "filter",
+  // Added by the chat service after retrieval. Not recorded by the pipeline.
+  generate: "generate",
 } as const;
 
 // Names of the lists that fusion merges, e.g. `vector:q0` and `bm25:q1`.
@@ -79,6 +81,25 @@ export const FilterStageOutputSchema = z.object({
   dropped: z.array(TracedHitSchema),
 });
 
+export const GenerateStageInputSchema = z.object({
+  model: z.string(),
+  // `cv` answers from sources; `smalltalk` replies without them.
+  mode: z.enum(["cv", "smalltalk"]),
+  sources: z.number(),
+  historyTurns: z.number(),
+});
+
+export const GenerateStageOutputSchema = z.object({
+  model: z.string(),
+  usage: z
+    .object({ promptTokens: z.number(), completionTokens: z.number(), cost: z.number().nullable() })
+    .nullable(),
+  // The answer as streamed, before any `[stopped]` suffix. Partial when stopped or failed.
+  answer: z.string(),
+  stopped: z.boolean(),
+  citedSourceIds: z.array(z.string()),
+});
+
 export type RewriteStageInput = z.infer<typeof RewriteStageInputSchema>;
 export type RewriteStageOutput = z.infer<typeof RewriteStageOutputSchema>;
 export type EmbedStageOutput = z.infer<typeof EmbedStageOutputSchema>;
@@ -86,3 +107,5 @@ export type SearchStageOutput = z.infer<typeof SearchStageOutputSchema>;
 export type FuseStageOutput = z.infer<typeof FuseStageOutputSchema>;
 export type RerankStageOutput = z.infer<typeof RerankStageOutputSchema>;
 export type FilterStageOutput = z.infer<typeof FilterStageOutputSchema>;
+export type GenerateStageInput = z.infer<typeof GenerateStageInputSchema>;
+export type GenerateStageOutput = z.infer<typeof GenerateStageOutputSchema>;

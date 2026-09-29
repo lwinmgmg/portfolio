@@ -14,8 +14,10 @@ import { publicJson } from "@/server/http/public-json";
 import { consumePublicSession } from "@/server/services/public-session-runtime";
 import { PublicSessionRejected } from "@/server/services/public-session-service";
 
+export type PublicSessionContext = { sessionId: string };
+
 type OpenSession =
-  | { ok: true; sessionKey: string; expiresAt: Date }
+  | { ok: true; sessionId: string; sessionKey: string; expiresAt: Date }
   | { ok: false; response: NextResponse };
 
 export function applyPublicSessionCookie(
@@ -47,7 +49,12 @@ async function openPublicSession(request: Request): Promise<OpenSession> {
       sessionKey,
       clientIpFromHeaders(request.headers),
     );
-    return { ok: true, sessionKey: rotated.sessionKey, expiresAt: rotated.expiresAt };
+    return {
+      ok: true,
+      sessionId: rotated.sessionId,
+      sessionKey: rotated.sessionKey,
+      expiresAt: rotated.expiresAt,
+    };
   } catch (error) {
     if (error instanceof PublicSessionRejected) {
       const exhausted = error.reason === "exhausted";
@@ -68,13 +75,13 @@ async function openPublicSession(request: Request): Promise<OpenSession> {
 
 export async function withPublicSession(
   request: Request,
-  produce: () => Promise<NextResponse>,
+  produce: (session: PublicSessionContext) => Promise<NextResponse>,
 ): Promise<NextResponse> {
   const gate = await openPublicSession(request);
   if (!gate.ok) return gate.response;
 
   try {
-    const response = await produce();
+    const response = await produce({ sessionId: gate.sessionId });
     return applyPublicSessionCookie(response, gate.sessionKey, gate.expiresAt);
   } catch (error) {
     const status = error instanceof DatabaseConfigError ? 503 : 500;

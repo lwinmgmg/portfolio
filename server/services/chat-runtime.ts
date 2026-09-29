@@ -1,0 +1,42 @@
+import "server-only";
+
+import type { ChatEvent } from "@/server/domain/chat";
+import { getLlm } from "@/server/llm/llm-runtime";
+import { getRag, isRagConfigured } from "@/server/rag/rag-runtime";
+import { MongoConversationRepository } from "@/server/repositories/conversation-repository";
+import { MongoCvVersionRepository } from "@/server/repositories/cv-version-repository";
+import { MongoRagIndexRepository } from "@/server/repositories/rag-index-repository";
+import { MongoRagTraceRepository } from "@/server/repositories/rag-trace-repository";
+import { ChatService, type ChatReplyRequest } from "@/server/services/chat-service";
+
+const conversations = new MongoConversationRepository();
+const indexes = new MongoRagIndexRepository();
+const traces = new MongoRagTraceRepository();
+const cvVersions = new MongoCvVersionRepository();
+
+let chat: ChatService | null = null;
+
+// Built on first use, like the RAG runtime, because getLlm() throws without OpenRouter settings.
+function getChat(): ChatService {
+  if (chat) return chat;
+  const { client, env } = getLlm();
+  chat = new ChatService({
+    conversations,
+    pipeline: getRag().pipeline,
+    indexes,
+    cvVersions,
+    traces,
+    chat: client,
+    answerModel: env.LLM_ANSWER_MODEL,
+    dailyMessageLimit: env.CHAT_DAILY_MESSAGE_LIMIT,
+  });
+  return chat;
+}
+
+export function isChatConfigured(): boolean {
+  return isRagConfigured();
+}
+
+export function replyToChat(request: ChatReplyRequest): AsyncIterable<ChatEvent> {
+  return getChat().reply(request);
+}

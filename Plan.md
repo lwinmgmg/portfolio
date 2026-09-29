@@ -784,6 +784,8 @@ QUERY (per chat turn)
 
 ## Phase 2.9: Answer generation and chat API
 
+**Status:** Built, not Done. The live `curl -N` run pending: the database has no RAG index, so the chat answers `unavailable`.
+
 **Files:** `server/domain/chat.ts`, `server/repositories/conversation-repository.ts`, `server/rag/answer/*`, `server/services/chat-service.ts`, `app/api/public/chat/route.ts`, changes to `server/http/require-public-session.ts` and `server/services/public-session-service.ts`, tests.
 
 **Steps**
@@ -839,6 +841,17 @@ QUERY (per chat turn)
    - `export const maxDuration = 60`.
    - Abort handling: if `request.signal` aborts, stop the LLM stream and persist what was generated with a `[stopped]` suffix.
 7. Tests (fakes for everything): event order, limits, off-topic path, conversation ownership, history excludes sources, persistence of cited keys.
+
+**As built**
+- `ChatEvent`, `ChatSource`, the limit and error codes, `CHAT_MESSAGE_MAX_CHARS` (500) and `CHAT_SESSION_MESSAGE_LIMIT` (20) are in `server/domain/chat.ts`. The session limit rejects when 20 user messages are already stored.
+- The route rejects a malformed body, including a blank or too long message, with 400 `invalid_request`. The service checks the message again and emits `error` `invalid_message`. The route returns 503 before consuming the session when RAG is not configured.
+- The service checks the published name and the active index **before** creating a conversation, so an unavailable chat stores nothing. An index that disappears before retrieval also gives `unavailable`.
+- A retrieval failure (`RetrievalError`) or an answer-model failure emits `error` `unavailable` and saves the trace, but stores no messages, so failed turns do not count toward the limits.
+- Messages are stored before `sources` and `done`, so a quick follow-up sees the history. A stopped answer (request aborted, or the reader cancelled the stream) is stored with ` [stopped]` and ends without `sources` or `done`. The route keeps the function alive with `after()` until that save finishes.
+- Small talk uses its own prompt, `buildSmalltalkMessages`, with no sources. `[S#]` markers are stripped from assistant turns in the answer history, because those ids pointed at other sources.
+- `extractCitations` also reads grouped markers (`[S1, S2]`). `anchor` is null when the first entity key has no anchor. It reuses `anchorForEntityKey` from `app/(public)/_components/cv/cv-sections.ts`, so this is the first `server/` import from `app/`.
+- The `generate` stage (input: model, mode, sources, history turns; output: model, usage, answer, stopped, cited source ids) has schemas in `trace-stages.ts`. It is placed after the pipeline's `totalMs` on the same timeline. Off-topic traces have no `generate` stage. The trace reader shows it as raw JSON until 2.11.
+- `server/http/ndjson-stream.ts` turns the event iterator into a pull-based NDJSON body. `server/services/chat-runtime.ts` wires `ChatService` with `getRag().pipeline`, now exported from `rag-runtime.ts`.
 
 **Done when**
 - `curl -N` against `/api/public/chat` (with a valid session cookie) streams NDJSON events ending in `done`.

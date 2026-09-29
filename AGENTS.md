@@ -73,6 +73,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     admin/cv/upload/          Vercel Blob client-upload token and callback.
     admin/cv/[versionId]/pdf/ Admin PDF download.
     public/session/           Public session status; issue/ creates one (rate limited).
+    public/chat/              Chat turn: withPublicSession, NDJSON stream of ChatEvents.
   cv/download/                Public CV PDF download.
 
 client/                       Browser-side data access.
@@ -82,16 +83,17 @@ client/                       Browser-side data access.
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.
   domain/                     Types and interfaces only, no I/O: auth, blob-store, chat, cv, llm, public-session, rag.
   db/                         Mongo client singleton (getDb) and runTransaction / TransactionContext.
-  repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace.
+  repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace, conversation.
   services/                   Business logic with injected dependencies.
     auth-service.ts           requireAdmin, withAdmin (server-action wrapper).
     cv-service.ts             Upload registration, extraction, edit, publish.
     rag-index-service.ts      RAG index lifecycle.
     retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
+    chat-service.ts           Chat turn: limits, conversation, retrieval, streamed answer, stored turn and trace.
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
-  http/                       Route-handler helpers: withPublicSession, publicJson, session cookie/key, limiter, client IP, download headers.
+  http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers.
   storage/                    VercelBlobStore implements the BlobStore interface.
   llm/                        OpenRouter client (chat, embeddings, rerank), SSE parser, usage meter, llm-env, PDF-to-Markdown, llm-runtime (getLlm).
   cv/                         CV zod schema, ids, markdown rendering, LLM extractor and prompt, issues, legacy migration, download.
@@ -106,6 +108,7 @@ server/                       All server logic. Layered: domain -> repositories/
     fusion/                   Reciprocal Rank Fusion.
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.
+    answer/                   Answer and small-talk prompts, off-topic reply, [S#] citation extraction.
     eval/                     Golden-set schema, retrieval metrics, CLI args, RetrievalEvaluator, markdown report.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.
     rag-runtime.ts            server-only; builds the RAG components lazily on first use.
@@ -123,6 +126,7 @@ server/                       All server logic. Layered: domain -> repositories/
 | A use case | `server/services/<name>-service.ts`; wire it in `<name>-runtime.ts` | `cv-service.ts` + `cv-runtime.ts` |
 | An admin mutation | `actions.ts` wrapped in `withAdmin`, state in `*-state.ts`, form with `useActionState` | `app/admin/(panel)/rag/` |
 | A public JSON API | `app/api/public/**/route.ts` with `withPublicSession` and `publicJson` | `app/api/public/session/route.ts` |
+| A public streaming API | Service returns an `AsyncIterable` of events; route wraps it in `ndjsonStream` and `after(() => finished)` | `app/api/public/chat/route.ts` |
 | A client fetcher | `client/api/*` on `getPublicJson`, query options in `client/query/*` | `client/api/public-http.ts` |
 | A script that uses the DB | `scripts/`, run with `bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local`; no `next/*`; logic in pure modules | `scripts/rag-eval.ts` (`eval:rag` in package.json) |
 

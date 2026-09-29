@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.8 (retrieval evaluation) on `master`.
+Last updated after Phase 2.9 (answer generation and chat API) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.8. Golden set, retrieval metrics, `RetrievalEvaluator`, `scripts/rag-eval.ts`. |
+| (next) | Phase 2.9. `ChatService`, answer prompt, citations, conversations, `POST /api/public/chat`. |
+| `ddafbbb` | Phase 2.8. Golden set, retrieval metrics, `RetrievalEvaluator`, `scripts/rag-eval.ts`. |
 | `e91daff` | Phase 2.7. `TraceRecorder`, `RetrievalPipeline`, trace reader, `/admin/rag/playground`. |
 | `800eff7` | Phase 2.6. `reciprocalRankFusion`, `ApiReranker`, `PassthroughReranker`. |
 | `95be32f` | Owner commit: AGENTS.md rewrite (project map, gate) and the Plan.md §0.2 AGENTS.md check. |
@@ -51,7 +52,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phase 2.8 is built but not marked Done: its live run needs a RAG index, and the database has none. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). After the 2.8 checkpoint (golden questions, eval run, default presets), Phase 2.9 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8 and 2.9 are built but not marked Done: both live checks need an active RAG index, and the database has none. The owner asked for 2.9 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, then Phase 2.10.
 
 ## Environment
 
@@ -250,6 +251,21 @@ Do not switch model slugs. Defaults:
 - The 5 seed items (tag `example`) use the fixture CV's (Jane Doe) keys. A test checks they still exist in the structured chunks of the fixture. They score 0 against the real CV. The owner writes the real questions (Plan.md §3 checkpoint). Do not invent them.
 - `FakeRetrievalRunner` and `readyIndex` are in `server/rag/__fixtures__/fake-retrieval-runner.ts`.
 - Verified live: the script connects to Atlas under Bun with the shim. The database has a published CV ("LWIN MAUNG MAUNG") and **no RAG indexes**, so the done-when command stops with "No RAG index is active." Its unknown-index, bad-golden-file and empty-tag errors were checked against the real database. The comparison table has only been exercised in unit tests. Next step: build and activate an index in `/admin/rag`, then run the done-when command and mark 2.8 Done.
+
+## Answer generation and chat API (Phase 2.9)
+
+- `withPublicSession(request, produce)` now calls `produce({ sessionId })`. `RotatedPublicSession.sessionId` is the session document id, which stays the same while the key rotates. The chat ties conversations to it.
+- `server/domain/chat.ts` holds `StoredMessage`, `Conversation`, `ConversationRepository`, `ChatSource`, `ChatEvent` and the constants `CHAT_MESSAGE_MAX_CHARS` (500, UTF-16 units), `CHAT_SESSION_MESSAGE_LIMIT` (20) and `CHAT_CONVERSATION_TTL_SECONDS`. 2.10's client should import these types, not redefine them.
+- `MongoConversationRepository` (`chat_conversations`): indexes `{ sessionId: 1 }` and a TTL on `{ updatedAt: 1 }`, 30 days. Messages are embedded in the conversation. `append` does `$push` plus `$max` on `updatedAt`, using the newest message time. The counts are aggregations that `$filter` the embedded messages. The daily count first matches `updatedAt >= since`. A malformed id finds nothing, and `append` throws on one.
+- `server/rag/answer/`: `buildAnswerMessages` (system rules, the last 6 history turns with `[S#]` markers stripped from assistant text, then one user turn with `<sources>…</sources>` and `<question>`), `buildSmalltalkMessages` (no sources), `offTopicReply`, and `extractCitations` / `citedEntityKeys` / `stripCitations`. Source attributes are escaped. The question and source text are not escaped, like the rewrite prompt. `citations.ts` imports `anchorForEntityKey` from `app/(public)/_components/cv/cv-sections.ts`: the first `server/` → `app/` import. It is pure, and it keeps a single anchor mapping. Move the registry to `server/cv/` if that direction becomes a problem.
+- `ChatService.reply` (`server/services/chat-service.ts`) is an async generator. Order: message check, then the limits (session ≥ 20 stored user messages, then the day's count from `startOfUtcDay` ≥ `CHAT_DAILY_MESSAGE_LIMIT`), then the published name and the active index. All three run before a conversation exists. Then `meta`, retrieval (`DEFAULT_RETRIEVAL_CONFIG`, kind `chat`), then the answer. Off topic gives a single fixed `delta` with no LLM call and no `generate` stage.
+- Stored messages: failed turns (retrieval or answer-model error) are not stored, and their trace is saved. Stored turns are appended **before** `sources`/`done`. A stopped turn (the request signal aborted, or the reader called `return()`, which runs the generator's `finally`) is stored as `<partial> [stopped]` with the keys it cited so far, and ends without `sources`/`done`. Save errors are logged and do not break the stream.
+- The `generate` stage is appended to the pipeline's trace: `startedAt = trace.totalMs + (start − retrievedAt)`, and `totalMs` grows to cover it. Its output keeps the raw answer (without `[stopped]`), usage, `stopped` and the cited source ids. The schemas are in `trace-stages.ts` (`STAGE.generate`). `readTrace` has no case for it yet, so 2.11 adds the case and the panel.
+- `server/http/ndjson-stream.ts`: a pull-based `ReadableStream`. A thrown error becomes the `onError` line. `cancel` calls `onCancel` and then `iterator.return()`. `finished` settles after either. The route registers `after(() => stream.finished)` so a stopped answer is saved before the function ends. It also aborts the answer model on `request.signal` abort or on stream cancel.
+- `POST /api/public/chat`: 503 `unavailable` when RAG is not configured (checked before the session is consumed), then `withPublicSession`, then zod `{ conversationId: string(1..64) | null, message: trimmed 1..500 }`, where a failure is 400 `invalid_request`. The response is NDJSON with `no-store` and `nosniff`, and `maxDuration = 60`.
+- `server/services/chat-runtime.ts` builds `ChatService` lazily with `getRag().pipeline` (`getRag` is now exported) and its own repository instances. `isChatConfigured()` = `isRagConfigured()`.
+- The answer stream has no deadline of its own beyond the client's 60 s per attempt. A slow model can reach the route's 60 s `maxDuration` before a stopped answer is saved. The embedding call in retrieval still has no deadline (see 2.7).
+- Verified live with curl against the dev server: a session from `POST /api/public/session`, then 400 `invalid_request` for a blank message, then a 200 NDJSON stream with a rotated `public_session` cookie that ended in `{"type":"error","code":"unavailable"}`. The database has a published CV and **no RAG index**, and no conversation row was created. The `meta` → `delta` → `sources` → `done` path is covered by unit tests only. No answer-model call has been made.
 
 ## Scaffold removal
 
