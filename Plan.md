@@ -745,6 +745,8 @@ QUERY (per chat turn)
 
 ## Phase 2.8: Retrieval evaluation
 
+**Status:** Built, not Done. The live run is pending because the database has no RAG index yet.
+
 **Files:** `evals/cv-retrieval.golden.json`, `evals/README.md` (usage only), `scripts/rag-eval.ts`, `server/rag/eval/metrics.ts` (+ test).
 
 **Steps**
@@ -767,6 +769,15 @@ QUERY (per chat turn)
    - Write the full JSON report to `evals/reports/<ISO timestamp>.json`. Add `evals/reports/` to `.gitignore`.
    - `--index` accepts several ids to compare indexes (e.g. structured+contextual vs token-window+plain).
 4. Add `"eval:rag": "bun --conditions=react-server --env-file=.env.local scripts/rag-eval.ts"` to `package.json` scripts.
+
+**As built**
+- Bun supports `--conditions`, but Bun 1.3.14 cannot load the MongoDB driver: BSON calls `v8.startupSnapshot.isBuildingSnapshot()`, which Bun throws on. The script is preloaded with `scripts/bun-v8-snapshot-shim.ts`, which returns `false` there. `eval:rag` is `bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local scripts/rag-eval.ts`.
+- The pure parts live in `server/rag/eval/`: `golden-set.ts` (zod schema, tag filter, keys missing from an index), `metrics.ts`, `eval-args.ts`, `retrieval-evaluator.ts` (runs index × preset × question on a `RetrievalRunner`) and `eval-report.ts` (markdown). The script only wires them.
+- Defaults: `--index active`, every preset, `--k 1,3,5`. Added `--golden <path>`. `--index`, `--presets`, `--k` and `--tag` take comma lists; `--index` and `--tag` also repeat.
+- Table rows are index × preset. Columns: hit@k for every k, recall at the largest k, MRR, mean total ms, mean rerank ms, errors. "Failed" uses hit at the largest k. The report also lists golden keys that no chunk of the index carries.
+- A question whose retrieval throws `RetrievalError` scores 0 and is counted under errors. Other errors stop the run.
+- Questions run one at a time. Each index is loaded into the search cache before timing starts.
+- Report files are `evals/reports/<ISO timestamp with : replaced by ->.json`.
 
 **Done when**
 - `bun run eval:rag -- --index active --presets vector-only,lexical-only,hybrid,hybrid-rerank,full` prints a comparison table against the real DB.

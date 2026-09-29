@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 2.7 (retrieval pipeline, tracing and admin playground) on `master`.
+Last updated after Phase 2.8 (retrieval evaluation) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 2.7. `TraceRecorder`, `RetrievalPipeline`, trace reader, `/admin/rag/playground`. |
+| (next) | Phase 2.8. Golden set, retrieval metrics, `RetrievalEvaluator`, `scripts/rag-eval.ts`. |
+| `e91daff` | Phase 2.7. `TraceRecorder`, `RetrievalPipeline`, trace reader, `/admin/rag/playground`. |
 | `800eff7` | Phase 2.6. `reciprocalRankFusion`, `ApiReranker`, `PassthroughReranker`. |
 | `95be32f` | Owner commit: AGENTS.md rewrite (project map, gate) and the Plan.md §0.2 AGENTS.md check. |
 | `7a77cbb` | Phase 2.5. `LlmQueryRewriter`, `ChatTurn`, shared `unwrapJsonFence`. |
@@ -50,7 +51,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Phase 2.8 is next.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phase 2.8 is built but not marked Done: its live run needs a RAG index, and the database has none. The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). After the 2.8 checkpoint (golden questions, eval run, default presets), Phase 2.9 is next.
 
 ## Environment
 
@@ -237,6 +238,18 @@ Do not switch model slugs. Defaults:
 - Trace UI lives in `app/admin/(panel)/rag/_components/` (`trace-view`, `trace-stage-panel`, `trace-timing`, `trace-format`). No hooks or `"use client"`, so 2.11's server pages can reuse them.
 - The embedding call in `embed-queries` has no timeout of its own (the client's 60 s per attempt and 2 retries apply). Consider a deadline before the chat path depends on it in 2.9.
 - Not verified live: no admin session here, so no run against Atlas or OpenRouter. Curl confirmed only that `/admin/rag/playground` redirects to login when signed out. `TraceView` was rendered with `renderToStaticMarkup` from a faked pipeline run over the sample CV (all seven stages parsed into their panels). No browser check at 375 px / 1440 px or in dark mode.
+
+## Retrieval evaluation (Phase 2.8)
+
+- **Bun cannot load the MongoDB driver as is.** BSON's `ObjectId` static block calls `v8.startupSnapshot.isBuildingSnapshot()`, and Bun 1.3.14 throws `NotImplementedError` there. That is why the repository tests mock `mongodb`. Any Bun script that touches the database needs `--preload ./scripts/bun-v8-snapshot-shim.ts`, which makes the probe return `false`. `--conditions=react-server` is still needed so `server-only` resolves to its empty module. Remove the shim once Bun implements the probe.
+- `bun run eval:rag -- [--index <id|active>,...] [--presets a,b] [--k 1,3,5] [--tag t] [--golden path]`. Usage is in `evals/README.md`. Defaults: the active index, every preset, k = 1,3,5.
+- Pure modules in `server/rag/eval/`: `golden-set.ts` (strict zod items; `history` and `tags` default to `[]`; `relevantEntityKeys` needs at least one; ids must be unique), `metrics.ts` (hit@k, recall@k over distinct relevant keys, reciprocal rank up to depth 10, means), `eval-args.ts` (`node:util` `parseArgs`, strips a leading `--`), `retrieval-evaluator.ts` and `eval-report.ts`. `scripts/rag-eval.ts` only wires them: repositories + `getLlm()` + `createRag`, with a no-op trace `save`, since eval traces are not persisted.
+- `RetrievalEvaluator` depends on `RetrievalRunner`. It runs index → preset → question in order, one question at a time, with kind `eval` and `RETRIEVAL_PRESETS[preset]` unchanged (finalK 5). Metrics are over the returned chunks only, so ranks beyond finalK are misses, and MRR never sees ranks 6 to 10. A `RetrievalError` becomes a zero-scored result with the failed stage's own error message. Any other error (missing index) stops the run.
+- Stage latency comes from each trace: `stageMs` per stage, and `meanStageMs` averages only over questions that ran that stage. Before timing, the script runs one lexical search per index so the first question does not pay for the index read.
+- The report flags golden keys that no chunk of an index carries (`unknownEntityKeys`). That catches typos and CV edits.
+- The 5 seed items (tag `example`) use the fixture CV's (Jane Doe) keys. A test checks they still exist in the structured chunks of the fixture. They score 0 against the real CV. The owner writes the real questions (Plan.md §3 checkpoint). Do not invent them.
+- `FakeRetrievalRunner` and `readyIndex` are in `server/rag/__fixtures__/fake-retrieval-runner.ts`.
+- Verified live: the script connects to Atlas under Bun with the shim. The database has a published CV ("LWIN MAUNG MAUNG") and **no RAG indexes**, so the done-when command stops with "No RAG index is active." Its unknown-index, bad-golden-file and empty-tag errors were checked against the real database. The comparison table has only been exercised in unit tests. Next step: build and activate an index in `/admin/rag`, then run the done-when command and mark 2.8 Done.
 
 ## Scaffold removal
 

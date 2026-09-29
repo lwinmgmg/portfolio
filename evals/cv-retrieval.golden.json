@@ -1,0 +1,40 @@
+[
+  {
+    "id": "example-experience-1",
+    "question": "Where does Jane work now?",
+    "history": [],
+    "relevantEntityKeys": ["experience:acme-senior-software-engineer-2021-04"],
+    "tags": ["example", "experience"]
+  },
+  {
+    "id": "example-project-1",
+    "question": "What has she built with Next.js?",
+    "history": [],
+    "relevantEntityKeys": ["project:portfolio"],
+    "tags": ["example", "projects"]
+  },
+  {
+    "id": "example-education-1",
+    "question": "Where did Jane study computer science?",
+    "history": [],
+    "relevantEntityKeys": ["education:tu-berlin-b-sc-computer-science"],
+    "tags": ["example", "education"]
+  },
+  {
+    "id": "example-skills-1",
+    "question": "Which programming languages does she know?",
+    "history": [],
+    "relevantEntityKeys": ["skills:languages"],
+    "tags": ["example", "skills"]
+  },
+  {
+    "id": "example-follow-up-1",
+    "question": "When did she get it?",
+    "history": [
+      { "role": "user", "text": "Does Jane have any certifications?" },
+      { "role": "assistant", "text": "Yes, she is an AWS Certified Developer." }
+    ],
+    "relevantEntityKeys": ["certification:aws-certified-developer"],
+    "tags": ["example", "certifications", "follow-up"]
+  }
+]

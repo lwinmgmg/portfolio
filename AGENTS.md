@@ -48,6 +48,9 @@ Tests are colocated as `*.test.ts`. Shared test fakes live in `__fixtures__/`.
 ```
 proxy.ts                      Optimistic /admin redirect only. No server-only, Mongo or limiter imports.
 scripts/hash-admin-password.ts  Produces ADMIN_PASSWORD_HASH for .env.local.
+scripts/rag-eval.ts           `bun run eval:rag`: retrieval eval against the real DB, wired from rag-composition.
+scripts/bun-v8-snapshot-shim.ts  Preload for Bun scripts that use Mongo (BSON's v8 probe throws in Bun).
+evals/                        Golden set (cv-retrieval.golden.json), usage README; reports/ is git-ignored.
 
 app/                          Routes. Keep them thin: parse input, call a service or runtime, render.
   layout.tsx, globals.css     Root layout, Tailwind 4.
@@ -103,6 +106,7 @@ server/                       All server logic. Layered: domain -> repositories/
     fusion/                   Reciprocal Rank Fusion.
     rerank/                   ApiReranker (with passthrough fallback), PassthroughReranker.
     pipeline/                 RetrievalConfig (+ zod-free fields), TraceRecorder, RetrievalPipeline, trace stage schemas and reader.
+    eval/                     Golden-set schema, retrieval metrics, CLI args, RetrievalEvaluator, markdown report.
     rag-composition.ts        Composition root. No server-only, no next/*, so scripts can reuse it.
     rag-runtime.ts            server-only; builds the RAG components lazily on first use.
 ```
@@ -120,6 +124,7 @@ server/                       All server logic. Layered: domain -> repositories/
 | An admin mutation | `actions.ts` wrapped in `withAdmin`, state in `*-state.ts`, form with `useActionState` | `app/admin/(panel)/rag/` |
 | A public JSON API | `app/api/public/**/route.ts` with `withPublicSession` and `publicJson` | `app/api/public/session/route.ts` |
 | A client fetcher | `client/api/*` on `getPublicJson`, query options in `client/query/*` | `client/api/public-http.ts` |
+| A script that uses the DB | `scripts/`, run with `bun --preload ./scripts/bun-v8-snapshot-shim.ts --conditions=react-server --env-file=.env.local`; no `next/*`; logic in pure modules | `scripts/rag-eval.ts` (`eval:rag` in package.json) |
 
 <!-- BEGIN:nextjs-agent-rules -->
 
