@@ -7,8 +7,11 @@ import type {
 } from "@/app/(public)/_components/chat/chat-state";
 import {
   CONVERSATION_ID_KEY,
+  GREETED_KEY,
   MESSAGES_KEY,
+  readGreeted,
   readStoredChat,
+  writeGreeted,
   writeStoredChat,
 } from "@/app/(public)/_components/chat/chat-storage";
 
@@ -183,6 +186,20 @@ test("a stored step this client cannot read is skipped, and a bad detail is drop
   });
 });
 
+test("the greeted flag round-trips and survives clearing the chat", () => {
+  const storage = new MemoryStorage();
+  expect(readGreeted(storage)).toBe(false);
+  writeGreeted(storage);
+  expect(storage.getItem(GREETED_KEY)).toBe("1");
+  expect(readGreeted(storage)).toBe(true);
+
+  writeStoredChat(storage, { conversationId: null, entries: [] });
+  expect(readGreeted(storage)).toBe(true);
+
+  storage.setItem(GREETED_KEY, "yes");
+  expect(readGreeted(storage)).toBe(false);
+});
+
 test("works without storage, or when it throws", () => {
   expect(readStoredChat(null)).toEqual({ conversationId: null, entries: [] });
   const throwing = {
@@ -199,4 +216,9 @@ test("works without storage, or when it throws", () => {
   expect(readStoredChat(throwing)).toEqual({ conversationId: null, entries: [] });
   writeStoredChat(throwing, { conversationId: "c1", entries: ENTRIES });
   writeStoredChat(null, { conversationId: "c1", entries: ENTRIES });
+
+  expect(readGreeted(null)).toBe(false);
+  expect(readGreeted(throwing)).toBe(false);
+  writeGreeted(throwing);
+  writeGreeted(null);
 });

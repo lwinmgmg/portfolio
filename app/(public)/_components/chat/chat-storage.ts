@@ -13,6 +13,8 @@ import { CHAT_REASONING_MAX_CHARS } from "@/server/domain/chat";
 export const CONVERSATION_ID_KEY = "cv-chat:conversationId";
 // The transcript, so a reload shows the turns the server still has as history.
 export const MESSAGES_KEY = "cv-chat:messages";
+// Set when the robot's greeting appears, so it greets once per tab.
+export const GREETED_KEY = "cv-chat:greeted";
 
 export type StoredChat = { conversationId: string | null; entries: ChatEntry[] };
 
@@ -63,6 +65,19 @@ export function writeStoredChat(storage: WritableStorage | null, chat: StoredCha
     storage.setItem(MESSAGES_KEY, JSON.stringify(chat.entries.map(capReasoning)));
   } catch {
     // Quota or blocked storage: the conversation still works for this page view.
+  }
+}
+
+// Without readable storage the tab counts as not greeted, so the robot greets on each page load.
+export function readGreeted(storage: ReadableStorage | null): boolean {
+  return guarded(() => storage?.getItem(GREETED_KEY) === "1", false);
+}
+
+export function writeGreeted(storage: WritableStorage | null): void {
+  try {
+    storage?.setItem(GREETED_KEY, "1");
+  } catch {
+    // Blocked storage: a reload greets again.
   }
 }
 

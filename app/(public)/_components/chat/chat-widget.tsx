@@ -7,8 +7,14 @@ import { ChatMessages } from "@/app/(public)/_components/chat/chat-messages";
 import { CHAT_NOTICES } from "@/app/(public)/_components/chat/chat-state";
 import { useChat } from "@/app/(public)/_components/chat/use-chat";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
+import { RobotGreeting } from "@/app/(public)/_components/robot/robot-greeting";
+import {
+  greetingLines,
+  type GreetingTarget,
+} from "@/app/(public)/_components/robot/robot-greeting-text";
 import { RobotLauncher } from "@/app/(public)/_components/robot/robot-launcher";
-import { robotMood } from "@/app/(public)/_components/robot/robot-mood";
+import { ROBOT_NAME, robotMood } from "@/app/(public)/_components/robot/robot-mood";
+import { useGreeting } from "@/app/(public)/_components/robot/use-greeting";
 
 // Tailwind's `md`: from here the panel is a side sheet and the CV stays visible beside it.
 const WIDE_VIEWPORT = "(min-width: 48rem)";
@@ -24,12 +30,16 @@ function isWide(): boolean {
 export function ChatWidget({
   suggestions,
   ownerName,
+  greetingTarget,
 }: {
   suggestions: readonly string[];
   // The CV owner's first name, for the draft card ("Send to Lwin"). Null when the CV has none.
   ownerName: string | null;
+  // The section the robot's greeting offers to show. Null when the CV has neither.
+  greetingTarget: GreetingTarget | null;
 }) {
   const { state, restore, send, stop, reset, actOnDraft } = useChat();
+  const greeting = useGreeting();
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -50,6 +60,7 @@ export function ChatWidget({
   }
 
   function open() {
+    greeting.dismiss();
     restore();
     setPanelOpen(true);
     setUnread(false);
@@ -87,11 +98,22 @@ export function ChatWidget({
     <>
       <RobotLauncher
         ref={trigger}
-        mood={robotMood({ chat: state, typing: false, greeting: false })}
+        mood={robotMood({ chat: state, typing: false, greeting: greeting.stage !== "hidden" })}
         label={TITLE}
         unread={unread}
         tracking={!panelOpen}
         onClick={open}
+      />
+      <RobotGreeting
+        stage={greeting.stage}
+        lines={greetingLines({ robotName: ROBOT_NAME, ownerName, target: greetingTarget })}
+        target={greetingTarget}
+        onFollow={greeting.follow}
+        onAsk={open}
+        onClose={(hadFocus) => {
+          greeting.dismiss();
+          if (hadFocus) trigger.current?.focus({ preventScroll: true });
+        }}
       />
       <dialog
         ref={dialog}

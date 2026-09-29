@@ -378,6 +378,13 @@
   }
 }
 
+/* The greeting bubble grows out of the robot below its right corner. */
+
+.bubble {
+  transform-origin: calc(100% - 28px) 100%;
+  animation: bubble-in 200ms ease-out;
+}
+
 .robot[data-still] * {
   animation: none !important;
   transition: none !important;
@@ -386,13 +393,21 @@
 @media (prefers-reduced-motion: reduce) {
   .robot,
   .robot *,
-  .launcher {
+  .launcher,
+  .bubble {
     animation: none !important;
     transition: none !important;
   }
 
   .launcher:active {
     transform: none;
+  }
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
   }
 }
 

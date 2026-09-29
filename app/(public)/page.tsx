@@ -8,6 +8,7 @@ import { CvDocument } from "@/app/(public)/_components/cv/cv-document";
 import { CvSectionNav } from "@/app/(public)/_components/cv/cv-section-nav";
 import { cvNavItems } from "@/app/(public)/_components/cv/cv-sections";
 import { cvPageMeta } from "@/app/(public)/_components/cv/cv-seo";
+import { greetingTarget } from "@/app/(public)/_components/robot/robot-greeting-text";
 import { isChatAvailable } from "@/server/services/chat-runtime";
 import { getPublishedCv } from "@/server/services/cv-runtime";
 
@@ -36,7 +37,11 @@ export default async function HomePage() {
         </main>
       </div>
       {cv && suggestions ? (
-        <ChatWidget suggestions={suggestions} ownerName={ownerFirstName(cv.profile.fullName)} />
+        <ChatWidget
+          suggestions={suggestions}
+          ownerName={ownerFirstName(cv.profile.fullName)}
+          greetingTarget={greetingTarget(cv)}
+        />
       ) : null}
     </div>
   );

@@ -180,7 +180,7 @@ app/
   (public)/_components/robot/robot-mood.ts            (+ test) mood from ChatState (5.1)
   (public)/_components/robot/robot.tsx, robot.module.css  SVG robot and its moods (5.2)
   (public)/_components/robot/robot-launcher.tsx, robot-eyes.ts (+ test), use-eye-tracking.ts  (5.3)
-  (public)/_components/robot/robot-greeting.tsx, robot-greeting-text.ts (+ test)  (5.4)
+  (public)/_components/robot/robot-greeting.tsx, robot-greeting-text.ts (+ test), use-greeting.ts  (5.4)
 client/api/chat.ts
 scripts/rag-eval.ts
 scripts/probe-scope-router.ts
@@ -1868,7 +1868,7 @@ The no-information reply has no marker in the stream, so it gets `idle`, not `pu
 
 ## Phase 5.4: Greeting
 
-**Files:** `app/(public)/_components/robot/robot-greeting.tsx`, `robot-greeting-text.ts` (+ test), `app/(public)/_components/chat/chat-storage.ts` (+ test), `chat-widget.tsx`, `app/(public)/page.tsx`.
+**Files:** `app/(public)/_components/robot/robot-greeting.tsx`, `robot-greeting-text.ts` (+ test), `use-greeting.ts`, `app/(public)/_components/chat/chat-storage.ts` (+ test), `chat-widget.tsx`, `app/(public)/page.tsx`.
 
 **Steps**
 1. `robot-greeting-text.ts` (pure):
@@ -1891,6 +1891,24 @@ The no-information reply has no marker in the stream, so it gets `idle`, not `pu
    - Opening the chat from the robot also closes the bubble.
 7. Phones (below `md`): the bubble closes once the visitor has scrolled one screen height since it appeared, so it does not sit over the CV text. Following the target link resets the start point. The rule is a pure `shouldCloseOnScroll(startY, y, viewportHeight)` in `robot-greeting-text.ts`.
 8. Tests: the lines with and without a name or target, `greetingTarget` for each CV shape, the greeted-key round trip and throwing storage, and the scroll rule.
+
+**Status:** Built. The done-when's browser checks (reload, link, close, keyboard, 375 px scroll rule, screen reader) wait for the owner.
+
+**As built**
+- **Files.** The timer and stage live in `use-greeting.ts` (`useGreeting()` → `stage` "hidden" | "open" | "followed", `follow`, `dismiss`). `ChatWidget` passes the stage to the launcher's mood (`greeting: stage !== "hidden"`) and to `RobotGreeting`.
+- **Target.** `GreetingTarget` is `{ section, anchor, label }`; the Experience one reads "Show me the experience".
+- **Lines.** `greetingLines` returns `{ opening, followUp }` (followUp null without a target). The Experience wording, not in the step list:
+  - Opening: "…Want to see where Lwin has worked?"
+  - After the link: "Here is where Lwin has worked. Ask me about any role."
+  - Without a name: "Here are the projects. …" / "Here is the work history. …", and without a target either, "Hi! I'm Bit. Ask me anything about this CV."
+- **Opening the chat before the greeting** cancels the timer and also writes the greeted key, so a reload in that tab does not greet either.
+- **Announcement.** `RobotGreeting` is always rendered: while hidden it is an empty, unnamed `sr-only` section, so its `role="status"` line already exists when the greeting text arrives. The `aria-label` is set only while it shows, so a hidden bubble is no landmark.
+- **Focus.** Never moved to the bubble. Closing it (× or Esc) while focus is inside returns focus to the robot, since the focused element disappears.
+- **The link.** Removing it during its own click would cancel the navigation, so the bubble switches to the follow-up line in a `setTimeout` after the click. After the link, "Ask me a question" becomes the primary button.
+- **Phone scroll rule.** Checked on each scroll below `md` against `shouldCloseOnScroll` (either direction). The page scrolls smoothly, so after the link the start point is taken 150 ms after scrolling stops, not at the click.
+- **Look.** 18rem wide at most (`w-[calc(100vw-2rem)]` below that), 12 px above the robot, with a rotated-square tail over the robot's middle. It fades and grows in over 200 ms (`.bubble` in `robot.module.css`); reduced motion turns that off.
+- **Checked, 2026-09-30:** on the dev server, headless Chrome at 1280 px and 500 px (its minimum width): after the delay the bubble shows "Hi! I'm Bit, Lwin's assistant. Want to see where Lwin has worked?" with "Show me the experience" (this CV has no projects), and the robot's `data-mood` is `waving`.
+- **Not checked:** the link, close, Esc and reload in a real browser, 375 px, the scroll rule, and a screen reader's announcement.
 
 **Done when**
 - In a new tab the robot greets after about 1.5 s. A reload does not greet again, and another new tab does.
