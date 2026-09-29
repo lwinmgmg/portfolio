@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 
+import { ChatActivity } from "@/app/(public)/_components/chat/chat-activity";
 import {
   parseAnswer,
   type AnswerBlock,
@@ -41,7 +42,7 @@ export function ChatAnswer({ entry, onNavigate }: { entry: AssistantEntry } & Na
 
   return (
     <div className="space-y-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
-      {blocks.length === 0 && streaming ? <Thinking /> : null}
+      <ChatActivity entry={entry} onNavigate={onNavigate} />
       {blocks.map((block, index) => (
         <Block key={index} block={block} citations={citations} />
       ))}
@@ -196,20 +197,4 @@ function ChatSources({ sources, onNavigate }: { sources: readonly ChatSource[] }
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-zinc-500 italic dark:text-zinc-400">{children}</p>;
-}
-
-function Thinking() {
-  return (
-    <p className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
-      <span className="sr-only">Thinking</span>
-      {[0, 150, 300].map((delay) => (
-        <span
-          key={delay}
-          aria-hidden="true"
-          style={{ animationDelay: `${delay}ms` }}
-          className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none"
-        />
-      ))}
-    </p>
-  );
 }

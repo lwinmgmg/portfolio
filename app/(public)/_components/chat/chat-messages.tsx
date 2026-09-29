@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 
 import { ChatAnswer } from "@/app/(public)/_components/chat/chat-answer";
 import type { ChatEntry } from "@/app/(public)/_components/chat/chat-state";
+import { stepAnnouncement } from "@/app/(public)/_components/chat/chat-steps-text";
 import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
 
 // How close to the bottom (px) still counts as following the answer.
@@ -29,6 +30,8 @@ export function ChatMessages({
   // interrupted. Each new question follows again.
   const following = useRef(true);
   const lastQuestion = entries.findLast((entry) => entry.role === "user")?.id;
+  const pending = streaming ? entries.at(-1) : undefined;
+  const announcement = pending?.role === "assistant" ? stepAnnouncement(pending.steps) : "";
 
   useEffect(() => {
     following.current = true;
@@ -52,6 +55,10 @@ export function ChatMessages({
       onScroll={handleScroll}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4"
     >
+      {/* Outside the busy log, so step changes are announced while the answer streams. */}
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       {entries.length === 0 ? (
         <div className="flex min-h-full flex-col justify-end gap-4">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">

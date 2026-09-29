@@ -1190,6 +1190,29 @@ reasoning text.
    - Summaries are keyboard reachable (native `<details>`).
 5. Keep the existing styles: zinc palette, dark mode, `focusRing`.
 
+**Status:** Built. Not marked Done: no browser was available, so the done-when checks below are still open.
+
+**As built**
+- **Labels.** Each step has two wordings: what it is doing ("Searching the CV", shown with "…" while running, and without it when the step failed or was stopped) and what it did ("Semantic search"). Status icons carry "In progress", "Done", "Failed" or "Stopped" as hidden text.
+- **Summaries.**
+  - Fusion reads "24 chunks combined", not "24 → 20 chunks". The public `fuse` detail has the total before the cut and at most 10 hits, so the count after the cut is not in the event.
+  - A search over several queries reads "2 queries · best 0.82".
+  - A rerank fallback reads "Kept the combined order" and shows no scores, because fallback scores are 1 / rank.
+  - Filter reads "kept 5", or "kept 3 · dropped 2". `generate` reads "5 sources", or "No sources" for small talk.
+- **Panel heading.** While streaming, it shows the label of the step started last, or "Working…" between steps. After that it shows one of:
+  - "Worked for 3.4 s · 2 sources", counting the answer's cited sources (the list under the answer), not the sources sent to the model.
+  - "Stopped after …", "Failed after …" (any step failed) or "Cut off after …".
+- **Before the first step** a single spinner line, "Working…", replaces the old `…`. An answer with no steps (a legacy stored entry) shows no panel.
+- **Rows.** Only a row with something to show is a `<details>`. Running, failed and stopped rows, and rows whose detail could not be read, are plain rows. `embed` and `generate` get a one-sentence detail, which the plan did not list.
+- **Open state.** Both the panel and the reasoning row start open only for an answer first seen while streaming. The panel stays open while there is no answer text, so a failed or stopped turn with no text keeps its steps visible. The reasoning row stays open until `generate` starts. A visitor's toggle wins for that entry; a `toggle` event that React caused is ignored.
+- **Announcements.** One visually hidden `role="status"` in `chat-messages.tsx`, outside the busy log, reads the step started last ("Reranking results"), or "Reranking results failed", and nothing between steps.
+- **Checks done.**
+  - Unit tests cover `chat-steps-text.ts` (624 tests pass). Lint, types and build pass.
+  - A static render of the answer with a fixture turn: the live panel and the reasoning row are open, a restored entry starts closed, hit titles are escaped and link to their anchors, and a legacy entry has no panel.
+  - The built CSS has the named-group chevron rules, the reduced-motion spinner and the hidden summary marker. The public chat chunk has no zod.
+  - The owner's `next dev` still serves `/` with the widget after the change.
+- **Not checked** (no browser here): steps appearing live, expanding rows, the Thinking text streaming, the panel after a reload, 375 px and 1440 px, dark mode, and keyboard-only use.
+
 **Done when**
 - A visitor sees each step appear and finish live, can expand any step to see its results, and sees the Thinking text stream before the answer.
 - After a reload the collapsed panel and its steps are still there.

@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 3.4 (client events, state and storage) on `master`.
+Last updated after Phase 3.5 (workflow UI) on `master`.
 
 ## How to work
 
@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 3.4. Client step guards (`client/api/chat-steps.ts`), steps and reasoning on `AssistantEntry`, stored in `sessionStorage`. |
+| (next) | Phase 3.5. Steps panel in the chat (`chat-activity.tsx`, `chat-step-detail.tsx`, `chat-steps-text.ts`). Built, not browser-checked. |
+| `c6036c8` | Phase 3.4. Client step guards (`client/api/chat-steps.ts`), steps and reasoning on `AssistantEntry`, stored in `sessionStorage`. |
 | `55befe4` | Phase 3.3. `ChatService` streams `step` and `reasoning` events (`EventChannel`), reasoning saved on the trace's `generate` stage. |
 | `c4fa917` | Owner: answer Markdown rendering (`chat-markdown.ts`, split out of `chat-text.ts`). |
 | `386739a` | Phase 3.2. `TraceObserver` on the recorder and pipeline, public `ChatStep` types and events, `chat-steps.ts` projection. |
@@ -60,7 +61,7 @@ Newest first:
 
 Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, check the chat in a browser (375 px, keyboard only, source chips), then Phase 2.10a (chat retrieval settings, added by the owner), then Phase 2.11.
 
-Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Next in that track: Phase 3.5 (workflow UI), when the owner asks.
+Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check, then Phase 4.1 when the owner asks. Restart `next dev` first so it runs the post-3.1 LLM client (see Phase 3.3).
 
 ## Environment
 
@@ -333,13 +334,28 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
   - A `step` event is upserted by name in start order. A finished step replaces its running one in place. A `running` event never replaces a step that is already listed.
   - `reasoning` text is appended as it arrives; the reducer does not cap it.
   - Every way an answer ends goes through `settle`, which marks any still-running step `stopped`: `done`, `complete`, `stopped`, `interrupted`, `error` and `limit`.
-  - `settlePending` drops an answer only when it has no text **and** no steps. A failed turn with steps is kept as `interrupted` with empty text. Until 3.5 it renders as "This answer is incomplete."
+  - `settlePending` drops an answer only when it has no text **and** no steps. A failed turn with steps is kept as `interrupted` with empty text. It renders its open steps panel, then "This answer is incomplete."
 - **Storage.** Entries are rebuilt field by field on read, not returned as stored.
   - Steps are read with `readChatStep(…, ANSWER_STEP_STATUSES)`, and unreadable ones are skipped.
   - Missing `steps` and `reasoning` load as `[]` and `""`.
   - Reasoning is cut to `CHAT_REASONING_MAX_CHARS` both on write and on read.
   - A `steps` that is not an array, or a `reasoning` that is not a string, drops the transcript, like other malformed entries.
 - **Bundle check.** After `bun run build`, the chat chunk (the only one with `cv-chat:messages`, loaded by `(public)`) has no zod. The one client chunk with zod is loaded only by `admin/(panel)/cv/[versionId]`.
+
+## Workflow UI (Phase 3.5)
+
+- **Files.** `chat-steps-text.ts` is pure and tested: labels, summaries, score formats and hints, durations, the panel heading and the screen-reader announcement. `chat-activity.tsx` is the panel and its rows. `chat-step-detail.tsx` is the expanded content per detail kind, plus `ReasoningText`. `ChatAnswer` renders `ChatActivity` first; the old `Thinking` dots are gone.
+- **Panel.** It is one `<details>` per answer, holding a list of rows.
+  - Before the first step it is a spinner line, "Working…". An entry with no steps (legacy) has no panel.
+  - While streaming, its heading is the label of the step started last. After the answer ends it reads "Worked for 3.4 s · N sources" (the cited sources), "Stopped after", "Failed after" or "Cut off after".
+- **Open state.**
+  - `useDisclosure(auto)` follows `auto` until the visitor toggles. A `toggle` event that leaves the element as rendered came from React and is ignored.
+  - The panel's `auto` is `live && text === ""`. `live` is whether the entry was streaming when it mounted, so restored entries start closed.
+  - The reasoning row's `auto` is `live && no generate step yet`.
+- **Rows.** Only a row with a readable detail (or reasoning text) is a `<details>`; the rest are plain rows. Failed and stopped rows use the "doing" wording without "…". Named Tailwind groups (`group/panel`, `group/row`) keep the chevrons apart.
+- **Scores.** Cosine, BM25 and rerank to 2 decimals, RRF to 4. Each list has a one-line hint. A rerank fallback shows no scores (they are 1 / rank). Fusion's summary is "N chunks combined", because the event has no count after the cut.
+- **Accessibility.** A hidden `role="status"` in `chat-messages.tsx`, outside the `aria-busy` log, announces step changes only. Icons have hidden status text. The spinner is `motion-reduce:animate-none`.
+- **Not checked.** There was no browser. A static render, the built CSS and a 200 for `/` from the owner's dev server were checked. Live streaming, reload, 375 px and 1440 px, dark mode and keyboard use were not.
 
 ## Scaffold removal
 
