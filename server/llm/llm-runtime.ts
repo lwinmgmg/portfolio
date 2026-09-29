@@ -3,10 +3,10 @@ import "server-only";
 import { readLlmEnv, type LlmEnv } from "@/server/llm/llm-env";
 import { OpenRouterClient } from "@/server/llm/openrouter-client";
 
-// One client per process. globalThis keeps it across dev hot reloads.
-const globalForLlm = globalThis as unknown as {
-  llmRuntime?: { client: OpenRouterClient; env: LlmEnv };
-};
+// One client per module graph, deliberately not on globalThis. The client holds no connections,
+// and a shared one throws LlmProviderError from another graph's (or a pre-reload) copy of the
+// class, so `instanceof` checks such as AdaptiveChatClient's quietly fail and nothing adapts.
+let llmRuntime: { client: OpenRouterClient; env: LlmEnv } | null = null;
 
 export class LlmConfigError extends Error {
   constructor() {
@@ -16,13 +16,12 @@ export class LlmConfigError extends Error {
 }
 
 export function getLlm(): { client: OpenRouterClient; env: LlmEnv } {
-  const existing = globalForLlm.llmRuntime;
-  if (existing) return existing;
+  if (llmRuntime) return llmRuntime;
 
   const env = readLlmEnv();
   if (!env) throw new LlmConfigError();
 
-  const runtime = {
+  llmRuntime = {
     env,
     client: new OpenRouterClient({
       apiKey: env.OPENROUTER_API_KEY,
@@ -30,6 +29,5 @@ export function getLlm(): { client: OpenRouterClient; env: LlmEnv } {
       appName: env.OPENROUTER_APP_NAME,
     }),
   };
-  globalForLlm.llmRuntime = runtime;
-  return runtime;
+  return llmRuntime;
 }

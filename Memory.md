@@ -96,6 +96,8 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
 
 `getLlm()` is server-only and throws `LlmConfigError` when `readLlmEnv()` is null. Call it inside the operation, not at module init, or `/admin/cv` crashes when the key is missing. Callers pass `pdfEngine` on each chat request. The shared client keeps its 60 second per-attempt timeout and 2 retries. An aborted outer signal is not retried.
 
+Do not move the `getLlm()` cache back onto `globalThis`. A client shared across Next module graphs (or kept from before a hot reload) throws `LlmProviderError` from another copy of the class, so `AdaptiveChatClient`'s `instanceof` check fails and it never adapts. Fixed 2026-09-29: every public chat rewrite fell back on "Reasoning is mandatory" with `z-ai/glm-5.3-flash`, while the admin playground, running in a different module graph, rewrote fine.
+
 `pdf-to-md` converts a PDF data URL locally and omits OpenRouter's file-parser plugin. Empty or image-only PDFs fail. `cloudflare-ai` and `mistral-ocr` are the OCR modes. Local conversion does not observe the abort signal until it returns, so a very slow conversion can overrun the extraction budget before the HTTP call starts.
 
 ## CV data
