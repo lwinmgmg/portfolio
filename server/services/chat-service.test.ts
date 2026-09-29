@@ -27,6 +27,7 @@ import {
   RetrievalError,
   type QueryScope,
   type RagIndex,
+  type RetrievalConfig,
   type RetrievalRequest,
   type RetrievalResult,
   type RetrievalTrace,
@@ -200,6 +201,9 @@ type SetupOptions = {
   published?: CvVersion | null;
   dailyMessageLimit?: number;
   answerReasoning?: ReasoningLevel;
+  retrievalConfig?: () => Promise<RetrievalConfig>;
+  // What a CV question retrieves. Defaults to two chunks.
+  chunks?: RetrievedChunk[];
 };
 
 function setup(options: SetupOptions = {}) {
@@ -238,13 +242,14 @@ function setup(options: SetupOptions = {}) {
           }
         }
         return {
-          chunks: scope === "off_topic" ? [] : retrievedChunks,
+          chunks: scope === "off_topic" ? [] : (options.chunks ?? retrievedChunks),
           scope,
           queries: [request.message],
           trace: traceFor(request, id, recorded),
         };
       },
     },
+    retrievalConfig: options.retrievalConfig ?? (async () => ({ ...DEFAULT_RETRIEVAL_CONFIG })),
     indexes: {
       findActive: async () =>
         options.activeIndex === undefined ? readyIndex("index-1") : options.activeIndex,
@@ -391,8 +396,9 @@ test("a CV question streams meta, the retrieval steps, the answer step, deltas, 
   ]);
 });
 
-test("retrieval runs with the default config, a chat trace, the trimmed message and an observer", async () => {
-  const { service, retrievals } = setup();
+test("retrieval runs with the saved config, a chat trace, the trimmed message and an observer", async () => {
+  const saved = { ...DEFAULT_RETRIEVAL_CONFIG, finalK: 3, minRerankScore: 0.2 };
+  const { service, retrievals } = setup({ retrievalConfig: async () => saved });
 
   await collect(service.reply(ask));
 
@@ -401,11 +407,60 @@ test("retrieval runs with the default config, a chat trace, the trimmed message 
   expect(request).toEqual({
     message: "Where did she work?",
     history: [],
-    config: DEFAULT_RETRIEVAL_CONFIG,
+    config: saved,
     subjectName: "Jane Doe",
     kind: "chat",
   });
   expect(observer === undefined).toBe(false);
+});
+
+test("the config is read once per turn, so a saved change applies to the next turn", async () => {
+  let current: RetrievalConfig = { ...DEFAULT_RETRIEVAL_CONFIG };
+  let reads = 0;
+  const { service, retrievals } = setup({
+    retrievalConfig: async () => {
+      reads += 1;
+      return current;
+    },
+  });
+
+  await collect(service.reply(ask));
+  current = { ...DEFAULT_RETRIEVAL_CONFIG, minRerankScore: 0.3 };
+  await collect(service.reply({ ...ask, conversationId: "conv-1" }));
+
+  expect(reads).toBe(2);
+  expect(retrievals.map((request) => request.config.minRerankScore)).toEqual([0, 0.3]);
+});
+
+test("a CV question with no chunks gets the no-information reply without an LLM call", async () => {
+  const { service, chat, conversations, saved } = setup({ chunks: [] });
+
+  const events = await collect(service.reply(ask));
+
+  const reply = "I don't have that information in Jane Doe's CV. You can contact Jane Doe directly.";
+  expect(withoutSteps(events)).toEqual([
+    { type: "meta", conversationId: "conv-1" },
+    { type: "delta", text: reply },
+    { type: "sources", sources: [] },
+    { type: "done" },
+  ]);
+  expect(stepLog(events).some((step) => step.startsWith("generate"))).toBe(false);
+  expect(chat.requests).toHaveLength(0);
+  expect(conversations.rows[0]?.messages.map((message) => message.text)).toEqual([
+    "Where did she work?",
+    reply,
+  ]);
+  expect(conversations.rows[0]?.messages[1]?.traceId).toBe("trace-1");
+  expect(saved).toHaveLength(1);
+  expect(saved[0]?.stages.map((stage) => stage.name)).not.toContain("generate");
+});
+
+test("small talk with no chunks still calls the answer model", async () => {
+  const { service, chat } = setup({ scope: "smalltalk", chunks: [], answer: { deltas: ["Hi!"] } });
+
+  await collect(service.reply({ ...ask, message: "Hello" }));
+
+  expect(chat.requests).toHaveLength(1);
 });
 
 test("steps are sent while the pipeline is still running", async () => {

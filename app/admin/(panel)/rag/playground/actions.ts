@@ -1,9 +1,22 @@
 "use server";
 
-import { parsePlaygroundForm } from "@/app/admin/(panel)/rag/playground/playground-input";
-import type { PlaygroundState } from "@/app/admin/(panel)/rag/playground/playground-state";
+import { revalidatePath } from "next/cache";
+
+import {
+  parsePlaygroundForm,
+  parseRetrievalConfig,
+} from "@/app/admin/(panel)/rag/playground/playground-input";
+import type {
+  ChatConfigState,
+  PlaygroundState,
+} from "@/app/admin/(panel)/rag/playground/playground-state";
 import { readTrace } from "@/server/rag/pipeline/trace-reader";
-import { isRagConfigured, RagError, runRetrievalPlayground } from "@/server/rag/rag-runtime";
+import {
+  isRagConfigured,
+  RagError,
+  runRetrievalPlayground,
+  saveChatRetrievalConfig,
+} from "@/server/rag/rag-runtime";
 import { withAdmin } from "@/server/services/auth-service";
 
 async function runPlayground(
@@ -39,4 +52,27 @@ async function runPlayground(
   };
 }
 
+// Saves only the form's retrieval config; the chat always answers from the active index.
+async function saveChatConfig(
+  _previous: ChatConfigState,
+  formData: FormData,
+): Promise<ChatConfigState> {
+  if (!isRagConfigured()) {
+    return { status: "error", message: "Configure the database and OpenRouter first." };
+  }
+  const parsed = parseRetrievalConfig(formData);
+  if (!parsed.ok) return { status: "error", message: parsed.message };
+
+  try {
+    await saveChatRetrievalConfig(parsed.value);
+  } catch (error) {
+    if (error instanceof RagError) return { status: "error", message: error.message };
+    console.error(error);
+    return { status: "error", message: "Could not save the chat config." };
+  }
+  revalidatePath("/admin/rag/playground");
+  return { status: "saved", message: "Saved. The chat uses this config from its next message." };
+}
+
 export const runRetrievalPlaygroundAction = withAdmin(runPlayground);
+export const saveChatConfigAction = withAdmin(saveChatConfig);

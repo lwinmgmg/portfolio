@@ -1,13 +1,15 @@
 import Link from "next/link";
 
+import { ChatConfigSummary } from "@/app/admin/(panel)/rag/playground/chat-config-summary";
 import { PlaygroundForm } from "@/app/admin/(panel)/rag/playground/playground-form";
 import { indexLabel } from "@/app/admin/(panel)/rag/rag-format";
 import { link, note } from "@/app/admin/(panel)/rag/rag-styles";
+import { RETRIEVAL_PRESETS } from "@/server/rag/pipeline/retrieval-config";
 import {
-  DEFAULT_RETRIEVAL_CONFIG,
-  RETRIEVAL_PRESETS,
-} from "@/server/rag/pipeline/retrieval-config";
-import { isRagConfigured, listRagIndexes } from "@/server/rag/rag-runtime";
+  getChatRetrievalSettings,
+  isRagConfigured,
+  listRagIndexes,
+} from "@/server/rag/rag-runtime";
 import { requireAdmin } from "@/server/services/auth-service";
 
 // Rewrite, query embedding and rerank are separate provider calls, each with its own timeout.
@@ -28,7 +30,11 @@ export default async function RagPlaygroundPage({
     );
   }
 
-  const indexes = (await listRagIndexes()).filter((index) => index.state === "ready");
+  const [allIndexes, chatSettings] = await Promise.all([
+    listRagIndexes(),
+    getChatRetrievalSettings(),
+  ]);
+  const indexes = allIndexes.filter((index) => index.state === "ready");
   const { index: requestedId } = await searchParams;
   const requested =
     typeof requestedId === "string" ? indexes.find((index) => index.id === requestedId) : undefined;
@@ -46,15 +52,17 @@ export default async function RagPlaygroundPage({
         <p className={note}>
           Runs the chat&apos;s retrieval pipeline without generating an answer and shows every
           stage. Each run is saved as a <span className="font-mono">playground</span> trace.
-          Rewriting, query embedding and reranking call OpenRouter.
+          Rewriting, query embedding and reranking call OpenRouter. &ldquo;Use for chat&rdquo; saves
+          the form&apos;s config for every later chat answer.
         </p>
       </header>
+      <ChatConfigSummary settings={chatSettings} />
       {initial ? (
         <PlaygroundForm
           indexes={indexes.map((index) => ({ id: index.id, label: indexLabel(index) }))}
           defaultIndexId={initial.id}
           presets={RETRIEVAL_PRESETS}
-          defaultConfig={DEFAULT_RETRIEVAL_CONFIG}
+          chatConfig={chatSettings.config}
         />
       ) : (
         <p>

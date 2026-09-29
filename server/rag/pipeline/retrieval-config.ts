@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RetrievalConfig } from "@/server/domain/rag";
 import {
   QUERY_REWRITE_MODES,
+  RETRIEVAL_FIELD_LABELS,
   RETRIEVAL_NUMBER_FIELDS,
   SEARCH_MODES,
   type NumberField,
@@ -27,11 +28,25 @@ export const RetrievalConfigSchema = z.strictObject({
     .min(fields.minRerankScore.min)
     .max(fields.minRerankScore.max)
     .default(fields.minRerankScore.default),
+  ignoreSubjectInLexical: z.boolean().default(true),
+  ignoreSubjectInRerank: z.boolean().default(true),
+  dropBelowMeanRerank: z.boolean().default(true),
 }) satisfies z.ZodType<RetrievalConfig>;
 
 export const DEFAULT_RETRIEVAL_CONFIG: Readonly<RetrievalConfig> = Object.freeze(
   RetrievalConfigSchema.parse({}),
 );
+
+// The first problem, named by the field's form label, e.g. "Final k: Too big: expected ...".
+export function retrievalConfigErrorMessage(error: z.ZodError): string {
+  const issue = error.issues[0];
+  const field = issue?.path[0];
+  const label =
+    typeof field === "string" && field in RETRIEVAL_FIELD_LABELS
+      ? RETRIEVAL_FIELD_LABELS[field as keyof RetrievalConfig]
+      : "Config";
+  return `${label}: ${issue?.message ?? "invalid value"}.`;
+}
 
 export const RETRIEVAL_PRESET_NAMES = [
   "vector-only",

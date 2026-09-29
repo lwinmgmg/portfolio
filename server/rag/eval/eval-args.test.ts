@@ -44,6 +44,10 @@ test("reads comma lists and repeated flags, dropping blanks and repeats", () => 
   });
 });
 
+test("accepts the saved chat config as the chat preset", () => {
+  expect(parseEvalArgs(["--presets", "hybrid-rerank,chat"]).presets).toEqual(["hybrid-rerank", "chat"]);
+});
+
 test("ignores a leading -- separator from bun run", () => {
   expect(parseEvalArgs(["--", "--presets", "full"]).presets).toEqual(["full"]);
 });

@@ -7,6 +7,7 @@ import {
   RagIndexStateError,
   RetrievalError,
   type Chunk,
+  type LexicalSearchOptions,
   type RagIndex,
   type RankedHit,
   type RerankCandidate,
@@ -72,14 +73,16 @@ class FakeEmbeddings implements EmbeddingClient {
 
 class FakeRetriever implements Retriever {
   calls: string[] = [];
+  lexicalOptions: (LexicalSearchOptions | undefined)[] = [];
 
   constructor(
     private readonly vector: Record<number, RankedHit[]>,
     private readonly lexical: Record<string, RankedHit[]>,
   ) {}
 
-  async searchLexical(_indexId: string, query: string, k: number) {
+  async searchLexical(_indexId: string, query: string, k: number, options?: LexicalSearchOptions) {
     this.calls.push(`lexical:${query}:${k}`);
+    this.lexicalOptions.push(options);
     return (this.lexical[query] ?? []).slice(0, k);
   }
 
@@ -286,6 +289,32 @@ test("every query is searched both ways and the lists are fused by name", async 
   expect(fused.total).toBe(5);
 });
 
+test("BM25 ignores the subject's name by default and records it in the trace", async () => {
+  const { pipeline, retriever } = setup({
+    rewrite: { queries: ["Where did Jane work?", "Jane Doe employers"], scope: "cv" },
+  });
+
+  const result = await pipeline.run(request({ rewrite: "multi" }));
+
+  expect(retriever.lexicalOptions).toEqual([
+    { ignoreTermsOf: "Jane Doe" },
+    { ignoreTermsOf: "Jane Doe" },
+  ]);
+  expect(outputOf<SearchStageOutput>(result, "lexical-search").ignoredTermsOf).toBe("Jane Doe");
+  expect(outputOf<SearchStageOutput>(result, "vector-search")).not.toHaveProperty("ignoredTermsOf");
+});
+
+test("with ignoreSubjectInLexical off, BM25 searches the full query", async () => {
+  const { pipeline, retriever } = setup();
+
+  const result = await pipeline.run(request({ ignoreSubjectInLexical: false }));
+
+  expect(retriever.lexicalOptions).toEqual([{ ignoreTermsOf: undefined }]);
+  expect(outputOf<SearchStageOutput>(result, "lexical-search")).not.toHaveProperty(
+    "ignoredTermsOf",
+  );
+});
+
 test("chunks are fetched once per id across the searches", async () => {
   const { pipeline, retriever } = setup();
 
@@ -302,7 +331,7 @@ test("reranking reads queries[0] and index texts, and the final chunks get sourc
     rewrite: { queries: ["Where did Jane work?", "Jane Doe employers"], scope: "cv" },
   });
 
-  const result = await pipeline.run(request({ rewrite: "multi", finalK: 3 }));
+  const result = await pipeline.run(request({ rewrite: "multi", finalK: 3, dropBelowMeanRerank: false }));
 
   expect(reranker.calls.length).toBe(1);
   expect(reranker.calls[0]?.query).toBe("Where did Jane work?");
@@ -329,6 +358,43 @@ test("reranking reads queries[0] and index texts, and the final chunks get sourc
     ["S2", "c4", "Umbrella text"],
     ["S3", "c3", "Initech text"],
   ]);
+});
+
+test("the reranker gets the query without the subject's name by default, and the trace says so", async () => {
+  const { pipeline, reranker } = setup({ rewrite: { queries: ["Jane Doe employers"], scope: "cv" } });
+
+  const result = await pipeline.run(request());
+
+  expect(reranker.calls[0]?.query).toBe("employers");
+  const stage = result.trace.stages.find((entry) => entry.name === "rerank");
+  expect(stage?.input).toEqual({ query: "employers", candidates: 3, topN: 5 });
+  expect(outputOf<RerankStageOutput>(result, "rerank").ignoredName).toBe("Jane Doe");
+});
+
+test("the reranker gets index texts without the subject's name, and the sources keep it", async () => {
+  const { pipeline, reranker } = setup();
+
+  // "Acme" stands in for the name so a fixture chunk contains it.
+  const result = await pipeline.run(request({ dropBelowMeanRerank: false }, { subjectName: "Acme" }));
+
+  const texts = new Map(reranker.calls[0]?.candidates.map((candidate) => [candidate.chunkId, candidate.text]));
+  expect(texts.get("c1")).toBe("context\n\ntext");
+  expect(texts.get("c2")).toBe(CHUNKS[1]?.indexText);
+  expect(result.trace.sources.find((source) => source.chunkId === "c1")?.text).toBe("Acme text");
+});
+
+test("with ignoreSubjectInRerank off, the reranker gets the full query and texts", async () => {
+  const { pipeline, reranker } = setup({ rewrite: { queries: ["Jane Doe employers"], scope: "cv" } });
+
+  const result = await pipeline.run(request({ ignoreSubjectInRerank: false }));
+  const acme = setup();
+  await acme.pipeline.run(request({ ignoreSubjectInRerank: false }, { subjectName: "Acme" }));
+
+  expect(reranker.calls[0]?.query).toBe("Jane Doe employers");
+  expect(outputOf<RerankStageOutput>(result, "rerank")).not.toHaveProperty("ignoredName");
+  expect(acme.reranker.calls[0]?.candidates.find((candidate) => candidate.chunkId === "c1")?.text).toBe(
+    CHUNKS[0]?.indexText,
+  );
 });
 
 test("the fused list is cut to fusedLimit before reranking", async () => {
@@ -368,7 +434,7 @@ test("vector-only fuses its single list without changing the order", async () =>
 test("the filter drops reranked hits below minRerankScore and records them", async () => {
   const { pipeline } = setup();
 
-  const result = await pipeline.run(request({ minRerankScore: 0.75 }));
+  const result = await pipeline.run(request({ minRerankScore: 0.75, dropBelowMeanRerank: false }));
 
   expect(result.chunks.map((entry) => [entry.sourceId, entry.id])).toEqual([
     ["S1", "c5"],
@@ -381,6 +447,51 @@ test("the filter drops reranked hits below minRerankScore and records them", asy
     ["c1", 3],
     ["c3", 4],
   ]);
+});
+
+test("by default the filter also drops reranked hits below their mean and records the mean", async () => {
+  const { pipeline } = setup();
+
+  // The reranker scores the four candidates 0.9, 0.8, 0.7, 0.6: mean 0.75.
+  const result = await pipeline.run(request());
+
+  expect(result.chunks.map((entry) => entry.rerankScore)).toEqual([0.9, 0.8]);
+  const filter = outputOf<FilterStageOutput>(result, "filter");
+  expect(filter.meanRerankScore).toBeCloseTo(0.75, 12);
+  expect(filter.dropped.map((hit) => hit.score)).toEqual([0.7, 0.6]);
+  const stage = result.trace.stages.find((entry) => entry.name === "filter");
+  expect(stage?.input).toEqual({ minRerankScore: 0, dropBelowMean: true, hits: 4 });
+});
+
+test("a hit must pass both the mean and minRerankScore", async () => {
+  const { pipeline } = setup();
+
+  const result = await pipeline.run(request({ minRerankScore: 0.85 }));
+
+  expect(result.chunks.map((entry) => entry.rerankScore)).toEqual([0.9]);
+  expect(outputOf<FilterStageOutput>(result, "filter").dropped.length).toBe(3);
+});
+
+test("equal rerank scores are all kept by the mean cut", async () => {
+  const reranker = new FakeReranker({
+    hits: ["c1", "c2", "c3"].map((chunkId) => ({ chunkId, score: 0.1 })),
+  });
+  const { pipeline } = setup({ reranker });
+
+  const result = await pipeline.run(request());
+
+  // 0.1 * 3 / 3 is 0.10000000000000002 in floats, just above every score.
+  expect(result.chunks.map((entry) => entry.id)).toEqual(["c1", "c2", "c3"]);
+  expect(outputOf<FilterStageOutput>(result, "filter").dropped).toEqual([]);
+});
+
+test("with dropBelowMeanRerank off, the filter keeps every hit and records no mean", async () => {
+  const { pipeline } = setup();
+
+  const result = await pipeline.run(request({ dropBelowMeanRerank: false }));
+
+  expect(result.chunks.length).toBe(4);
+  expect(outputOf<FilterStageOutput>(result, "filter")).not.toHaveProperty("meanRerankScore");
 });
 
 test("a reranker fallback keeps the fused order, has no rerank scores and skips the filter", async () => {

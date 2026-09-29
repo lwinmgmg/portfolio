@@ -60,6 +60,50 @@ test("known stages are parsed into typed details with their timing", () => {
   expect(view.id).toBe("trace-1");
 });
 
+test("a lexical search keeps the name it ignored, and older traces without it still parse", () => {
+  const view = readTrace(
+    traceWith([
+      stage("lexical-search", {}, { lists: [], ignoredTermsOf: "Jane Doe" }),
+      stage("lexical-search", {}, { lists: [] }),
+    ]),
+  );
+
+  expect(view.stages.map((entry) => entry.detail)).toEqual([
+    { kind: "search", output: { lists: [], ignoredTermsOf: "Jane Doe" } },
+    { kind: "search", output: { lists: [] } },
+  ]);
+});
+
+test("a rerank keeps the name it removed, and older traces without it still parse", () => {
+  const output = { fallback: false, error: null, hits: [] };
+  const view = readTrace(
+    traceWith([
+      stage("rerank", {}, { ...output, ignoredName: "Jane Doe" }),
+      stage("rerank", {}, output),
+    ]),
+  );
+
+  expect(view.stages.map((entry) => entry.detail)).toEqual([
+    { kind: "rerank", output: { ...output, ignoredName: "Jane Doe" } },
+    { kind: "rerank", output },
+  ]);
+});
+
+test("a filter keeps its mean, and older traces without it still parse", () => {
+  const output = { minRerankScore: 0, kept: 1, dropped: [] };
+  const view = readTrace(
+    traceWith([
+      stage("filter", {}, { ...output, meanRerankScore: 0.27 }),
+      stage("filter", {}, output),
+    ]),
+  );
+
+  expect(view.stages.map((entry) => entry.detail)).toEqual([
+    { kind: "filter", output: { ...output, meanRerankScore: 0.27 } },
+    { kind: "filter", output },
+  ]);
+});
+
 test("a failed, unknown or reshaped stage falls back to raw JSON", () => {
   const view = readTrace(
     traceWith([

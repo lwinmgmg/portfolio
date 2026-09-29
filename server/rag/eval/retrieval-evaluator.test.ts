@@ -173,6 +173,30 @@ test("reports golden keys each index does not contain", async () => {
   ]);
 });
 
+test("the chat preset runs the saved chat config and is reported as chat", async () => {
+  const runner = new FakeRetrievalRunner(ANSWERS);
+  const chatConfig = { ...RETRIEVAL_PRESETS["hybrid-rerank"], minRerankScore: 0.2 };
+
+  const report = await new RetrievalEvaluator({ runner, now }).evaluate(
+    input({ presets: ["hybrid-rerank", "chat"], chatConfig }),
+  );
+
+  expect(report.runs.map((run) => [run.preset, run.config])).toEqual([
+    ["hybrid-rerank", RETRIEVAL_PRESETS["hybrid-rerank"]],
+    ["chat", chatConfig],
+  ]);
+  expect(runner.requests.at(-1)?.config).toEqual(chatConfig);
+});
+
+test("the chat preset without a chat config fails before any question runs", async () => {
+  const runner = new FakeRetrievalRunner(ANSWERS);
+
+  await expect(
+    new RetrievalEvaluator({ runner }).evaluate(input({ presets: ["hybrid", "chat"] })),
+  ).rejects.toBeInstanceOf(RangeError);
+  expect(runner.requests).toEqual([]);
+});
+
 test("needs questions and valid cutoffs", async () => {
   const evaluator = new RetrievalEvaluator({ runner: new FakeRetrievalRunner(ANSWERS) });
   await expect(evaluator.evaluate(input({ items: [] }))).rejects.toBeInstanceOf(RangeError);

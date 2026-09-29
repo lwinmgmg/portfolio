@@ -2,10 +2,11 @@ import { parseArgs } from "node:util";
 
 import { RECIPROCAL_RANK_DEPTH } from "@/server/rag/eval/metrics";
 import {
-  isRetrievalPresetName,
-  RETRIEVAL_PRESET_NAMES,
-  type RetrievalPresetName,
-} from "@/server/rag/pipeline/retrieval-config";
+  CHAT_PRESET,
+  isEvalPresetName,
+  type EvalPresetName,
+} from "@/server/rag/eval/retrieval-evaluator";
+import { RETRIEVAL_PRESET_NAMES } from "@/server/rag/pipeline/retrieval-config";
 
 export const ACTIVE_INDEX = "active";
 export const DEFAULT_GOLDEN_PATH = "evals/cv-retrieval.golden.json";
@@ -14,7 +15,7 @@ export const DEFAULT_CUTOFFS: readonly number[] = [1, 3, 5];
 export type EvalArgs = {
   // Index ids, or ACTIVE_INDEX. Distinct, in the order given.
   indexes: string[];
-  presets: RetrievalPresetName[];
+  presets: EvalPresetName[];
   // Distinct and ascending.
   ks: number[];
   tags: string[];
@@ -25,8 +26,9 @@ export type EvalArgs = {
 export const EVAL_USAGE = `Usage: bun run eval:rag -- [options]
 
   --index <id|active>[,...]   Indexes to compare (default: active). Repeatable.
-  --presets <name>[,...]      Retrieval presets (default: all).
-                              ${RETRIEVAL_PRESET_NAMES.join(", ")}
+  --presets <name>[,...]      Retrieval presets (default: all but ${CHAT_PRESET}).
+                              ${RETRIEVAL_PRESET_NAMES.join(", ")},
+                              ${CHAT_PRESET} (the config saved with "Use for chat")
   --k <n>[,...]               Cutoffs for hit@k and recall@k, 1..${RECIPROCAL_RANK_DEPTH} (default: ${DEFAULT_CUTOFFS.join(",")}).
   --tag <tag>[,...]           Only questions with any of these tags. Repeatable.
   --golden <path>             Golden file (default: ${DEFAULT_GOLDEN_PATH}).
@@ -79,9 +81,9 @@ export function parseEvalArgs(argv: readonly string[]): EvalArgs {
   const values = readFlags(argv[0] === "--" ? argv.slice(1) : [...argv]);
 
   const presetNames = list(values.presets);
-  const presets: RetrievalPresetName[] = [];
+  const presets: EvalPresetName[] = [];
   for (const name of presetNames) {
-    if (!isRetrievalPresetName(name)) throw new EvalArgsError(`Unknown preset "${name}".`);
+    if (!isEvalPresetName(name)) throw new EvalArgsError(`Unknown preset "${name}".`);
     presets.push(name);
   }
 

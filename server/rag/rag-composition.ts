@@ -8,11 +8,13 @@ import type {
   QueryRewriter,
   RagChunkRepository,
   RagIndexRepository,
+  RagSettingsRepository,
   RagTraceRepository,
   Reranker,
   RetrievalRunner,
   Retriever,
 } from "@/server/domain/rag";
+import { AdaptiveChatClient } from "@/server/llm/adaptive-chat-client";
 import type { LlmEnv } from "@/server/llm/llm-env";
 import { StructuredCvChunker } from "@/server/rag/chunking/structured-cv-chunker";
 import { TokenWindowChunker } from "@/server/rag/chunking/token-window-chunker";
@@ -29,6 +31,7 @@ import {
   type SearchIndexCache,
 } from "@/server/rag/search/in-memory-retriever";
 import { RagIndexService, type TransactionRunner } from "@/server/services/rag-index-service";
+import { RagSettingsService } from "@/server/services/rag-settings-service";
 import { RetrievalPlaygroundService } from "@/server/services/retrieval-playground-service";
 
 // Everything with I/O is passed in, so this module stays free of `server-only` and `next/*`
@@ -39,6 +42,7 @@ export type RagDependencies = {
   indexes: RagIndexRepository;
   chunks: RagChunkRepository;
   traces: Pick<RagTraceRepository, "save">;
+  settings: RagSettingsRepository;
   transaction: TransactionRunner;
   now?: () => Date;
   // Loaded search indexes. Defaults to the process-wide cache.
@@ -56,11 +60,15 @@ export type Rag = {
   reranker: Reranker;
   pipeline: RetrievalRunner;
   playground: RetrievalPlaygroundService;
+  settings: RagSettingsService;
 };
 
 // Composition root for the RAG components.
 export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
   const now = deps.now ?? (() => new Date());
+  // The contextualizer and rewriter run on whatever LLM_UTILITY_MODEL is set to, so they adapt
+  // to what its endpoints accept.
+  const utilityChat = new AdaptiveChatClient(deps.llm);
   const corpus = new CvCorpusSource(deps.cvVersions);
   const chunkers: Record<ChunkerKind, Chunker> = {
     structured: new StructuredCvChunker(),
@@ -70,7 +78,7 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     corpus,
     chunkers,
     contextualizers: (chat, model) => new LlmContextualizer(chat, model),
-    chat: deps.llm,
+    chat: utilityChat,
     embeddings: deps.llm,
     indexes: deps.indexes,
     chunks: deps.chunks,
@@ -88,7 +96,7 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
   const retriever = new InMemoryRetriever(deps.chunks, {
     cache: deps.searchCache ?? sharedSearchIndexCache(),
   });
-  const queryRewriter = new LlmQueryRewriter(deps.llm, env.LLM_UTILITY_MODEL);
+  const queryRewriter = new LlmQueryRewriter(utilityChat, env.LLM_UTILITY_MODEL);
   const reranker = new ApiReranker(deps.llm, env.RERANK_MODEL);
   const pipeline = new RetrievalPipeline({
     indexes: deps.indexes,
@@ -99,6 +107,7 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     now,
   });
   const playground = new RetrievalPlaygroundService(pipeline, deps.traces, deps.cvVersions);
+  const settings = new RagSettingsService(deps.settings, now);
   return {
     corpus,
     chunkers,
@@ -110,5 +119,6 @@ export function createRag(env: LlmEnv, deps: RagDependencies): Rag {
     reranker,
     pipeline,
     playground,
+    settings,
   };
 }

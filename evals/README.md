@@ -9,10 +9,31 @@ and compares presets and indexes.
 bun run eval:rag -- --index active --presets vector-only,lexical-only,hybrid,hybrid-rerank,full
 ```
 
+To check a tuned chat config against a fixed preset:
+
+```sh
+bun run eval:rag -- --presets hybrid-rerank,chat
+```
+
+Every fixed preset leaves the CV owner's name out of BM25 queries ("Ignore name in BM25") and out
+of the reranker's query and chunk texts ("Ignore name in rerank"). To measure what one of them
+changes, save the same config as `hybrid-rerank-rewrite` with that box unticked ("Use for chat" in
+the playground), then compare:
+
+```sh
+bun run eval:rag -- --presets hybrid-rerank-rewrite,chat
+```
+
+Every fixed preset also drops reranked chunks scoring below the mean of their question's rerank
+scores ("Drop below mean rerank"), which lowers recall@k by design; compare it the same way.
+Untick one box at a time, so the difference has one cause. Presets without rewriting only see the
+name in the query when a golden question names the owner; the rerank toggle still strips it from
+chunk contexts.
+
 | Option | Default | Meaning |
 |---|---|---|
 | `--index <id\|active>[,...]` | `active` | Indexes to compare, e.g. a structured contextual index against a token-window plain one. Repeatable. Each must be `ready`. |
-| `--presets <name>[,...]` | all | `vector-only`, `lexical-only`, `hybrid`, `hybrid-rerank`, `hybrid-rerank-rewrite`, `full`. |
+| `--presets <name>[,...]` | all but `chat` | `vector-only`, `lexical-only`, `hybrid`, `hybrid-rerank`, `hybrid-rerank-rewrite`, `full`, and `chat`: the config saved with "Use for chat" in the playground (the defaults when none is saved). |
 | `--k <n>[,...]` | `1,3,5` | Cutoffs for hit@k and recall@k, 1 to 10. |
 | `--tag <tag>[,...]` | none | Only questions with any of these tags. Repeatable. |
 | `--golden <path>` | `evals/cv-retrieval.golden.json` | Golden file. |
@@ -52,8 +73,9 @@ A JSON array. Every item:
 
 ## Metrics
 
-Computed over each preset's final chunks (`finalK`, 5 in every preset), so a relevant chunk below
-that counts as missed.
+Computed over each preset's final chunks (`finalK`, 5 in every fixed preset; `chat` uses its own),
+so a relevant chunk below that counts as missed. With `chat`, chunks dropped by `minRerankScore` also
+count as missed.
 
 - hit@k: 1 when a relevant chunk is in the top k.
 - recall@k: share of the relevant keys that the top k chunks carry.

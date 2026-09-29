@@ -61,6 +61,16 @@ test("lexical search runs BM25 over the chunks' indexText", async () => {
   ]);
 });
 
+test("lexical search passes the ignored terms to BM25", async () => {
+  const retriever = new InMemoryRetriever(await seeded());
+
+  const hits = await retriever.searchLexical("idx-1", "python services", 5, {
+    ignoreTermsOf: "Python",
+  });
+
+  expect(hits.map((hit) => hit.chunkId)).toEqual(["idx-1:2", "idx-1:0"]);
+});
+
 test("vector search ranks the chunks by cosine similarity", async () => {
   const retriever = new InMemoryRetriever(await seeded());
 

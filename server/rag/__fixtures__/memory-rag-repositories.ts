@@ -9,6 +9,8 @@ import {
   type RagIndex,
   type RagIndexRepository,
   type RagIndexStats,
+  type RagSettingsRepository,
+  type RetrievalConfig,
 } from "@/server/domain/rag";
 
 // In-memory repositories with the same state rules as the Mongo ones. `events` records calls.
@@ -124,6 +126,24 @@ export class MemoryRagChunks implements RagChunkRepository {
     const before = this.rows.length;
     this.rows = this.rows.filter((chunk) => chunk.indexId !== indexId);
     return Promise.resolve(before - this.rows.length);
+  }
+}
+
+export class MemoryRagSettings implements RagSettingsRepository {
+  // The chat config as stored: anything, since a stored config may predate the schema.
+  chat: { config: unknown; updatedAt: string } | null = null;
+
+  ensureReady(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  findChatConfig(): Promise<{ config: unknown; updatedAt: string } | null> {
+    return Promise.resolve(this.chat ? structuredClone(this.chat) : null);
+  }
+
+  saveChatConfig(config: RetrievalConfig, updatedAt: string): Promise<void> {
+    this.chat = { config: { ...config }, updatedAt };
+    return Promise.resolve();
   }
 }
 

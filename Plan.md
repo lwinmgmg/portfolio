@@ -910,6 +910,8 @@ QUERY (per chat turn)
 
 ## Phase 2.10a: Chat retrieval settings
 
+**Status:** Built, not Done. The done-when checks need an admin session in a browser, a live chat turn and a paid eval run; none was run.
+
 The playground can already run with any `RetrievalConfig`, including `finalK` (how many chunks become
 sources) and `minRerankScore` (the threshold), but the chat always uses `DEFAULT_RETRIEVAL_CONFIG`.
 This sub-phase lets the admin tune the config in the playground, save it as the chat's config, and
@@ -951,10 +953,131 @@ have every later chat turn use it. No code change or redeploy is needed to chang
    - Under `minRerankScore`, keep the existing hint and add one line: "Chunks scoring below this are dropped. If none pass, the chat says it has no information." The filter panel already lists what was dropped at the chosen threshold, which is how the admin picks a value.
 7. Eval: `--presets` also accepts `chat`, which runs the saved chat config (read through `rag-composition`). The report shows it as a row named `chat`. Update `evals/README.md`.
 
+**As built**
+- Storage: `rag_settings` holds `{ _id: "chat", retrieval, updatedAt }`, upserted. `retrieval` is kept raw. `RagSettingsService` parses it with `RetrievalConfigSchema` on every read. A field added to the schema later gets its default. A document that fails the strict parse (a removed or out-of-range field) gives the defaults with `updatedAt: null`, plus a `console.warn`.
+- Errors: an invalid save throws `InvalidRetrievalConfigError` (a `RagError`). Its message comes from `retrievalConfigErrorMessage` (in `retrieval-config.ts`), for example "Min rerank score: Too big: …". The playground's form parser now uses the same helper.
+- Wiring: `RagDependencies.settings` is required, and `Rag.settings` is the service. `rag-runtime` exposes `getChatRetrievalSettings()` (cached per request) and `saveChatRetrievalConfig()`. `scripts/rag-eval.ts` passes a `MongoRagSettingsRepository`.
+- Chat: `ChatService` reads `retrievalConfig()` once per turn, after the availability checks and before the conversation is created.
+  - The fixed reply applies to any `cv`-scope retrieval with no chunks, not only to a threshold drop. Small talk still calls the model.
+  - The reply is `noInformationReply` in `answer-prompt.ts`. It is stored and traced like the off-topic reply, and has no `generate` stage.
+- Playground:
+  - A "Chat uses" card lists every field and the save time (`chat-config-summary.tsx`, rows from `configRows`). It shows "Defaults (never saved)" when `updatedAt` is null, which also covers a stale document.
+  - "Chat config" is the first preset option, so a chat config equal to a named preset still shows as "Chat config". The form opens with it.
+  - "Use for chat" is a second submit button in the same form (`formAction`, `formNoValidate`), so an empty question does not block it. The server validates the config. It asks for confirmation with `window.confirm`.
+- Eval:
+  - `chat` is an `EvalPresetName` (`CHAT_PRESET` in `retrieval-evaluator.ts`). The default preset list still leaves it out.
+  - The script reads the chat config only when `chat` is asked for; with nothing saved, that is the defaults.
+  - The evaluator throws `RangeError` before any question when `chat` has no config.
+
 **Done when**
 - In the playground, the admin raises `minRerankScore`, sees the weak chunks move to the filter panel's dropped list, clicks "Use for chat", and the next chat turn's trace shows the new `config` and only the chunks that passed.
 - A question whose chunks all fall below the threshold gets the fixed "no information" reply and its trace has no `generate` stage.
 - `bun run eval:rag -- --presets hybrid-rerank,chat` prints both rows.
+
+## Phase 2.10b: Subject name out of BM25
+
+**Status:** Built, not Done. The done-when checks need an admin session in a browser and a paid eval run; neither was run.
+
+The rewriter resolves "you" into the subject's name ("What have you built recently?" → "What has
+Lwin Maung Maung built recently?"). BM25 does not know that the whole corpus is about that person.
+The name's terms are then half the query and pull up the chunks that happen to contain the name
+(the profile chunk, and chunks whose context mentions it) instead of the chunks that answer the
+question. This sub-phase leaves the subject's name out of BM25 queries. The vector search, the
+reranker and the trace keep the full rewritten query (Phase 2.10c later takes it out of the
+reranker too).
+
+**Files:** `server/domain/rag.ts`, `server/rag/search/bm25-index.ts`, `server/rag/search/in-memory-retriever.ts`, `server/rag/pipeline/retrieval-config-fields.ts`, `server/rag/pipeline/retrieval-config.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/pipeline/trace-stages.ts`, `app/admin/(panel)/rag/_components/trace-stage-panel.tsx`, `app/admin/(panel)/rag/playground/*`, `evals/README.md`, tests.
+
+**Fixed decisions**
+- The name comes from the published CV (`profile.fullName`), which every caller already passes as `subjectName`. No name is written into code or into `ENGLISH_STOPWORDS`.
+- Terms are removed after analysis: the name goes through the same `TextAnalyzer` as the query, so case, possessives ("Lwin's") and stemming match.
+- Only the query side changes. The index, its chunks and its BM25 statistics stay as built, so no index is rebuilt.
+- It is a `RetrievalConfig` toggle, on by default, so the playground and the eval can compare both.
+
+**Steps**
+1. Domain: `LexicalSearchOptions = { ignoreTermsOf?: string }`. `Retriever.searchLexical(indexId, query, k, options?)`.
+2. `Bm25Index.search(query, k, options?)` drops every query term that is also a term of `ignoreTermsOf`. A query left with no terms returns `[]`. `InMemoryRetriever.searchLexical` passes the options through.
+3. Config: `ignoreSubjectInLexical: boolean`, default `true`, label "Ignore name in BM25". The presets inherit the default. A saved chat config without the field parses with the default.
+4. Pipeline: the `lexical-search` stage passes `ignoreTermsOf: subjectName` when the toggle is on. Its output records `ignoredTermsOf` (optional in `SearchStageOutputSchema`, so older traces still parse). The public chat steps do not expose it.
+5. Trace view: the lexical panel says whose terms were left out.
+6. Playground: a checkbox for the field, with a hint, and a row in the "Chat uses" card.
+7. `evals/README.md`: how to compare on and off (save the chat config with the toggle off and run `--presets <preset>,chat`).
+8. Tests: BM25 scores with ignored terms (hand-computed), a query of only ignored terms, retriever pass-through, pipeline on and off, config default and a stored config without the field, form parsing, config rows, trace reader with and without the field.
+
+**As built**
+- `ignoredTermsOf` is written only when the toggle is on and only on `lexical-search`. The stage input is unchanged.
+- The playground's two checkboxes share a `CheckboxField` component; the new one shows its hint under the label.
+- The public chat steps build their search detail field by field, so `ignoredTermsOf` never reaches them. `chat-steps.test.ts` checks the key is absent.
+
+**Done when**
+- In the playground, "What have you built recently?" with `standalone` rewrite shows a lexical panel whose hits no longer lead with the profile chunk only because of the name, and turning the toggle off restores the old ranking.
+- `bun run eval:rag -- --presets hybrid-rerank-rewrite,chat` (chat config saved with the toggle off) prints both rows.
+
+## Phase 2.10c: Subject name out of the reranker
+
+**Status:** Built, not Done. The done-when checks need an admin session in a browser and a paid eval run; neither was run.
+
+The owner saw the same bias in the reranker. For "What is Lwin Maung Maung's role at Clinics
+Medical Group?" a certification chunk ranked third. The rerank query carries the name, and the
+context prompt asks the contextualizer to mention the person's name "when relevant", so some
+candidates' `indexText` has the name and others do not. The cross-encoder rewards that overlap even
+though every chunk is about the same person. This sub-phase removes the subject's name from the
+rerank query and from every candidate text before the rerank call.
+
+**Files:** `server/domain/rag.ts`, `server/rag/rerank/without-name.ts`, `server/rag/pipeline/retrieval-config-fields.ts`, `server/rag/pipeline/retrieval-config.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/pipeline/trace-stages.ts`, `app/admin/(panel)/rag/_components/trace-stage-panel.tsx`, `app/admin/(panel)/rag/playground/*`, `evals/README.md`, tests.
+
+**Fixed decisions**
+- The name is the request's `subjectName`, as in 2.10b. Nothing is hard-coded.
+- The reranker reads raw text, so the name is removed as a phrase, not term by term: its words in order, case-insensitive, any whitespace between them, with an optional possessive (`'s`, `’s`, `'`). Single words of the name ("Lwin's") stay, so a first name that is also a common word ("Will") is never cut out of a sentence.
+- The spaces left behind are tidied: runs of spaces become one, no space before punctuation, lines are trimmed. Newlines stay.
+- A text that would be empty keeps its original, so the reranker never gets an empty query or document.
+- Only what is sent to the reranker changes. Chunks, the index, the answer sources and the other stages keep the name. No index rebuild.
+- It is a `RetrievalConfig` toggle, on by default, so the playground and the eval can compare both.
+
+**Steps**
+1. `withoutName(text, name)` in `server/rag/rerank/without-name.ts`, pure.
+2. Config: `ignoreSubjectInRerank: boolean`, default `true`, label "Ignore name in rerank". The presets inherit the default. A saved chat config without the field parses with the default.
+3. Pipeline: when the toggle is on, the `rerank` stage sends `withoutName(query, subjectName)` and `withoutName(indexText, subjectName)` per candidate. The stage input's `query` is the query sent. The output records `ignoredName` (optional in `RerankStageOutputSchema`, so older traces still parse). The public chat steps do not expose it.
+4. Trace view: the rerank panel says the name was removed.
+5. Playground: a checkbox for the field, with a hint, and a row in the "Chat uses" card.
+6. `evals/README.md`: the toggle is on in every fixed preset; compare with the `chat` preset as in 2.10b.
+7. Tests: the name removal (case, possessives, whitespace, punctuation, newlines, regex characters in the name, an empty name, a text of only the name), pipeline on and off, config default and a stored config without the field, form parsing, config rows, trace reader with the field, chat steps without it.
+
+**Done when**
+- In the playground, "What is Lwin Maung Maung's role at Clinics Medical Group?" shows a rerank panel whose query has no name, and turning the toggle off restores the old scores.
+- `bun run eval:rag -- --presets hybrid-rerank-rewrite,chat` (chat config saved with the toggle off) prints both rows.
+
+## Phase 2.10d: Drop reranked hits below the mean
+
+**Status:** Built, not Done. The done-when checks need an admin session in a browser and a paid eval run; neither was run.
+
+The owner asked for a cut relative to the scores of the turn, not a fixed floor. Scores move a lot
+between queries and settings (after 2.10c the top score for the same question fell from 0.93 to
+0.56), so no single `minRerankScore` fits every question. The `filter` stage also drops every
+reranked hit whose score is below the mean of that turn's reranked scores.
+
+**Files:** `server/domain/rag.ts`, `server/rag/pipeline/retrieval-config-fields.ts`, `server/rag/pipeline/retrieval-config.ts`, `server/rag/pipeline/retrieval-pipeline.ts`, `server/rag/pipeline/trace-stages.ts`, `app/admin/(panel)/rag/_components/trace-stage-panel.tsx`, `app/admin/(panel)/rag/playground/*`, `evals/README.md`, tests.
+
+**Fixed decisions**
+- The mean is taken over the reranked hits the reranker returned (at most `finalK`), before any hit is dropped.
+- A hit is dropped when its score is below the mean by more than 1e-9, so equal scores (whose float mean can land a hair above them) are all kept. The top hit is never below the mean, so this cut alone never empties the list.
+- It combines with `minRerankScore`: a hit must pass both.
+- Like the floor, it runs only when rerank ran without falling back (fallback scores are 1 / rank).
+- It is a `RetrievalConfig` toggle, `dropBelowMeanRerank`, on by default, label "Drop below mean rerank". The presets inherit it. A saved chat config without the field parses with the default.
+
+**Known trade-off (owner informed):** with 5 hits the mean always drops the weaker part of the list, so a second relevant chunk can go. In the owner's example (0.5553, 0.2820, 0.2259, 0.1674, 0.1340; mean 0.2729) the cut keeps "Key Skills" and drops the second Clinics Medical Group chunk. The toggle exists to compare.
+
+**Steps**
+1. Config field, label and schema default.
+2. Pipeline `filter` stage: input gains `dropBelowMean`; output gains `meanRerankScore` when the toggle is on (optional in `FilterStageOutputSchema`, so older traces still parse). The public chat steps do not expose it.
+3. Trace view: the filter panel shows the mean next to the minimum.
+4. Playground: a checkbox for the field, with a hint, and a row in the "Chat uses" card.
+5. `evals/README.md`: the toggle is on in every fixed preset.
+6. Tests: pipeline on and off, equal scores all kept, combined with `minRerankScore`, fallback untouched; config default and a stored config without the field; form parsing; config rows; trace reader with the field.
+
+**Done when**
+- In the playground, the filter panel shows the mean and lists the hits dropped below it, and turning the toggle off keeps them.
+- `bun run eval:rag -- --presets hybrid-rerank-rewrite,chat` (chat config saved with the toggle off) prints both rows.
 
 ## Phase 2.11: Trace history and feedback
 

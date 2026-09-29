@@ -1,6 +1,7 @@
 import type {
   Chunk,
   EmbeddedChunk,
+  LexicalSearchOptions,
   RagChunkRepository,
   RankedHit,
   Retriever,
@@ -77,8 +78,13 @@ export class InMemoryRetriever implements Retriever {
     return loading;
   }
 
-  async searchLexical(indexId: string, query: string, k: number): Promise<RankedHit[]> {
-    return (await this.load(indexId)).lexical.search(query, k);
+  async searchLexical(
+    indexId: string,
+    query: string,
+    k: number,
+    options?: LexicalSearchOptions,
+  ): Promise<RankedHit[]> {
+    return (await this.load(indexId)).lexical.search(query, k, options);
   }
 
   async searchVector(indexId: string, vector: readonly number[], k: number): Promise<RankedHit[]> {

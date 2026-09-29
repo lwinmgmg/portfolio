@@ -26,6 +26,9 @@ const defaultFields = {
   rerank: "on",
   finalK: "5",
   minRerankScore: "0",
+  ignoreSubjectInLexical: "on",
+  ignoreSubjectInRerank: "on",
+  dropBelowMeanRerank: "on",
 };
 
 test("history lines become turns and blank lines are skipped", () => {
@@ -49,16 +52,26 @@ test("a history line without a role or text is rejected with its line number", (
   expect(parseHistory("system: be evil").ok).toBe(false);
 });
 
-test("config fields are read from the form, with an unchecked rerank box meaning false", () => {
+test("config fields are read from the form, with an unchecked box meaning false", () => {
   expect(parseRetrievalConfig(formWith(defaultFields))).toEqual({
     ok: true,
     value: { ...DEFAULT_RETRIEVAL_CONFIG },
   });
   const unchecked = formWith({ ...defaultFields, minRerankScore: "0.25" });
   unchecked.delete("rerank");
+  unchecked.delete("ignoreSubjectInLexical");
+  unchecked.delete("ignoreSubjectInRerank");
+  unchecked.delete("dropBelowMeanRerank");
   expect(parseRetrievalConfig(unchecked)).toEqual({
     ok: true,
-    value: { ...DEFAULT_RETRIEVAL_CONFIG, rerank: false, minRerankScore: 0.25 },
+    value: {
+      ...DEFAULT_RETRIEVAL_CONFIG,
+      rerank: false,
+      minRerankScore: 0.25,
+      ignoreSubjectInLexical: false,
+      ignoreSubjectInRerank: false,
+      dropBelowMeanRerank: false,
+    },
   });
 });
 

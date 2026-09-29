@@ -55,6 +55,9 @@ export const SearchStageOutputSchema = z.object({
   lists: z.array(
     z.object({ name: z.string(), query: z.string(), hits: z.array(TracedHitSchema) }),
   ),
+  // Lexical only: BM25 dropped the query terms of this text (the subject's name). Absent in
+  // traces written before Phase 2.10b.
+  ignoredTermsOf: z.string().optional(),
 });
 
 export const FuseStageOutputSchema = z.object({
@@ -73,10 +76,16 @@ export const RerankStageOutputSchema = z.object({
   error: z.string().nullable(),
   // `rank` is the reranked rank, `score` the rerank score.
   hits: z.array(TracedHitSchema.extend({ fusedRank: z.number() })),
+  // This name (the subject's) was removed from the query and every candidate text. Absent when
+  // the toggle is off and in traces written before Phase 2.10c.
+  ignoredName: z.string().optional(),
 });
 
 export const FilterStageOutputSchema = z.object({
   minRerankScore: z.number(),
+  // The mean of the reranked scores; hits below it were dropped too. Absent when the toggle is
+  // off and in traces written before Phase 2.10d.
+  meanRerankScore: z.number().optional(),
   kept: z.number(),
   dropped: z.array(TracedHitSchema),
 });

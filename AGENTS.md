@@ -68,7 +68,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
         [versionId]/          Draft editor (cv-form.ts is the pure form mapper).
       rag/                    Build, activate, delete indexes.
         [indexId]/            Index detail with chunks.
-        playground/           Retrieval playground: run the pipeline with any config and index, see its trace.
+        playground/           Retrieval playground: run the pipeline with any config and index, see its trace; "Use for chat" saves the config.
         _components/          Shared trace view (summary, timing bars, stage panels, final sources).
   api/
     admin/cv/upload/          Vercel Blob client-upload token and callback.
@@ -85,11 +85,12 @@ client/                       Browser-side data access.
 server/                       All server logic. Layered: domain -> repositories/services -> runtime.
   domain/                     Types and interfaces only, no I/O: auth, blob-store, chat, cv, llm, public-session, rag.
   db/                         Mongo client singleton (getDb) and runTransaction / TransactionContext.
-  repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace, conversation.
+  repositories/               Mongo classes extending MongoRepository: cv-version, public-session, rag-index, rag-chunk, rag-trace, rag-settings, conversation.
   services/                   Business logic with injected dependencies.
     auth-service.ts           requireAdmin, withAdmin (server-action wrapper).
     cv-service.ts             Upload registration, extraction, edit, publish.
     rag-index-service.ts      RAG index lifecycle.
+    rag-settings-service.ts   The chat's saved retrieval config (parsed on read, defaults on a stale one).
     retrieval-playground-service.ts  Admin playground runs: subject name, pipeline, trace saving.
     public-session-service.ts Public session issue and lookup.
     chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, streamed answer, stored turn and trace.
@@ -97,7 +98,7 @@ server/                       All server logic. Layered: domain -> repositories/
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.
   http/                       Route-handler helpers: withPublicSession, publicJson, ndjsonStream, session cookie/key, limiter, client IP, download headers.
   storage/                    VercelBlobStore implements the BlobStore interface.
-  llm/                        OpenRouter client (chat, embeddings, rerank), SSE parser, usage meter, llm-env, PDF-to-Markdown, llm-runtime (getLlm).
+  llm/                        OpenRouter client (chat, embeddings, rerank), SSE parser, usage meter, adaptive chat client (drops options an endpoint refuses), llm-env, PDF-to-Markdown, llm-runtime (getLlm).
   cv/                         CV zod schema, ids, markdown rendering, LLM extractor and prompt, issues, legacy migration, download.
   rag/                        Contextual RAG pipeline. Pure; I/O is injected.
     corpus/                   CvCorpusSource: published CV as the corpus.

@@ -23,9 +23,11 @@ let chat: ChatService | null = null;
 function getChat(): ChatService {
   if (chat) return chat;
   const { client, env } = getLlm();
+  const rag = getRag();
   chat = new ChatService({
     conversations,
-    pipeline: getRag().pipeline,
+    pipeline: rag.pipeline,
+    retrievalConfig: async () => (await rag.settings.chatSettings()).config,
     indexes,
     cvVersions,
     traces,

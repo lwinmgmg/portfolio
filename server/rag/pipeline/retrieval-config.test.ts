@@ -18,6 +18,9 @@ test("an empty config parses to the documented defaults", () => {
     rerank: true,
     finalK: 5,
     minRerankScore: 0,
+    ignoreSubjectInLexical: true,
+    ignoreSubjectInRerank: true,
+    dropBelowMeanRerank: true,
   };
   expect(RetrievalConfigSchema.parse({})).toEqual(expected);
   expect(DEFAULT_RETRIEVAL_CONFIG).toEqual(expected);
@@ -55,6 +58,37 @@ test("minRerankScore accepts 0..1", () => {
   expect(RetrievalConfigSchema.safeParse({ minRerankScore: 1.01 }).success).toBe(false);
 });
 
+test("ignoreSubjectInLexical is on unless a stored config turns it off", () => {
+  // A config saved before the field existed.
+  const saved: Record<string, unknown> = { ...DEFAULT_RETRIEVAL_CONFIG };
+  delete saved.ignoreSubjectInLexical;
+  expect(RetrievalConfigSchema.parse(saved).ignoreSubjectInLexical).toBe(true);
+  expect(RetrievalConfigSchema.parse({ ignoreSubjectInLexical: false }).ignoreSubjectInLexical).toBe(
+    false,
+  );
+  expect(RetrievalConfigSchema.safeParse({ ignoreSubjectInLexical: "on" }).success).toBe(false);
+});
+
+test("ignoreSubjectInRerank is on unless a stored config turns it off", () => {
+  // A config saved before the field existed.
+  const saved: Record<string, unknown> = { ...DEFAULT_RETRIEVAL_CONFIG };
+  delete saved.ignoreSubjectInRerank;
+  expect(RetrievalConfigSchema.parse(saved).ignoreSubjectInRerank).toBe(true);
+  expect(RetrievalConfigSchema.parse({ ignoreSubjectInRerank: false }).ignoreSubjectInRerank).toBe(
+    false,
+  );
+  expect(RetrievalConfigSchema.safeParse({ ignoreSubjectInRerank: "on" }).success).toBe(false);
+});
+
+test("dropBelowMeanRerank is on unless a stored config turns it off", () => {
+  // A config saved before the field existed.
+  const saved: Record<string, unknown> = { ...DEFAULT_RETRIEVAL_CONFIG };
+  delete saved.dropBelowMeanRerank;
+  expect(RetrievalConfigSchema.parse(saved).dropBelowMeanRerank).toBe(true);
+  expect(RetrievalConfigSchema.parse({ dropBelowMeanRerank: false }).dropBelowMeanRerank).toBe(false);
+  expect(RetrievalConfigSchema.safeParse({ dropBelowMeanRerank: "on" }).success).toBe(false);
+});
+
 test("unknown modes and unknown keys are rejected", () => {
   expect(RetrievalConfigSchema.safeParse({ rewrite: "hyde" }).success).toBe(false);
   expect(RetrievalConfigSchema.safeParse({ search: "fuzzy" }).success).toBe(false);
@@ -70,6 +104,9 @@ test("presets set rewriting, search and reranking on top of the defaults", () =>
       fusedLimit: 20,
       finalK: 5,
       minRerankScore: 0,
+      ignoreSubjectInLexical: true,
+      ignoreSubjectInRerank: true,
+      dropBelowMeanRerank: true,
     });
     return [name, rewrite, search, rerank];
   });

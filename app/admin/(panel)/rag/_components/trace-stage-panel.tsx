@@ -56,6 +56,11 @@ function StageBody({ detail }: { detail: StageDetail }) {
         <p className={note}>No queries were searched.</p>
       ) : (
         <div className="space-y-4">
+          {detail.output.ignoredTermsOf ? (
+            <p className={note}>
+              Terms of “{detail.output.ignoredTermsOf}” were left out of each query.
+            </p>
+          ) : null}
           {detail.output.lists.map((list) => (
             <div key={list.name} className="space-y-1.5">
               <p className="text-sm">
@@ -178,9 +183,12 @@ function FuseBody({ detail }: { detail: Extract<StageDetail, { kind: "fuse" }> }
 }
 
 function RerankBody({ detail }: { detail: Extract<StageDetail, { kind: "rerank" }> }) {
-  const { fallback, error, hits } = detail.output;
+  const { fallback, error, hits, ignoredName } = detail.output;
   return (
     <div className="space-y-2">
+      {ignoredName ? (
+        <p className={note}>“{ignoredName}” was removed from the query and each chunk.</p>
+      ) : null}
       {fallback ? (
         <p className={errorText}>
           The reranker fell back to the fused order{error ? `: ${error}` : "."} Scores below are
@@ -228,11 +236,13 @@ function RankShift({ from, to }: { from: number; to: number }) {
 }
 
 function FilterBody({ detail }: { detail: Extract<StageDetail, { kind: "filter" }> }) {
-  const { minRerankScore, kept, dropped } = detail.output;
+  const { minRerankScore, meanRerankScore, kept, dropped } = detail.output;
   return (
     <div className="space-y-2">
       <p className="text-sm">
-        Minimum rerank score {formatScore(minRerankScore)}: kept {kept}, dropped {dropped.length}.
+        Minimum rerank score {formatScore(minRerankScore)}
+        {meanRerankScore === undefined ? "" : `, mean ${formatScore(meanRerankScore)}`}: kept {kept},
+        dropped {dropped.length}.
       </p>
       {dropped.length > 0 ? <HitTable hits={dropped} scoreLabel="Rerank score" /> : null}
     </div>

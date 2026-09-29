@@ -86,6 +86,36 @@ test("documents and queries go through the analyzer", () => {
   expect(cv.search("the and with", 5)).toEqual([]);
 });
 
+test("ignored terms are dropped from the query before scoring", () => {
+  // Only banana is scored. d1: 0.47000 · 2.2 / (1 + 1.2 · 1); d2 as above.
+  const hits = index.search("apple banana", 10, { ignoreTermsOf: "apple" });
+
+  expect(hits.map((hit) => hit.chunkId)).toEqual(["d2", "d1"]);
+  expect(hits[0].score).toBeCloseTo(0.5442147286, 6);
+  expect(hits[1].score).toBeCloseTo(0.4700036292, 6);
+});
+
+test("a query of only ignored terms returns nothing", () => {
+  expect(index.search("apple apple", 5, { ignoreTermsOf: "apple fig" })).toEqual([]);
+  expect(index.search("apple", 5, { ignoreTermsOf: "" })).toEqual(index.search("apple", 5));
+});
+
+test("ignored text goes through the analyzer, so case and possessives match", () => {
+  const cv = new Bm25Index(
+    [
+      { id: "profile", text: "Lwin Maung Maung. Software engineer. Contact Lwin Maung Maung." },
+      { id: "project", text: "Built a contextual RAG chat for a portfolio." },
+    ],
+    new EnglishTextAnalyzer(),
+  );
+  const query = "What has LWIN Maung Maung's team built recently?";
+
+  expect(cv.search(query, 5)[0].chunkId).toBe("profile");
+  expect(
+    cv.search(query, 5, { ignoreTermsOf: "Lwin Maung Maung" }).map((hit) => hit.chunkId),
+  ).toEqual(["project"]);
+});
+
 test("invalid k or parameters are rejected", () => {
   expect(thrownBy(() => index.search("apple", 0)) instanceof RangeError).toBe(true);
   expect(thrownBy(() => new Bm25Index(corpus, words, { k1: -1 })) instanceof RangeError).toBe(true);

@@ -19,6 +19,7 @@ import {
   RetrievalError,
   type RagIndexRepository,
   type RagTraceRepository,
+  type RetrievalConfig,
   type RetrievalResult,
   type RetrievalRunner,
   type RetrievalTrace,
@@ -31,10 +32,10 @@ import {
   answerGenerationSettings,
   buildAnswerMessages,
   buildSmalltalkMessages,
+  noInformationReply,
   offTopicReply,
 } from "@/server/rag/answer/answer-prompt";
 import { citedEntityKeys, extractCitations } from "@/server/rag/answer/citations";
-import { DEFAULT_RETRIEVAL_CONFIG } from "@/server/rag/pipeline/retrieval-config";
 import { finishedStep, isChatStepName, runningStep } from "@/server/rag/progress/chat-steps";
 import { EventChannel } from "@/server/rag/progress/event-channel";
 import {
@@ -61,6 +62,8 @@ type Log = (message: string, error: unknown) => void;
 export type ChatServiceDeps = {
   conversations: ConversationRepository;
   pipeline: RetrievalRunner;
+  // The saved chat config, read once per turn, so a change applies from the next turn.
+  retrievalConfig: () => Promise<RetrievalConfig>;
   indexes: Pick<RagIndexRepository, "findActive">;
   cvVersions: Pick<CvVersionRepository, "findPublished">;
   traces: Pick<RagTraceRepository, "save">;
@@ -125,6 +128,7 @@ export class ChatService {
       yield { type: "error", code: "unavailable" };
       return;
     }
+    const config = await this.deps.retrievalConfig();
 
     const conversation = await this.openConversation(request);
     yield { type: "meta", conversationId: conversation.id };
@@ -135,7 +139,7 @@ export class ChatService {
     const run = this.deps.pipeline.run({
       message,
       history,
-      config: DEFAULT_RETRIEVAL_CONFIG,
+      config,
       subjectName,
       kind: "chat",
       observer: stepObserver(progress),
@@ -180,6 +184,9 @@ export class ChatService {
     };
     if (retrieval.scope === "off_topic") {
       yield* this.fixedReply(turn, offTopicReply(subjectName));
+    } else if (retrieval.scope === "cv" && retrieval.chunks.length === 0) {
+      // Nothing passed retrieval, e.g. every chunk scored below `minRerankScore`.
+      yield* this.fixedReply(turn, noInformationReply(subjectName));
     } else {
       yield* this.generate(turn);
     }
@@ -226,7 +233,7 @@ export class ChatService {
     return existing ?? conversations.create(request.sessionId);
   }
 
-  // Off-topic messages get a fixed answer without an LLM call.
+  // Off-topic messages and CV questions with no sources get a fixed answer without an LLM call.
   private async *fixedReply(turn: Turn, text: string): AsyncGenerator<ChatEvent, void, undefined> {
     yield { type: "delta", text };
     await this.appendTurn(turn, text, []);

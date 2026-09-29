@@ -1,12 +1,24 @@
 "use client";
 
-import { useActionState, useState, type KeyboardEvent } from "react";
+import { useActionState, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { TraceView } from "@/app/admin/(panel)/rag/_components/trace-view";
-import { runRetrievalPlaygroundAction } from "@/app/admin/(panel)/rag/playground/actions";
+import {
+  runRetrievalPlaygroundAction,
+  saveChatConfigAction,
+} from "@/app/admin/(panel)/rag/playground/actions";
 import { matchingPreset } from "@/app/admin/(panel)/rag/playground/playground-config";
-import { idlePlaygroundState } from "@/app/admin/(panel)/rag/playground/playground-state";
-import { errorText, focusRing, note, primaryButton } from "@/app/admin/(panel)/rag/rag-styles";
+import {
+  idleChatConfigState,
+  idlePlaygroundState,
+} from "@/app/admin/(panel)/rag/playground/playground-state";
+import {
+  errorText,
+  focusRing,
+  note,
+  primaryButton,
+  secondaryButton,
+} from "@/app/admin/(panel)/rag/rag-styles";
 import type { QueryRewriteMode, RetrievalConfig, SearchMode } from "@/server/domain/rag";
 import type { RetrievalPresetName } from "@/server/rag/pipeline/retrieval-config";
 import {
@@ -20,6 +32,8 @@ import {
 // Must match PLAYGROUND_MESSAGE_MAX_CHARS, which the server enforces.
 const MESSAGE_MAX_CHARS = 500;
 const CUSTOM = "custom";
+// The saved chat config, listed first in the preset select.
+const CHAT_PRESET = "chat";
 
 export type PlaygroundIndexOption = { id: string; label: string };
 
@@ -28,21 +42,49 @@ type FormConfig = {
   rewrite: QueryRewriteMode;
   search: SearchMode;
   rerank: boolean;
+  ignoreSubjectInLexical: boolean;
+  ignoreSubjectInRerank: boolean;
+  dropBelowMeanRerank: boolean;
 } & Record<RetrievalNumberFieldName, string>;
+
+type BooleanField =
+  | "rerank"
+  | "ignoreSubjectInLexical"
+  | "ignoreSubjectInRerank"
+  | "dropBelowMeanRerank";
 
 const NUMBER_FIELDS = Object.keys(RETRIEVAL_NUMBER_FIELDS) as RetrievalNumberFieldName[];
 
 const HINTS: Partial<Record<keyof RetrievalConfig, string>> = {
   rewrite: "standalone resolves pronouns; multi adds up to 3 variants.",
-  minRerankScore: "Used only when the reranker returns scores.",
+  minRerankScore:
+    "Used only when the reranker returns scores. Chunks scoring below this are dropped. If none " +
+    "pass, the chat says it has no information.",
   fusedLimit: "Fused hits kept for reranking.",
+  ignoreSubjectInLexical:
+    "The rewriter writes the CV owner's name into the query. BM25 then favours chunks that " +
+    "mention the name, not chunks that answer the question.",
+  ignoreSubjectInRerank:
+    "Removes the name from the query and each chunk before reranking, so chunks whose context " +
+    "mentions the name score no higher for it.",
+  dropBelowMeanRerank:
+    "Also drops reranked chunks scoring below the mean of this question's rerank scores. Can " +
+    "drop a second relevant chunk.",
 };
 
 function toForm(config: RetrievalConfig): FormConfig {
   const numbers = Object.fromEntries(
     NUMBER_FIELDS.map((field) => [field, String(config[field])]),
   ) as Record<RetrievalNumberFieldName, string>;
-  return { rewrite: config.rewrite, search: config.search, rerank: config.rerank, ...numbers };
+  return {
+    rewrite: config.rewrite,
+    search: config.search,
+    rerank: config.rerank,
+    ignoreSubjectInLexical: config.ignoreSubjectInLexical,
+    ignoreSubjectInRerank: config.ignoreSubjectInRerank,
+    dropBelowMeanRerank: config.dropBelowMeanRerank,
+    ...numbers,
+  };
 }
 
 function fromForm(form: FormConfig): RetrievalConfig {
@@ -55,6 +97,9 @@ function fromForm(form: FormConfig): RetrievalConfig {
     fusedLimit: Number(form.fusedLimit),
     finalK: Number(form.finalK),
     minRerankScore: Number(form.minRerankScore),
+    ignoreSubjectInLexical: form.ignoreSubjectInLexical,
+    ignoreSubjectInRerank: form.ignoreSubjectInRerank,
+    dropBelowMeanRerank: form.dropBelowMeanRerank,
   };
 }
 
@@ -65,28 +110,40 @@ export function PlaygroundForm({
   indexes,
   defaultIndexId,
   presets,
-  defaultConfig,
+  chatConfig,
 }: {
   indexes: readonly PlaygroundIndexOption[];
   defaultIndexId: string;
   presets: Readonly<Record<RetrievalPresetName, Readonly<RetrievalConfig>>>;
-  defaultConfig: Readonly<RetrievalConfig>;
+  // The config the chat uses now. The form opens with it.
+  chatConfig: Readonly<RetrievalConfig>;
 }) {
   const [state, action, pending] = useActionState(
     runRetrievalPlaygroundAction,
     idlePlaygroundState,
   );
+  const [saveState, saveAction, saving] = useActionState(saveChatConfigAction, idleChatConfigState);
   const [message, setMessage] = useState("");
   const [history, setHistory] = useState("");
   const [indexId, setIndexId] = useState(defaultIndexId);
-  const [config, setConfig] = useState<FormConfig>(() => toForm(defaultConfig));
+  const [config, setConfig] = useState<FormConfig>(() => toForm(chatConfig));
 
-  const preset = matchingPreset(fromForm(config), presets) ?? CUSTOM;
-  const presetNames = Object.keys(presets) as RetrievalPresetName[];
+  // First, so a chat config equal to a named preset still shows as the chat config.
+  const choices: Readonly<Record<string, Readonly<RetrievalConfig>>> = {
+    [CHAT_PRESET]: chatConfig,
+    ...presets,
+  };
+  const preset = matchingPreset(fromForm(config), choices) ?? CUSTOM;
 
   function choosePreset(name: string) {
-    const chosen = presetNames.find((presetName) => presetName === name);
-    if (chosen) setConfig(toForm(presets[chosen]));
+    const chosen = choices[name];
+    if (chosen) setConfig(toForm(chosen));
+  }
+
+  function confirmSave(event: MouseEvent<HTMLButtonElement>) {
+    if (!window.confirm("Use this config for every chat answer from now on? It changes live answers.")) {
+      event.preventDefault();
+    }
   }
 
   function update<K extends keyof FormConfig>(field: K, value: FormConfig[K]) {
@@ -176,9 +233,9 @@ export function PlaygroundForm({
               onChange={(event) => choosePreset(event.target.value)}
               className={control}
             >
-              {presetNames.map((name) => (
+              {Object.keys(choices).map((name) => (
                 <option key={name} value={name}>
-                  {name}
+                  {name === CHAT_PRESET ? "Chat config" : name}
                 </option>
               ))}
               <option value={CUSTOM} disabled>
@@ -211,25 +268,43 @@ export function PlaygroundForm({
                 onChange={(value) => update(field, value)}
               />
             ))}
-            <div className="flex items-start gap-2 self-center">
-              <input
-                id="pg-rerank"
-                name="rerank"
-                type="checkbox"
-                checked={config.rerank}
-                onChange={(event) => update("rerank", event.target.checked)}
-                className={`mt-0.5 h-4 w-4 ${focusRing}`}
-              />
-              <label htmlFor="pg-rerank" className={label}>
-                {RETRIEVAL_FIELD_LABELS.rerank}
-              </label>
-            </div>
+            <CheckboxField
+              field="rerank"
+              checked={config.rerank}
+              onChange={(checked) => update("rerank", checked)}
+            />
+            <CheckboxField
+              field="ignoreSubjectInLexical"
+              checked={config.ignoreSubjectInLexical}
+              onChange={(checked) => update("ignoreSubjectInLexical", checked)}
+            />
+            <CheckboxField
+              field="ignoreSubjectInRerank"
+              checked={config.ignoreSubjectInRerank}
+              onChange={(checked) => update("ignoreSubjectInRerank", checked)}
+            />
+            <CheckboxField
+              field="dropBelowMeanRerank"
+              checked={config.dropBelowMeanRerank}
+              onChange={(checked) => update("dropBelowMeanRerank", checked)}
+            />
           </div>
         </fieldset>
 
         <div className="flex flex-wrap items-center gap-3">
           <button type="submit" disabled={pending} className={primaryButton}>
             {pending ? "Running…" : "Run retrieval"}
+          </button>
+          {/* Saves the config only, so the question may be empty. The server validates it. */}
+          <button
+            type="submit"
+            formAction={saveAction}
+            formNoValidate
+            disabled={saving}
+            onClick={confirmSave}
+            className={secondaryButton}
+          >
+            {saving ? "Saving…" : "Use for chat"}
           </button>
           {state.message ? (
             <p
@@ -238,6 +313,15 @@ export function PlaygroundForm({
               className={state.status === "error" ? errorText : note}
             >
               {state.message}
+            </p>
+          ) : null}
+          {saveState.message ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className={saveState.status === "error" ? errorText : note}
+            >
+              {saveState.message}
             </p>
           ) : null}
         </div>
@@ -284,6 +368,41 @@ function ChoiceField<T extends string>({
         ))}
       </select>
       {hint ? <p className="text-xs text-zinc-600 dark:text-zinc-400">{hint}</p> : null}
+    </div>
+  );
+}
+
+function CheckboxField({
+  field,
+  checked,
+  onChange,
+}: {
+  field: BooleanField;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const hint = HINTS[field];
+  return (
+    <div className="flex items-start gap-2 self-center">
+      <input
+        id={`pg-${field}`}
+        name={field}
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        aria-describedby={hint ? `pg-${field}-hint` : undefined}
+        className={`mt-0.5 h-4 w-4 ${focusRing}`}
+      />
+      <div className="flex flex-col gap-1">
+        <label htmlFor={`pg-${field}`} className={label}>
+          {RETRIEVAL_FIELD_LABELS[field]}
+        </label>
+        {hint ? (
+          <p id={`pg-${field}-hint`} className="text-xs text-zinc-600 dark:text-zinc-400">
+            {hint}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

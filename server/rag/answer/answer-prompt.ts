@@ -60,6 +60,11 @@ export function offTopicReply(subjectName: string): string {
   return `I can only answer questions about ${subjectName}'s experience, skills and background.`;
 }
 
+// A CV question with no chunk that passed retrieval, e.g. all below the rerank threshold.
+export function noInformationReply(subjectName: string): string {
+  return `I don't have that information in ${subjectName}'s CV. You can contact ${subjectName} directly.`;
+}
+
 function answerInstructions(subjectName: string): string {
   return [
     `You are an assistant on ${subjectName}'s portfolio website. You answer visitors' questions ` +

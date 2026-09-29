@@ -1,7 +1,9 @@
 import type { ChatTurn } from "@/server/domain/chat";
 import type { RetrievalConfig } from "@/server/domain/rag";
-import { RetrievalConfigSchema } from "@/server/rag/pipeline/retrieval-config";
-import { RETRIEVAL_FIELD_LABELS } from "@/server/rag/pipeline/retrieval-config-fields";
+import {
+  RetrievalConfigSchema,
+  retrievalConfigErrorMessage,
+} from "@/server/rag/pipeline/retrieval-config";
 import type { PlaygroundRequest } from "@/server/services/retrieval-playground-service";
 
 // Same limit as a chat message.
@@ -41,16 +43,12 @@ export function parseRetrievalConfig(form: FormData): Parsed<RetrievalConfig> {
     rerank: form.get("rerank") === "on",
     finalK: numberField(form, "finalK"),
     minRerankScore: numberField(form, "minRerankScore"),
+    ignoreSubjectInLexical: form.get("ignoreSubjectInLexical") === "on",
+    ignoreSubjectInRerank: form.get("ignoreSubjectInRerank") === "on",
+    dropBelowMeanRerank: form.get("dropBelowMeanRerank") === "on",
   });
   if (parsed.success) return { ok: true, value: parsed.data };
-
-  const issue = parsed.error.issues[0];
-  const field = issue?.path[0];
-  const label =
-    typeof field === "string" && field in RETRIEVAL_FIELD_LABELS
-      ? RETRIEVAL_FIELD_LABELS[field as keyof RetrievalConfig]
-      : "Config";
-  return { ok: false, message: `${label}: ${issue?.message ?? "invalid value"}.` };
+  return { ok: false, message: retrievalConfigErrorMessage(parsed.error) };
 }
 
 export function parsePlaygroundForm(form: FormData): Parsed<PlaygroundRequest> {

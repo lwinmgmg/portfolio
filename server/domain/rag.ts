@@ -107,9 +107,20 @@ export interface TextAnalyzer {
   analyze(text: string): string[];
 }
 
+export type LexicalSearchOptions = {
+  // Query terms that are also terms of this text are dropped, e.g. the CV subject's name, which
+  // matches the chunks that mention the name rather than the chunks that answer the question.
+  ignoreTermsOf?: string;
+};
+
 // Searches the chunks of one stored index.
 export interface Retriever {
-  searchLexical(indexId: string, query: string, k: number): Promise<RankedHit[]>;
+  searchLexical(
+    indexId: string,
+    query: string,
+    k: number,
+    options?: LexicalSearchOptions,
+  ): Promise<RankedHit[]>;
   // `vector` is a query embedding from the index's embedding model. It need not be normalized.
   searchVector(indexId: string, vector: readonly number[], k: number): Promise<RankedHit[]>;
   // The chunks with these ids, in the order of `ids`. Unknown ids are skipped.
@@ -187,6 +198,19 @@ export type RetrievalConfig = {
   rerank: boolean;
   finalK: number;
   minRerankScore: number;
+  // Drop the subject's name from BM25 queries. Vector search keeps it.
+  ignoreSubjectInLexical: boolean;
+  // Remove the subject's name from the rerank query and candidate texts.
+  ignoreSubjectInRerank: boolean;
+  // Also drop reranked hits scoring below the mean of that turn's reranked scores.
+  dropBelowMeanRerank: boolean;
+};
+
+// The retrieval config every chat turn runs with.
+export type ChatRetrievalSettings = {
+  config: RetrievalConfig;
+  // Null while the defaults are used: never saved, or the saved config no longer parses.
+  updatedAt: string | null;
 };
 
 // A chunk the pipeline returns, with the source id the answer cites (`S1`..`Sn`).
@@ -302,6 +326,13 @@ export class NoActiveRagIndexError extends RagError {
   }
 }
 
+export class InvalidRetrievalConfigError extends RagError {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidRetrievalConfigError";
+  }
+}
+
 // A pipeline stage failed. Not a RagError: the cause may be a provider error, so callers show the
 // trace (which records the stage error) rather than this message.
 export class RetrievalError extends Error {
@@ -356,4 +387,11 @@ export interface RagTraceRepository {
   findById(id: string): Promise<RetrievalTrace | null>;
   // Newest first.
   list(limit: number): Promise<RetrievalTrace[]>;
+}
+
+// Site-wide RAG settings. Configs are returned raw, because a stored one may predate the schema.
+export interface RagSettingsRepository {
+  ensureReady(): Promise<void>;
+  findChatConfig(): Promise<{ config: unknown; updatedAt: string } | null>;
+  saveChatConfig(config: RetrievalConfig, updatedAt: string): Promise<void>;
 }

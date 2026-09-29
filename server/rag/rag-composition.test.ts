@@ -9,6 +9,7 @@ import {
   fakeTransaction,
   MemoryRagChunks,
   MemoryRagIndexes,
+  MemoryRagSettings,
 } from "@/server/rag/__fixtures__/memory-rag-repositories";
 import { StructuredCvChunker } from "@/server/rag/chunking/structured-cv-chunker";
 import { TokenWindowChunker } from "@/server/rag/chunking/token-window-chunker";
@@ -48,6 +49,7 @@ test("the composed pipeline builds and activates the default index from the publ
   const indexes = new MemoryRagIndexes();
   const chunks = new MemoryRagChunks();
   const traces: RetrievalTrace[] = [];
+  const settings = new MemoryRagSettings();
   const rag = createRag(
     envWith({ EMBEDDING_MODEL: "embed-x", LLM_UTILITY_MODEL: "utility-x", RERANK_MODEL: "rerank-x" }),
     {
@@ -76,6 +78,7 @@ test("the composed pipeline builds and activates the default index from the publ
           traces.push(trace);
         },
       },
+      settings,
       transaction: fakeTransaction,
       now: () => new Date(at),
       searchCache: createSearchIndexCache(),
@@ -129,7 +132,8 @@ test("the composed pipeline builds and activates the default index from the publ
   const run = await rag.playground.run({
     message: "Skills?",
     history: [],
-    config: RETRIEVAL_PRESETS["hybrid-rerank"],
+    // Without the mean cut, so every reranked hit becomes a source.
+    config: { ...RETRIEVAL_PRESETS["hybrid-rerank"], dropBelowMeanRerank: false },
     indexId: null,
   });
   expect(run.error).toBeNull();
@@ -148,4 +152,8 @@ test("the composed pipeline builds and activates the default index from the publ
   expect(run.trace.sources.length).toBe(Math.min(5, stored.length));
   expect(embeddedModels.at(-1)).toBe("embed-x");
   expect(rerankModels.at(-1)).toBe("rerank-x");
+
+  // The chat config is saved through the injected settings repository, stamped with `now`.
+  await rag.settings.saveChatConfig(RETRIEVAL_PRESETS["hybrid-rerank"]);
+  expect(settings.chat).toEqual({ config: RETRIEVAL_PRESETS["hybrid-rerank"], updatedAt: at });
 });

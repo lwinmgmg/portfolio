@@ -1,4 +1,4 @@
-import type { RankedHit, TextAnalyzer } from "@/server/domain/rag";
+import type { LexicalSearchOptions, RankedHit, TextAnalyzer } from "@/server/domain/rag";
 import { assertTopK, topRankedHits, type ScoredChunk } from "@/server/rag/search/ranked-hits";
 
 export type Bm25Document = { id: string; text: string };
@@ -47,10 +47,12 @@ export class Bm25Index {
   }
 
   // Query terms are deduplicated. Documents that match no term are left out.
-  search(query: string, k: number): RankedHit[] {
+  search(query: string, k: number, options: LexicalSearchOptions = {}): RankedHit[] {
     assertTopK(k);
+    const ignored = new Set(this.analyzer.analyze(options.ignoreTermsOf ?? ""));
     const scores = new Array<number>(this.ids.length).fill(0);
     for (const term of new Set(this.analyzer.analyze(query))) {
+      if (ignored.has(term)) continue;
       const postings = this.postings.get(term);
       if (!postings) continue;
       const idf = this.idf(postings.length);

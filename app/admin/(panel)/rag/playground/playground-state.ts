@@ -8,3 +8,11 @@ export type PlaygroundState = {
 };
 
 export const idlePlaygroundState: PlaygroundState = { status: "idle", message: null, view: null };
+
+// The "Use for chat" button's result.
+export type ChatConfigState = {
+  status: "idle" | "saved" | "error";
+  message: string | null;
+};
+
+export const idleChatConfigState: ChatConfigState = { status: "idle", message: null };

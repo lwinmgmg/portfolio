@@ -32,6 +32,9 @@ const { MongoRagChunkRepository } = await import("@/server/repositories/rag-chun
 const { MongoRagTraceRepository, RAG_TRACE_TTL_SECONDS } = await import(
   "@/server/repositories/rag-trace-repository"
 );
+const { MongoRagSettingsRepository } = await import(
+  "@/server/repositories/rag-settings-repository"
+);
 
 const session = {} as TransactionContext["session"];
 const tx = { session } as TransactionContext;
@@ -403,4 +406,35 @@ test("save rejects a trace without an id", async () => {
   await expect(new MongoRagTraceRepository().save({ ...trace, id: " " })).rejects.toMatchObject({
     message: "A trace needs an id before it is saved.",
   });
+});
+
+// ---- rag_settings ----
+
+test("the chat config is upserted as the single `chat` document and read back raw", async () => {
+  const calls: unknown[][] = [];
+  let stored: Record<string, unknown> | null = null;
+  activeCollection = readyCollection({
+    updateOne: async (filter: unknown, update: { $set: Record<string, unknown> }, options: unknown) => {
+      calls.push([filter, update, options]);
+      stored = { _id: "chat", ...update.$set };
+    },
+    findOne: async (filter: unknown) => {
+      calls.push([filter]);
+      return stored;
+    },
+  });
+  const repository = new MongoRagSettingsRepository();
+  const config = { ...DEFAULT_RETRIEVAL_CONFIG, minRerankScore: 0.2 };
+
+  expect(await repository.findChatConfig()).toBeNull();
+  await repository.saveChatConfig(config, "2026-09-29T10:00:00.000Z");
+  const found = await repository.findChatConfig();
+
+  expect(calls[1]).toEqual([
+    { _id: "chat" },
+    { $set: { retrieval: config, updatedAt: new Date("2026-09-29T10:00:00.000Z") } },
+    { upsert: true },
+  ]);
+  expect(calls[2]).toEqual([{ _id: "chat" }]);
+  expect(found).toEqual({ config, updatedAt: "2026-09-29T10:00:00.000Z" });
 });

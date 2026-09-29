@@ -304,7 +304,8 @@ test("no chunk text, context, raw output, model or error text reaches a step", a
     expect(json).not.toContain(chunk.context ?? "no context");
   }
   for (const secret of [EMBED_MODEL, RAW_SECRET, RERANK_ERROR]) expect(json).not.toContain(secret);
-  for (const key of ["chunkId", "entityKeys", "text", "context", "indexText", "raw", "model", "error", "usage"]) {
+  const keys = ["chunkId", "entityKeys", "text", "context", "indexText", "raw", "model", "error", "usage", "ignoredTermsOf", "ignoredName"];
+  for (const key of keys) {
     expect(json).not.toContain(`"${key}":`);
   }
 });

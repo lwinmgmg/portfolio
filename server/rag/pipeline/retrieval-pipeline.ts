@@ -22,6 +22,7 @@ import {
 } from "@/server/domain/rag";
 import { embedInBatches } from "@/server/rag/embedding/embed-in-batches";
 import { reciprocalRankFusion } from "@/server/rag/fusion/reciprocal-rank-fusion";
+import { withoutName } from "@/server/rag/rerank/without-name";
 import { TraceRecorder } from "@/server/rag/pipeline/trace-recorder";
 import {
   hitListName,
@@ -163,10 +164,19 @@ class PipelineRun {
     );
   }
 
+  // The rewriter writes the subject's name into the query. Every chunk is about the subject, so
+  // the name only favours the chunks that happen to contain it.
   private lexicalLists(queries: string[]): Promise<SearchList[]> {
-    if (this.request.config.search === "vector") return Promise.resolve([]);
-    return this.search(STAGE.lexicalSearch, "bm25", queries, (query, _index, k) =>
-      this.deps.retriever.searchLexical(this.index.id, query, k),
+    const { config, subjectName } = this.request;
+    if (config.search === "vector") return Promise.resolve([]);
+    const ignoreTermsOf = config.ignoreSubjectInLexical ? subjectName : undefined;
+    return this.search(
+      STAGE.lexicalSearch,
+      "bm25",
+      queries,
+      (query, _index, k) =>
+        this.deps.retriever.searchLexical(this.index.id, query, k, { ignoreTermsOf }),
+      ignoreTermsOf,
     );
   }
 
@@ -175,6 +185,7 @@ class PipelineRun {
     kind: "vector" | "bm25",
     queries: string[],
     find: (query: string, index: number, k: number) => Promise<RankedHit[]>,
+    ignoredTermsOf?: string,
   ): Promise<SearchList[]> {
     const k = this.request.config.candidatesPerSearch;
     return this.recorder.stage(
@@ -189,7 +200,8 @@ class PipelineRun {
           hits: (found[index] ?? []).map((hit) => this.traced(hit)),
         }));
       },
-      (lists): SearchStageOutput => ({ lists }),
+      (lists): SearchStageOutput =>
+        ignoredTermsOf === undefined ? { lists } : { lists, ignoredTermsOf },
     );
   }
 
@@ -214,8 +226,16 @@ class PipelineRun {
     return hits;
   }
 
-  private async rerank(query: string, fused: FusedHit[]): Promise<Selected[]> {
-    const { finalK } = this.request.config;
+  // With the toggle on, the reranker never sees the subject's name. Every chunk is about the
+  // subject, but only some mention the name (in their context), and the cross-encoder rewards that
+  // overlap with the query.
+  private async rerank(fullQuery: string, fused: FusedHit[]): Promise<Selected[]> {
+    const { config, subjectName } = this.request;
+    const { finalK } = config;
+    const ignoredName = config.ignoreSubjectInRerank ? subjectName : undefined;
+    const forReranker = (text: string) =>
+      ignoredName === undefined ? text : withoutName(text, ignoredName);
+    const query = forReranker(fullQuery);
     const fusedById = new Map(
       fused.map((hit, index) => [hit.chunkId, { rank: index + 1, score: hit.score }]),
     );
@@ -226,7 +246,7 @@ class PipelineRun {
     };
     const candidates = fused.map((hit) => ({
       chunkId: hit.chunkId,
-      text: this.chunk(hit.chunkId).indexText,
+      text: forReranker(this.chunk(hit.chunkId).indexText),
     }));
 
     const outcome = await this.recorder.stage(
@@ -240,6 +260,7 @@ class PipelineRun {
           ...this.traced({ chunkId: hit.chunkId, rank: index + 1, score: hit.score }),
           fusedRank: fusedOf(hit.chunkId).rank,
         })),
+        ...(ignoredName === undefined ? {} : { ignoredName }),
       }),
     );
 
@@ -254,17 +275,21 @@ class PipelineRun {
   }
 
   private async filter(selected: Selected[]): Promise<Selected[]> {
-    const min = this.request.config.minRerankScore;
-    const passes = (hit: Selected) => hit.rerankScore === null || hit.rerankScore >= min;
+    const { minRerankScore: min, dropBelowMeanRerank: dropBelowMean } = this.request.config;
+    const mean = dropBelowMean ? meanRerankScore(selected) : null;
+    const passes = (hit: Selected) =>
+      hit.rerankScore === null ||
+      (hit.rerankScore >= min && (mean === null || hit.rerankScore >= mean - MEAN_TOLERANCE));
     const { kept } = await this.recorder.stage(
       STAGE.filter,
-      { minRerankScore: min, hits: selected.length },
+      { minRerankScore: min, dropBelowMean, hits: selected.length },
       async () => ({
         kept: selected.filter(passes),
         dropped: selected.filter((hit) => !passes(hit)),
       }),
       (result): FilterStageOutput => ({
         minRerankScore: min,
+        ...(mean === null ? {} : { meanRerankScore: mean }),
         kept: result.kept.length,
         dropped: result.dropped.map((hit) =>
           this.traced({ chunkId: hit.chunkId, rank: hit.rank, score: hit.rerankScore ?? 0 }),
@@ -314,6 +339,15 @@ class PipelineRun {
       entityKeys: [...chunk.entityKeys],
     };
   }
+}
+
+// The float mean of equal scores can land a hair above them; none of them is below it.
+const MEAN_TOLERANCE = 1e-9;
+
+function meanRerankScore(selected: readonly Selected[]): number | null {
+  const scores = selected.flatMap((hit) => (hit.rerankScore === null ? [] : [hit.rerankScore]));
+  if (scores.length === 0) return null;
+  return scores.reduce((sum, score) => sum + score, 0) / scores.length;
 }
 
 function toTraceSource(chunk: RetrievedChunk): TraceSource {

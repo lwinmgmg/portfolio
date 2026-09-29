@@ -30,4 +30,7 @@ export const RETRIEVAL_FIELD_LABELS: Readonly<Record<keyof RetrievalConfig, stri
   rerank: "Rerank",
   finalK: "Final k",
   minRerankScore: "Min rerank score",
+  ignoreSubjectInLexical: "Ignore name in BM25",
+  ignoreSubjectInRerank: "Ignore name in rerank",
+  dropBelowMeanRerank: "Drop below mean rerank",
 };

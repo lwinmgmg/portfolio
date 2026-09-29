@@ -21,7 +21,20 @@ import {
   type MeanMetrics,
   type QuestionMetrics,
 } from "@/server/rag/eval/metrics";
-import { RETRIEVAL_PRESETS, type RetrievalPresetName } from "@/server/rag/pipeline/retrieval-config";
+import {
+  isRetrievalPresetName,
+  RETRIEVAL_PRESETS,
+  type RetrievalPresetName,
+} from "@/server/rag/pipeline/retrieval-config";
+
+// Runs the saved chat config (EvalInput.chatConfig) next to the fixed presets.
+export const CHAT_PRESET = "chat";
+
+export type EvalPresetName = RetrievalPresetName | typeof CHAT_PRESET;
+
+export function isEvalPresetName(value: string): value is EvalPresetName {
+  return value === CHAT_PRESET || isRetrievalPresetName(value);
+}
 
 export type EvalTarget = {
   index: RagIndex;
@@ -32,7 +45,9 @@ export type EvalTarget = {
 export type EvalInput = {
   items: readonly GoldenItem[];
   targets: readonly EvalTarget[];
-  presets: readonly RetrievalPresetName[];
+  presets: readonly EvalPresetName[];
+  // The saved chat config. Required when `presets` includes CHAT_PRESET.
+  chatConfig?: RetrievalConfig;
   ks: readonly number[];
   subjectName: string;
   // The tag filter that selected `items`, for the report.
@@ -75,7 +90,7 @@ export type RunSummary = {
 
 export type EvalRun = {
   indexId: string;
-  preset: RetrievalPresetName;
+  preset: EvalPresetName;
   config: RetrievalConfig;
   summary: RunSummary;
   results: QuestionResult[];
@@ -102,7 +117,7 @@ export type EvalReport = {
 
 export type EvalProgress = {
   indexId: string;
-  preset: RetrievalPresetName;
+  preset: EvalPresetName;
   result: QuestionResult;
   done: number;
   total: number;
@@ -122,6 +137,11 @@ export class RetrievalEvaluator {
   async evaluate(input: EvalInput): Promise<EvalReport> {
     assertCutoffs(input.ks);
     if (input.items.length === 0) throw new RangeError("No golden items to evaluate.");
+    // Checked before any question runs, so a missing chat config never ends a run halfway.
+    const presets = input.presets.map((preset) => ({
+      preset,
+      config: configFor(preset, input.chatConfig),
+    }));
     const ks = [...new Set(input.ks)].sort((a, b) => a - b);
     const createdAt = (this.deps.now?.() ?? new Date()).toISOString();
     const total = input.targets.length * input.presets.length * input.items.length;
@@ -129,8 +149,7 @@ export class RetrievalEvaluator {
     let done = 0;
     const runs: EvalRun[] = [];
     for (const { index } of input.targets) {
-      for (const preset of input.presets) {
-        const config = { ...RETRIEVAL_PRESETS[preset] };
+      for (const { preset, config } of presets) {
         const results: QuestionResult[] = [];
         for (const item of input.items) {
           const result = await this.evaluateItem(item, index.id, config, ks, input.subjectName);
@@ -138,7 +157,13 @@ export class RetrievalEvaluator {
           done += 1;
           this.deps.onProgress?.({ indexId: index.id, preset, result, done, total });
         }
-        runs.push({ indexId: index.id, preset, config, summary: summarize(results, ks), results });
+        runs.push({
+          indexId: index.id,
+          preset,
+          config: { ...config },
+          summary: summarize(results, ks),
+          results,
+        });
       }
     }
 
@@ -207,6 +232,12 @@ export class RetrievalEvaluator {
       };
     }
   }
+}
+
+function configFor(preset: EvalPresetName, chatConfig: RetrievalConfig | undefined): RetrievalConfig {
+  if (preset !== CHAT_PRESET) return { ...RETRIEVAL_PRESETS[preset] };
+  if (!chatConfig) throw new RangeError(`The "${CHAT_PRESET}" preset needs the saved chat config.`);
+  return { ...chatConfig };
 }
 
 function summarizeChunk(chunk: RetrievedChunk, relevant: ReadonlySet<string>): RetrievedSummary {

@@ -2,7 +2,7 @@
 
 Handoff for the next coding agent. `Plan.md` is the spec. This file records what was built, which decisions differ from that spec, and what must stay put. Read this before editing CV, auth, storage, or LLM code. Do not start the next plan phase until the owner asks.
 
-Last updated after Phase 3.5 (workflow UI) on `master`.
+Last updated after Phase 2.10b (subject name out of BM25) on `master`.
 
 ## How to work
 
@@ -25,7 +25,11 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 3.5. Steps panel in the chat (`chat-activity.tsx`, `chat-step-detail.tsx`, `chat-steps-text.ts`). Built, not browser-checked. |
+| (next) | Phase 2.10d. `dropBelowMeanRerank` config toggle (default on): the filter also drops reranked hits below the turn's mean rerank score. Built, not live-checked. |
+| (next) | Phase 2.10c. `ignoreSubjectInRerank` config toggle (default on): the subject's name is removed from the rerank query and candidate texts. Built, not live-checked. |
+| (next) | Phase 2.10b. `ignoreSubjectInLexical` config toggle (default on): BM25 drops the published name's terms from queries. Built, not live-checked. |
+| (next) | Phase 2.10a. Saved chat retrieval config (`rag_settings`, `RagSettingsService`), "Use for chat" in the playground, no-information reply, eval preset `chat`. Built, not live-checked. |
+| `10a47f8` | Phase 3.5. Steps panel in the chat (`chat-activity.tsx`, `chat-step-detail.tsx`, `chat-steps-text.ts`). Built, not browser-checked. |
 | `c6036c8` | Phase 3.4. Client step guards (`client/api/chat-steps.ts`), steps and reasoning on `AssistantEntry`, stored in `sessionStorage`. |
 | `55befe4` | Phase 3.3. `ChatService` streams `step` and `reasoning` events (`EventChannel`), reasoning saved on the trace's `generate` stage. |
 | `c4fa917` | Owner: answer Markdown rendering (`chat-markdown.ts`, split out of `chat-text.ts`). |
@@ -59,7 +63,7 @@ Newest first:
 | `c3396fe` | Phase 1.1. LLM env and admin nav. |
 | `1676201` | Mongo project layer and admin projects page. |
 
-Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). Next: build and activate an index, run the 2.8 and 2.9 done-when commands, check the chat in a browser (375 px, keyboard only, source chips), then Phase 2.10a (chat retrieval settings, added by the owner), then Phase 2.11.
+Phases 1.1 through 1.8 (including 1.7a) and 2.1 through 2.7 are **Done** in `Plan.md`. Phases 2.8, 2.9 and 2.10 are built but not marked Done: their live checks need an active RAG index, and the database has none. The owner asked for 2.9 and 2.10 before the 2.8 checkpoint (golden questions, eval run, default presets). The owner has not yet approved the 1.7 visual design (Plan.md §3 checkpoint). By 2026-09-29 the owner had an active index (a chat turn showed its steps), but no agent has rerun the 2.8–2.10 checks. Phase 2.10a (chat retrieval settings) is built but not Done: its done-when needs the playground in a browser, a live chat turn and a paid eval run. Phase 2.10b (subject name out of BM25) is built but not Done for the same reason (playground in a browser, paid eval run). Next: those checks, then Phase 2.11.
 
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check, then Phase 4.1 when the owner asks. Restart `next dev` first so it runs the post-3.1 LLM client (see Phase 3.3).
 
@@ -222,7 +226,8 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
 - `queries` go through `uniqueQueries`: trimmed, blanks dropped, and case- and whitespace-insensitive duplicates removed with the first spelling kept. In `multi` the standalone query comes first, then at most 3 variants after deduplication.
 - Every failure falls back to `{ queries: [message], scope: "cv", raw: <error message> }`: provider errors, timeouts, invalid JSON, schema mismatches and a blank `standalone`. On success `raw` is the parsed output. The rewriter never throws for these errors, so the pipeline does not need its own try/catch for them.
 - `unwrapJsonFence` moved from `cv-extractor.ts` to `server/llm/json-fence.ts`, and both callers share it.
-- `createRag` exposes `rag.queryRewriter` with `LLM_UTILITY_MODEL`. It was not run against OpenRouter. Whether `nvidia/nemotron-3.5-lightning` honours structured outputs has not been checked; the fence and extra-key handling are there in case it does not.
+- `createRag` exposes `rag.queryRewriter` with `LLM_UTILITY_MODEL`.
+- `AdaptiveChatClient` (`server/llm/adaptive-chat-client.ts`) wraps the chat client that `createRag` gives the rewriter and the contextualizer (`utilityChat`), so any `LLM_UTILITY_MODEL` works. Per model, it learns from two OpenRouter refusals, retries once with the same signal, and remembers until restart. (1) 404 "No endpoints found" while a `jsonSchema` was sent (`require_parameters` filtered every endpoint): sends without the schema; the prompt's "Answer with JSON only" line and the fence/extra-key parsing carry it. (2) 400 "Reasoning is mandatory" while `reasoning: { enabled: false }` was sent: sends `{ effort: "low" }` and `maxTokens + 1024`. Other errors pass through. The answer model and CV extractor do not use it. Checked 2026-09-29: `nvidia/nemotron-3.5-lightning:free` has one endpoint (Nvidia), no `response_format`, and queues long enough to hit the 15 s timeout; `google/gemma-4-26b-a4b-it:free` often returns 429 from its shared pool; `z-ai/glm-5.3-flash` refuses reasoning off and rewrites in 1.6-3.9 s at low effort.
 
 ## Fusion and reranking (Phase 2.6)
 
@@ -270,7 +275,7 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
 - `server/domain/chat.ts` holds `StoredMessage`, `Conversation`, `ConversationRepository`, `ChatSource`, `ChatEvent` and the constants `CHAT_MESSAGE_MAX_CHARS` (500, UTF-16 units), `CHAT_SESSION_MESSAGE_LIMIT` (20) and `CHAT_CONVERSATION_TTL_SECONDS`. 2.10's client should import these types, not redefine them.
 - `MongoConversationRepository` (`chat_conversations`): indexes `{ sessionId: 1 }` and a TTL on `{ updatedAt: 1 }`, 30 days. Messages are embedded in the conversation. `append` does `$push` plus `$max` on `updatedAt`, using the newest message time. The counts are aggregations that `$filter` the embedded messages. The daily count first matches `updatedAt >= since`. A malformed id finds nothing, and `append` throws on one.
 - `server/rag/answer/`: `buildAnswerMessages` (system rules, the last 6 history turns with `[S#]` markers stripped from assistant text, then one user turn with `<sources>…</sources>` and `<question>`), `buildSmalltalkMessages` (no sources), `offTopicReply`, and `extractCitations` / `citedEntityKeys` / `stripCitations`. Source attributes are escaped. The question and source text are not escaped, like the rewrite prompt. `citations.ts` imports `anchorForEntityKey` from `app/(public)/_components/cv/cv-sections.ts`: the first `server/` → `app/` import. It is pure, and it keeps a single anchor mapping. Move the registry to `server/cv/` if that direction becomes a problem.
-- `ChatService.reply` (`server/services/chat-service.ts`) is an async generator. Order: message check, then the limits (session ≥ 20 stored user messages, then the day's count from `startOfUtcDay` ≥ `CHAT_DAILY_MESSAGE_LIMIT`), then the published name and the active index. All three run before a conversation exists. Then `meta`, retrieval (`DEFAULT_RETRIEVAL_CONFIG`, kind `chat`), then the answer. Off topic gives a single fixed `delta` with no LLM call and no `generate` stage.
+- `ChatService.reply` (`server/services/chat-service.ts`) is an async generator. Order: message check, then the limits (session ≥ 20 stored user messages, then the day's count from `startOfUtcDay` ≥ `CHAT_DAILY_MESSAGE_LIMIT`), then the published name and the active index. All three run before a conversation exists. Then `meta`, retrieval (the saved chat config since 2.10a, kind `chat`), then the answer. Off topic gives a single fixed `delta` with no LLM call and no `generate` stage.
 - Stored messages: failed turns (retrieval or answer-model error) are not stored, and their trace is saved. Stored turns are appended **before** `sources`/`done`. A stopped turn (the request signal aborted, or the reader called `return()`, which runs the generator's `finally`) is stored as `<partial> [stopped]` with the keys it cited so far, and ends without `sources`/`done`. Save errors are logged and do not break the stream.
 - The `generate` stage is appended to the pipeline's trace: `startedAt = trace.totalMs + (start − retrievedAt)`, and `totalMs` grows to cover it. Its output keeps the raw answer (without `[stopped]`), usage, `stopped` and the cited source ids. The schemas are in `trace-stages.ts` (`STAGE.generate`). `readTrace` has no case for it yet, so 2.11 adds the case and the panel.
 - `server/http/ndjson-stream.ts`: a pull-based `ReadableStream`. A thrown error becomes the `onError` line. `cancel` calls `onCancel` and then `iterator.return()`. `finished` settles after either. The route registers `after(() => stream.finished)` so a stopped answer is saved before the function ends. It also aborts the answer model on `request.signal` abort or on stream cancel.
@@ -290,6 +295,55 @@ Both Nemotron models reason by default, and OpenRouter's `max_tokens` includes r
 - Entry ids use a time-prefixed counter, not `crypto.randomUUID`, which needs a secure context (a phone on the LAN over http).
 - `isChatAvailable()` (`chat-runtime.ts`, `cache` + `connection()`) is true when RAG is configured and `findActive()` returns an index. A failed lookup is logged and hides the widget. The page calls it only when a CV is published.
 - Verified: unit tests, lint, types, build, and static markup of the widget and a sample answer (escaped HTML, chips, source links, the unknown `[S7]` dropped). Against the dev server, `/` renders the CV **without** the widget, and `POST /api/public/chat` still returns `unavailable` because there is no active index. No browser was available here, so nothing was checked in one: no streaming, 375 px layout, keyboard-only use, dark mode, or anchor scrolling.
+
+## Chat retrieval settings (Phase 2.10a)
+
+- Built after Phase 3.5. The owner saw "Kept 5 chunks scoring at least 0.00" in the steps panel and asked to be able to tune the threshold.
+- `rag_settings` collection: a single document `{ _id: "chat", retrieval, updatedAt }`, upserted by `MongoRagSettingsRepository`. `retrieval` is stored and returned raw (`unknown`).
+- `RagSettingsService` (`server/services/rag-settings-service.ts`):
+  - `chatSettings()` parses the document with `RetrievalConfigSchema` on every read. A missing field gets its schema default. A document that fails the strict parse gives the defaults with `updatedAt: null` and a warning.
+  - `saveChatConfig(unknown)` throws `InvalidRetrievalConfigError` (a `RagError`). Its message comes from `retrievalConfigErrorMessage`, which the playground form parser now shares.
+- Wiring:
+  - `RagDependencies.settings` is required, and `Rag.settings` is the service.
+  - `rag-runtime` exports `getChatRetrievalSettings` (`cache` + `connection()`) and `saveChatRetrievalConfig`.
+  - `chat-runtime` passes `retrievalConfig: () => rag.settings.chatSettings().config`.
+- `ChatService`:
+  - It no longer imports `DEFAULT_RETRIEVAL_CONFIG`. It reads `deps.retrievalConfig()` once per turn, after the availability checks and before the conversation is created.
+  - A `cv`-scope retrieval with zero chunks streams `noInformationReply(subjectName)` with no LLM call. It is stored and traced like the off-topic path, with no `generate` stage.
+- Playground:
+  - A "Chat uses" card (`chat-config-summary.tsx`).
+  - A "Chat config" preset, listed first, that the form opens with.
+  - A "Use for chat" button: a second submit in the same form with `formAction`, `formNoValidate` and a `window.confirm`. It calls `saveChatConfigAction` (`withAdmin`, `ChatConfigState` in `playground-state.ts`) and then `revalidatePath("/admin/rag/playground")`.
+  - `secondaryButton` was added to `rag-styles.ts`.
+- Eval: `--presets chat` runs the saved config (`CHAT_PRESET` / `EvalPresetName` in `retrieval-evaluator.ts`). It is not in the default list. The script reads the config only when `chat` is asked for.
+- Verified: unit tests, lint, types and build. Not checked: the playground in a browser (needs an admin login), a live chat turn with a raised threshold, and `bun run eval:rag -- --presets hybrid-rerank,chat` (makes paid or rate-limited calls). Whether the reranker's scores really fall in 0..1 is still unchecked (see 2.6), so pick the threshold from the filter panel's actual scores.
+
+## Subject name out of BM25 (Phase 2.10b)
+
+- Built after 2.10a. The owner saw the rewritten query "What has Lwin Maung Maung built recently?" pull BM25 toward chunks that mention the name. Every chunk is about the owner, so the name is noise for BM25.
+- `RetrievalConfig.ignoreSubjectInLexical` (default `true`, label "Ignore name in BM25"). Presets inherit it. A saved chat config without the field parses with the default.
+- `Retriever.searchLexical(indexId, query, k, { ignoreTermsOf })`. `Bm25Index.search` analyzes `ignoreTermsOf` with the index's analyzer and skips those query terms, so case, possessives and stems match. A query left with no terms returns `[]`. Only the query side changes: no index rebuild, and BM25 statistics still count the name.
+- The name is the request's `subjectName` (the published `profile.fullName`). It is not in `ENGLISH_STOPWORDS`; do not hard-code it.
+- Vector search, the reranker (until 2.10c) and the trace keep the full rewritten query. The `lexical-search` output gets `ignoredTermsOf` (optional in `SearchStageOutputSchema`); the trace panel shows it. The public chat steps do not.
+- Verified: unit tests, lint, types and build. Not checked: the playground in a browser and `bun run eval:rag -- --presets hybrid-rerank-rewrite,chat` with the toggle off in the saved chat config (`evals/README.md` explains the comparison).
+
+## Subject name out of the reranker (Phase 2.10c)
+
+- Built after 2.10b, at the owner's request. For "What is Lwin Maung Maung's role at Clinics Medical Group?" a certification chunk reranked third. The context prompt tells the contextualizer to mention the person's name "when relevant", so only some candidates' `indexText` carries it, and the cross-encoder rewards the overlap with the name in the query.
+- `RetrievalConfig.ignoreSubjectInRerank` (default `true`, label "Ignore name in rerank"). Presets inherit it. A saved chat config without the field parses with the default.
+- `withoutName(text, name)` (`server/rag/rerank/without-name.ts`) removes the name as a phrase (case-insensitive, any whitespace, optional `'s` / `’s` / `'`), tidies the spaces and keeps newlines. A single word of the name ("Lwin's") stays, on purpose. A text that would be empty keeps its original.
+- The pipeline applies it to the rerank query and each candidate's `indexText`. The `rerank` stage input's `query` is the query sent; the output gets `ignoredName` (optional in `RerankStageOutputSchema`), shown in the rerank panel and not in the public chat steps. Chunks, sources and other stages keep the name.
+- Verified: unit tests, lint, types and build. Not checked: the playground in a browser and `bun run eval:rag -- --presets hybrid-rerank-rewrite,chat` with the toggle off.
+
+## Drop reranked hits below the mean (Phase 2.10d)
+
+- Built after 2.10c, at the owner's request: a cut relative to each turn's scores, since the scores' scale moves (0.93 → 0.56 top score for the same question after 2.10c).
+- `RetrievalConfig.dropBelowMeanRerank` (default `true`, label "Drop below mean rerank"). Presets inherit it. A saved chat config without the field parses with the default.
+- The `filter` stage takes the mean over the reranked hits (at most `finalK`) and drops a hit below `mean - 1e-9` (so equal scores all stay). A hit must also pass `minRerankScore`. Skipped on reranker fallback, like the floor. The top hit always passes, so this cut alone never empties the list.
+- Trace: filter input gains `dropBelowMean`; output gains `meanRerankScore` (optional in `FilterStageOutputSchema`), shown in the filter panel. The public chat steps do not expose it.
+- Owner was told the trade-off: in their example (0.5553, 0.2820, 0.2259, 0.1674, 0.1340; mean 0.2729) it keeps "Key Skills" and drops the second Clinics Medical Group chunk. With 5 hits the mean always drops the weaker part. If that hurts answers, the largest-gap cut discussed before is the alternative.
+- Tests that assert every reranked hit becomes a source (`rag-composition.test.ts`, some pipeline tests) set `dropBelowMeanRerank: false`.
+- Verified: unit tests, lint, types and build. Not checked: the playground in a browser and an eval run with the toggle off.
 
 ## Reasoning in the LLM client (Phase 3.1)
 

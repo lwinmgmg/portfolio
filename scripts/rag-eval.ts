@@ -17,11 +17,16 @@ import {
 } from "../server/rag/eval/eval-args";
 import { renderEvalMarkdown, reportFileName } from "../server/rag/eval/eval-report";
 import { GoldenSetError, parseGoldenSet, selectByTags } from "../server/rag/eval/golden-set";
-import { RetrievalEvaluator, type EvalTarget } from "../server/rag/eval/retrieval-evaluator";
+import {
+  CHAT_PRESET,
+  RetrievalEvaluator,
+  type EvalTarget,
+} from "../server/rag/eval/retrieval-evaluator";
 import { createRag } from "../server/rag/rag-composition";
 import { MongoCvVersionRepository } from "../server/repositories/cv-version-repository";
 import { MongoRagChunkRepository } from "../server/repositories/rag-chunk-repository";
 import { MongoRagIndexRepository } from "../server/repositories/rag-index-repository";
+import { MongoRagSettingsRepository } from "../server/repositories/rag-settings-repository";
 
 const REPORTS_DIR = "evals/reports";
 
@@ -58,8 +63,13 @@ async function main(args: EvalArgs): Promise<void> {
     indexes,
     chunks,
     traces: unsavedTraces,
+    settings: new MongoRagSettingsRepository(),
     transaction: runTransaction,
   });
+  // The `chat` row runs what the chat uses: the saved config, or the defaults when none is.
+  const chatConfig = args.presets.includes(CHAT_PRESET)
+    ? (await rag.settings.chatSettings()).config
+    : undefined;
 
   const subjectName = (await cvVersions.findPublished())?.data?.profile.fullName.trim();
   if (!subjectName) throw new EvalSetupError("Publish a CV with a name before evaluating retrieval.");
@@ -94,6 +104,7 @@ async function main(args: EvalArgs): Promise<void> {
     items,
     targets,
     presets: args.presets,
+    chatConfig,
     ks: args.ks,
     subjectName,
     tags: args.tags,
