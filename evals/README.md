@@ -24,7 +24,7 @@ the playground), then compare:
 bun run eval:rag -- --presets hybrid-rerank-rewrite,chat
 ```
 
-Every fixed preset also drops reranked chunks scoring below the mean of their question's rerank
+Every fixed preset also drops reranked chunks scoring below half the mean of their question's rerank
 scores ("Drop below mean rerank"), which lowers recall@k by design; compare it the same way.
 Untick one box at a time, so the difference has one cause. Presets without rewriting only see the
 name in the query when a golden question names the owner; the rerank toggle still strips it from

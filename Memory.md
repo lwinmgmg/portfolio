@@ -364,7 +364,7 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 
 - Built after 2.10c, at the owner's request: a cut relative to each turn's scores, since the scores' scale moves (0.93 → 0.56 top score for the same question after 2.10c).
 - `RetrievalConfig.dropBelowMeanRerank` (default `true`, label "Drop below mean rerank"). Presets inherit it. A saved chat config without the field parses with the default.
-- The `filter` stage takes the mean over the reranked hits (at most `finalK`) and drops a hit below `mean - 1e-9` (so equal scores all stay). A hit must also pass `minRerankScore`. Skipped on reranker fallback, like the floor. The top hit always passes, so this cut alone never empties the list.
+- The `filter` stage takes the mean over the reranked hits (at most `finalK`) and drops a hit below half the mean (`MEAN_CUTOFF_FACTOR = 0.5`, an owner change on 2026-09-30; the trace still records the full mean, and the config name and label are unchanged). A hit must also pass `minRerankScore`. Skipped on reranker fallback, like the floor. The top hit always passes, so this cut alone never empties the list.
 - Trace: filter input gains `dropBelowMean`; output gains `meanRerankScore` (optional in `FilterStageOutputSchema`), shown in the filter panel. The public chat steps do not expose it.
 - Owner was told the trade-off: in their example (0.5553, 0.2820, 0.2259, 0.1674, 0.1340; mean 0.2729) it keeps "Key Skills" and drops the second Clinics Medical Group chunk. With 5 hits the mean always drops the weaker part. If that hurts answers, the largest-gap cut discussed before is the alternative.
 - Tests that assert every reranked hit becomes a source (`rag-composition.test.ts`, some pipeline tests) set `dropBelowMeanRerank: false`.

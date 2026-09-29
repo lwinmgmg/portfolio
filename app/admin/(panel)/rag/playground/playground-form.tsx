@@ -75,8 +75,8 @@ const HINTS: Partial<Record<keyof RetrievalConfig, string>> = {
     "Removes the name from the query and each chunk before reranking, so chunks whose context " +
     "mentions the name score no higher for it.",
   dropBelowMeanRerank:
-    "Also drops reranked chunks scoring below the mean of this question's rerank scores. Can " +
-    "drop a second relevant chunk.",
+    "Also drops reranked chunks scoring below half the mean of this question's rerank scores. " +
+    "Can drop a weakly matching chunk.",
   scopeRouter:
     "decision asks a decision model first; confident small talk and off-topic messages skip the " +
     "rewrite and retrieval.",

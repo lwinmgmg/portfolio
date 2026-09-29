@@ -318,7 +318,7 @@ class PipelineRun {
     const mean = dropBelowMean ? meanRerankScore(selected) : null;
     const passes = (hit: Selected) =>
       hit.rerankScore === null ||
-      (hit.rerankScore >= min && (mean === null || hit.rerankScore >= mean - MEAN_TOLERANCE));
+      (hit.rerankScore >= min && (mean === null || hit.rerankScore >= mean * MEAN_CUTOFF_FACTOR));
     const { kept } = await this.recorder.stage(
       STAGE.filter,
       { minRerankScore: min, dropBelowMean, hits: selected.length },
@@ -380,8 +380,9 @@ class PipelineRun {
   }
 }
 
-// The float mean of equal scores can land a hair above them; none of them is below it.
-const MEAN_TOLERANCE = 1e-9;
+// A hit is dropped when it scores below half the mean. Cross-encoder scores are non-negative, so
+// equal scores (whose float mean can land a hair above them) still clear half of it.
+const MEAN_CUTOFF_FACTOR = 0.5;
 
 function meanRerankScore(selected: readonly Selected[]): number | null {
   const scores = selected.flatMap((hit) => (hit.rerankScore === null ? [] : [hit.rerankScore]));

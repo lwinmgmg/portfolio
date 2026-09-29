@@ -478,21 +478,39 @@ test("the filter drops reranked hits below minRerankScore and records them", asy
   ]);
 });
 
-test("by default the filter also drops reranked hits below their mean and records the mean", async () => {
+test("by default the filter also drops reranked hits below half their mean and records the mean", async () => {
   const { pipeline } = setup();
 
-  // The reranker scores the four candidates 0.9, 0.8, 0.7, 0.6: mean 0.75.
+  // The reranker scores the four candidates 0.9, 0.8, 0.7, 0.6: mean 0.75, cutoff 0.375.
   const result = await pipeline.run(request());
 
-  expect(result.chunks.map((entry) => entry.rerankScore)).toEqual([0.9, 0.8]);
+  expect(result.chunks.map((entry) => entry.rerankScore)).toEqual([0.9, 0.8, 0.7, 0.6]);
   const filter = outputOf<FilterStageOutput>(result, "filter");
   expect(filter.meanRerankScore).toBeCloseTo(0.75, 12);
-  expect(filter.dropped.map((hit) => hit.score)).toEqual([0.7, 0.6]);
+  expect(filter.dropped).toEqual([]);
   const stage = result.trace.stages.find((entry) => entry.name === "filter");
   expect(stage?.input).toEqual({ minRerankScore: 0, dropBelowMean: true, hits: 4 });
 });
 
-test("a hit must pass both the mean and minRerankScore", async () => {
+test("hits scoring below half the mean are dropped", async () => {
+  const reranker = new FakeReranker({
+    hits: [
+      { chunkId: "c1", score: 0.9 },
+      { chunkId: "c2", score: 0.3 },
+      { chunkId: "c3", score: 0.2 },
+      { chunkId: "c5", score: 0.1 },
+    ],
+  });
+  const { pipeline } = setup({ reranker });
+
+  // Mean 0.375, cutoff 0.1875.
+  const result = await pipeline.run(request());
+
+  expect(result.chunks.map((entry) => entry.rerankScore)).toEqual([0.9, 0.3, 0.2]);
+  expect(outputOf<FilterStageOutput>(result, "filter").dropped.map((hit) => hit.score)).toEqual([0.1]);
+});
+
+test("a hit must pass both the mean cut and minRerankScore", async () => {
   const { pipeline } = setup();
 
   const result = await pipeline.run(request({ minRerankScore: 0.85 }));
@@ -509,7 +527,6 @@ test("equal rerank scores are all kept by the mean cut", async () => {
 
   const result = await pipeline.run(request());
 
-  // 0.1 * 3 / 3 is 0.10000000000000002 in floats, just above every score.
   expect(result.chunks.map((entry) => entry.id)).toEqual(["c1", "c2", "c3"]);
   expect(outputOf<FilterStageOutput>(result, "filter").dropped).toEqual([]);
 });
