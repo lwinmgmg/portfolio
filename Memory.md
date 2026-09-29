@@ -25,7 +25,8 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
-| (next) | Phase 4.5. Draft card under the answer (`chat-email-draft.tsx`), `email_draft` guard, `postPublicJson`, `client/api/contact-email.ts`, draft states in the reducer and storage, `ownerFirstName`. Built, not browser-checked. |
+| (next) | Phase 5 plan in Plan.md, and Phase 5.1: `robotMood`, `lastScope`, `ROBOT_MOODS`, `ROBOT_NAME` in `app/(public)/_components/robot/robot-mood.ts`. Done (no UI). |
+| `eba6edc` | Phase 4.5. Draft card under the answer (`chat-email-draft.tsx`), `email_draft` guard, `postPublicJson`, `client/api/contact-email.ts`, draft states in the reducer and storage, `ownerFirstName`. Built, not browser-checked. |
 | `857019f` | Phase 4.4. `POST /api/public/chat/email` (send or discard a draft), `ContactEmailService`, `EmailDraftStore` (atomic claim, marks, counts, stuck sweep) on the conversation repository, `EmailService.outbox()`. Built; the real-send done-when waits for the owner. |
 | `e316ee3` | Phase 4.2a. `/admin/email` connects Gmail through OAuth routes; the refresh token moves from the env to `email_connections`; `EmailService`; the two email scripts removed; chat tools looked up per turn. Gmail connected by 2026-09-30. |
 | `55b4ec8` | Phase 4.3. `send_email` draft tool, `runAnswerLoop`, `contact` scope, email drafts on conversations, `tool` trace stage and step. Built; the done-when waits on the email settings. |
@@ -79,6 +80,8 @@ Phase 2.14 (scope routing) is built, not Done: the owner chose `typesafe/jev-1.1
 Phases 3.1 through 3.4 are **Done**. The owner started Phase 3 (visible chat workflow) before the 2.x checkpoints. Phase 3.5 (workflow UI) is built but not marked Done: its done-when needs a browser (live steps, reload, 375 px and 1440 px, dark mode, keyboard only). Next: that browser check.
 
 Phase 4.1 (tool calling in the LLM client) is **Done**. The owner asked for 4.2 without a separate answer on the 4.1 checkpoint, and the Gmail API plan was built as written. Phase 4.2 (Gmail sender) is built. On 2026-09-29 the owner chose to keep the Gmail API (not SMTP with an app password) but to connect Gmail from the admin UI, so Phase 4.2a replaced the token script and carries the done-when: a Google OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback`, Gmail API on, publishing status In production), the values in `.env.local` and Vercel, then **Connect Gmail** and **Send test email** on `/admin/email`. By 2026-09-30 the owner had connected Gmail. Phase 4.3 (tools in the chat turn) is **Done**: the owner tested it and reported that it works. Phase 4.4 (send endpoint) is built. Its done-when needs the owner: send a real draft with curl, see it arrive, and see a second Send do nothing. Phase 4.5 (draft card) is built but not browser-checked. Its done-when needs the owner in a browser: Send from the card, Discard, a second Send, 375 px and keyboard only. Next: those checks. Phase 4 has no further sub-phase in Plan.md.
+
+Phase 5 (robot guide) was planned on 2026-09-30. The owner chose a cute mascot that greets visitors unprompted and points them to the projects. The owner left the build approach to the agent, which chose inline SVG with CSS keyframes and no new package. The owner asked for 5.1 without a separate answer on the 5.1 checkpoint, so the fixed decisions, the moods table and the name `Bit` stand as planned. Phase 5.1 (mood model, `app/(public)/_components/robot/robot-mood.ts`) is **Done**; it has no UI. Next: Phase 5.2 (the SVG robot and `/admin/robot`) when the owner asks.
 
 ## Environment
 

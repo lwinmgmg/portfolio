@@ -169,6 +169,7 @@ app/
   admin/(panel)/cv/...        CV admin pages
   admin/(panel)/rag/...       RAG admin pages (indexes, playground, traces)
   admin/(panel)/email/...     connect Gmail, disconnect, test email (4.2a)
+  admin/(panel)/robot/page.tsx  robot mood preview (5.2)
   api/admin/cv/upload/route.ts
   api/admin/email/connect/route.ts, api/admin/email/callback/route.ts  Gmail OAuth (4.2a)
   api/public/chat/route.ts
@@ -176,6 +177,10 @@ app/
   cv/download/route.ts
   (public)/_components/cv/... public CV sections
   (public)/_components/chat/... chat widget
+  (public)/_components/robot/robot-mood.ts            (+ test) mood from ChatState (5.1)
+  (public)/_components/robot/robot.tsx, robot.module.css  SVG robot and its moods (5.2)
+  (public)/_components/robot/robot-launcher.tsx, robot-eyes.ts (+ test), use-eye-tracking.ts  (5.3)
+  (public)/_components/robot/robot-greeting.tsx, robot-greeting-text.ts (+ test)  (5.4)
 client/api/chat.ts
 scripts/rag-eval.ts
 scripts/probe-scope-router.ts
@@ -1729,6 +1734,177 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
 
 ---
 
+# PHASE 5: Robot guide
+
+Today a text button, "Ask about my experience", opens the chat. Phase 5 replaces it with a small, cute
+robot. It greets visitors by itself, points them to the owner's projects, and shows what the chat is
+doing while it works:
+
+```
+  ┌──────────────────────────────────────────────┐
+  │ Hi! I'm Bit, Lwin's assistant.             × │
+  │ Want to see what Lwin has built?             │
+  │ [Show me the projects]  [Ask me a question]  │
+  └───────────────────────────────────────┬──────┘
+                                          ▼
+                                          o         <- antenna bulb (accent)
+                                       ┌─────┐
+                                       │ ◕ ◕ │/     <- waves while the bubble is open
+                                       └─────┘      bottom-right, where the button was
+```
+
+With the chat open, the same robot sits in the panel header. It listens while the visitor types, thinks
+during the retrieval steps, talks while the answer streams, cheers when an email is sent and looks puzzled
+at an off-topic question.
+
+**Fixed decisions for Phase 5** (the owner confirms them at the 5.1 checkpoint):
+
+| Topic | Decision |
+|---|---|
+| Character | A cute robot mascot named **Bit** (one constant, `ROBOT_NAME`; the owner may rename it). Round-cornered head with a face screen, two big eyes with highlights, a mouth, an antenna with a bulb, a small body with two arms, and a soft shadow under it. |
+| Colours | The antenna bulb, eye glow and cheeks use `--accent`; the body uses zinc. Dark mode switches through the same `prefers-color-scheme` media query as `globals.css`. |
+| Drawing and motion | Hand-built inline SVG, animated with CSS keyframes in a colocated CSS module (`robot.module.css`, the repo's first CSS module), with selectors keyed on `data-mood`. Only `transform` and `opacity` animate. No package (§0.1): Rive and Lottie were considered and are not needed for this. No image files. |
+| Moods | `idle`, `waving`, `listening`, `thinking`, `talking`, `puzzled`, `happy`, `sad`. A pure function derives the mood from `ChatState`, so the robot keeps no chat state of its own. |
+| Greeting | Unprompted, once per browser tab session (`sessionStorage`), 1.5 s after the widget mounts. Skipped if the visitor opened the chat first. It never opens the chat, moves focus or plays sound. |
+| Showing the work | The greeting links to the Projects section (`#projects`). After that link is used, the bubble says one line about the projects. Without projects it links to Experience; without either it offers only the chat. |
+| Where it shows | Only where the chat widget shows today: `/`, with a published CV and an active index. Hidden in print. |
+| Access | The launcher stays a native `<button>` with the accessible name "Ask about my experience", so a screen reader user still hears what it does. The SVG is `aria-hidden`. The greeting text is announced once through a polite `role="status"`. |
+| Reduced motion | Under `prefers-reduced-motion: reduce` nothing moves or loops. Moods still change the face (eyes, mouth, antenna colour). No eye tracking. |
+| Size | Launcher robot 56 px below `md`, 64 px from `md`. Bubble at most 18rem wide. Both are `fixed`, so neither shifts the layout. |
+
+**Moods** (the first matching row wins):
+
+| Mood | When | Face and motion |
+|---|---|---|
+| `waving` | The greeting bubble is open. | Smiling eyes, right arm waves. |
+| `thinking` | Streaming, and the pending answer has no text yet. | Eyes look up and scan, antenna bulb pulses. |
+| `talking` | Streaming, and answer text has arrived. | Mouth opens and closes, small bob. |
+| `listening` | The composer has text (the panel is open and the visitor is typing). | Leans forward, eyes wide. |
+| `sad` | A notice is showing, the last answer is `interrupted`, or its draft is `failed` or `limit`. | Drooping eyes, head down, bulb dims. |
+| `happy` | The last answer's draft is `sent`. | `^ ^` eyes, a hop, two sparkles. |
+| `puzzled` | The last answer's scope was `off_topic` (its `route` step's scope, or else its `rewrite` step's). | One eye squints, head tilts, `?` above the head. |
+| `idle` | Otherwise. | Blinks every few seconds, floats gently. |
+
+The no-information reply has no marker in the stream, so it gets `idle`, not `puzzled`.
+
+## Phase 5.1: Robot mood model
+
+**Files:** `app/(public)/_components/robot/robot-mood.ts` (+ test).
+
+**Steps**
+1. `RobotMood` and `ROBOT_MOODS`. `ROBOT_NAME = "Bit"`.
+2. `robotMood({ chat, typing, greeting }: { chat: ChatState; typing: boolean; greeting: boolean }): RobotMood`, following the moods table.
+3. `lastScope(entry: AssistantEntry): QueryScope | null`: the `route` step's non-null scope, else the `rewrite` step's scope, else null. An entry stored before steps existed has none.
+4. Tests: every row, the order between rows, an empty chat, a restored chat, and a legacy entry with no steps.
+
+**Status:** Done. "The last answer" is the final entry when it is an answer: after a failed turn drops its empty answer, the visitor's message is last and an older answer's mood no longer applies (the notice makes it `sad` anyway). Streaming before the pending entry exists counts as `thinking`.
+
+**Done when**
+- The standard gate (§0.2) passes. This phase has no UI.
+
+## Phase 5.2: Robot character
+
+**Files:** `app/(public)/_components/robot/robot.tsx`, `robot.module.css`, `app/admin/(panel)/robot/page.tsx`, admin nav in `app/admin/(panel)/layout.tsx`.
+
+**Steps**
+1. `Robot({ mood, className })` renders one `<svg aria-hidden="true" data-mood={mood}>`. Named groups: `shadow`, `body`, `arms` (left, right), `head`, `face`, `eyes` (each with a `pupil` group for 5.3), `mouth` (one shape per mood), `antenna`, `bulb`, and extras shown only for their mood (`sparkles`, `question`).
+2. Every mood has a still face (eye and mouth shapes, bulb colour), which is also the reduced-motion view. Motion is added on top of it:
+   - Idle loop: a blink every 4.5 s and a 3 s float.
+   - Per mood: the motions in the moods table.
+   - Face shapes change with a 150 ms opacity cross-fade.
+3. `@media (prefers-reduced-motion: reduce)` sets `animation: none` and `transition: none` on every part.
+4. Colours are CSS variables at the top of the module (`--robot-body`, `--robot-face`, `--robot-glow: var(--accent)`, …), overridden for dark mode and for print (hidden anyway).
+5. `/admin/robot` (behind `requireAdmin`, linked as "Robot" in the admin nav): every mood at 64 px and 128 px, on a light and a dark panel, so the owner can review the drawing without triggering each state in the chat.
+6. AGENTS.md: extend the `robot/` line (mapped in 5.1) and add a "Where new code goes" row for the CSS module pattern.
+
+**Done when**
+- `/admin/robot` shows all eight moods, each recognisable at 64 px, in light and dark mode.
+- With reduced motion turned on, nothing moves and each mood is still recognisable.
+- The owner approves the look (checkpoint).
+
+## Phase 5.3: Robot launcher
+
+**Files:** `app/(public)/_components/robot/robot-launcher.tsx`, `robot-eyes.ts` (+ test), `use-eye-tracking.ts`, `app/(public)/_components/chat/chat-widget.tsx`.
+
+**Steps**
+1. `RobotLauncher` replaces the text button: the same `fixed right-4 bottom-4 z-40` place, the same trigger ref (focus still returns to it on close), `aria-haspopup="dialog"`, `aria-label` "Ask about my experience", `focusRing`, `print:hidden`. It shows the robot with `robotMood(...)` (`typing: false` while the panel is closed).
+2. An answer that is still streaming when the panel closes keeps the launcher thinking or talking. If it finishes while the panel is closed, a small accent dot on the robot marks it unread until the panel opens again. `ChatWidget` tracks `panelOpen` (set in `open()` and in the dialog's `onClose`) and `unread`.
+3. Interactions:
+   - Hover and `:focus-visible`: the head tilts and the robot hops once.
+   - Press: a short squash.
+   - Eyes follow the pointer: pupils move at most 3 px toward it.
+4. Eye tracking (`use-eye-tracking.ts`):
+   - One passive `pointermove` listener on `window`, throttled with `requestAnimationFrame`.
+   - It writes `--eye-x` / `--eye-y` on the SVG element, so React does not re-render.
+   - The math lives in `robot-eyes.ts` (pure): `eyeOffset(pointer, eyeCentre, maxPx)`.
+   - On only for `(pointer: fine)` without reduced motion. The listener is removed on unmount.
+5. Tests: `eyeOffset` (direction, clamping, pointer on the centre).
+
+**Done when**
+- The robot replaces the button. Tab reaches it, Enter and Space open the chat, Esc closes it, and focus returns to the robot.
+- Eyes follow the mouse on desktop. Nothing tracks on a phone or with reduced motion.
+- At 375 px the robot covers no more of the CV than the old button did.
+- Checked in a browser at 375 px and 1440 px, in dark mode and keyboard only, or listed as not checked, as in 2.10.
+
+## Phase 5.4: Greeting
+
+**Files:** `app/(public)/_components/robot/robot-greeting.tsx`, `robot-greeting-text.ts` (+ test), `app/(public)/_components/chat/chat-storage.ts` (+ test), `chat-widget.tsx`, `app/(public)/page.tsx`.
+
+**Steps**
+1. `robot-greeting-text.ts` (pure):
+   - `greetingTarget(cv)` returns `{ anchor: "projects", label: "Show me the projects" }`, the Experience equivalent, or null. It takes the section ids from `CV_LIST_SECTIONS`.
+   - `greetingLines({ robotName, ownerName, target })`:
+     - Opening: "Hi! I'm Bit, Lwin's assistant. Want to see what Lwin has built?"
+     - Without a target: "…Ask me anything about Lwin's work."
+     - Without a name: "Hi! I'm Bit. I can show you around this CV."
+     - After the link is used: "Here are Lwin's projects. Open one for the full story, or ask me about it."
+2. `page.tsx` passes `greetingTarget(cv)` to `ChatWidget`.
+3. Storage in `chat-storage.ts`: `GREETED_KEY = "cv-chat:greeted"`, `readGreeted` / `writeGreeted`, guarded like the other keys. It is written when the bubble appears, so a reload in the same tab does not greet again.
+4. Timing: after mount, if the tab was not greeted and the panel has not been opened, wait 1.5 s, then show the bubble. The timer is cleared on unmount and when the panel opens.
+5. Bubble:
+   - A non-modal `<section aria-label="Greeting from Bit">` above and left of the robot, with a tail pointing at it.
+   - Contents: the text in a `role="status"` paragraph, the target link, an "Ask me a question" button, and a close button (`aria-label="Close greeting"`).
+   - The robot waves while the bubble is open. Focus is never moved to it. Esc closes it when focus is inside it.
+6. Actions:
+   - The target is a real `<a href="#projects">`. Native anchor navigation scrolls there and moves the keyboard starting point with it. The bubble then shows the follow-up line, with only "Ask me a question" and the close button.
+   - "Ask me a question" closes the bubble and opens the chat (the same `open()`).
+   - Opening the chat from the robot also closes the bubble.
+7. Phones (below `md`): the bubble closes once the visitor has scrolled one screen height since it appeared, so it does not sit over the CV text. Following the target link resets the start point. The rule is a pure `shouldCloseOnScroll(startY, y, viewportHeight)` in `robot-greeting-text.ts`.
+8. Tests: the lines with and without a name or target, `greetingTarget` for each CV shape, the greeted-key round trip and throwing storage, and the scroll rule.
+
+**Done when**
+- In a new tab the robot greets after about 1.5 s. A reload does not greet again, and another new tab does.
+- "Show me the projects" lands on the projects. "Ask me a question" opens the chat. Close works by mouse and keyboard. Focus is never taken.
+- At 375 px the bubble fits with no horizontal scroll and closes after a screen of scrolling.
+- Checked in a browser at 375 px and 1440 px, in dark mode, keyboard only and with a screen reader's announcement, or listed as not checked, as in 2.10.
+
+## Phase 5.5: Robot in the chat panel
+
+**Files:** `app/(public)/_components/chat/chat-widget.tsx`, `chat-composer.tsx`, `chat-messages.tsx`.
+
+**Steps**
+1. `ChatComposer` gains `onTypingChange(typing: boolean)`. It is called when the trimmed value turns empty or non-empty, including the clear after a send.
+2. Header: a 40 px robot before the title, with `robotMood({ chat, typing, greeting: false })`. The title text does not change.
+3. Empty chat: above the suggestions, a 96 px waving robot and "Hi, I'm Bit. Ask me about Lwin's experience, skills or projects." The name-less wording is as in 5.4.
+4. The robot has no live region. The existing `role="status"` in `chat-messages.tsx` still announces the steps.
+
+**Done when**
+- Through one turn the header robot listens while the visitor types, thinks during the steps, talks while the answer streams, and is idle after it.
+- It is happy after a draft is sent, puzzled after an off-topic question, and sad at a limit notice.
+- At 375 px the header does not wrap.
+- Checked in a browser at 375 px and 1440 px, in dark mode, keyboard only and with reduced motion, or listed as not checked, as in 2.10.
+
+## Phase 5.6 (optional): Section remarks
+
+The robot says one line the first time the visitor scrolls to Experience, Projects or Skills (for
+example, "Lwin has built 4 projects. Open one for the full story."). The trigger reuses `use-scroll-spy.ts`.
+At most once per section per tab session, never while the panel or the greeting bubble is open, and the
+bubble closes by itself after 6 s, because the same text is on the page.
+
+The owner decides after 5.4 whether this helps or distracts. It is not planned in detail until then.
+
+---
+
 ## 3. Owner checkpoints
 
 | After | Owner action |
@@ -1746,6 +1922,9 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
 | 3.5 | Check the workflow panel on a phone and on desktop. |
 | 4.1 | Confirm the Phase 4 fixed decisions (draft-then-Send, limits, Gmail API over SMTP). |
 | 4.2a | Create a Google Cloud OAuth client (Web application, redirect URI `<origin>/api/admin/email/callback` per site address) with the Gmail API enabled, set the app's publishing status to **In production**, put the client id, secret and `CONTACT_EMAIL_TO` in `.env.local` and Vercel, then click **Connect Gmail** and **Send test email** on `/admin/email`. |
+| 5.1 | Confirm the Phase 5 fixed decisions and the moods table, and keep or change the robot's name (`Bit`). |
+| 5.2 | Review every mood on `/admin/robot` in light mode, dark mode and with reduced motion; approve the look before 5.3. |
+| 5.4 | Try the greeting on a phone and on desktop; say whether 5.6 (section remarks) is wanted. |
 
 ## 4. Known risks
 
@@ -1758,4 +1937,5 @@ The owner asked on 2026-09-29 to connect Gmail from the admin UI instead of runn
 - **Email abuse (Phase 4).** Anyone can draft and send up to the limits, and the text is visitor-written. The fixed recipient, the Send click, the per-session and daily caps, and the public-session gate bound it; spam can still reach the owner's inbox up to `CONTACT_EMAIL_DAILY_LIMIT` a day.
 - **Tool-calling reliability (Phase 4).** The free answer model lists `tools`, but it may call the tool too eagerly or not at all. 4.1 records how it behaves. Changing the model is the owner's decision.
 - **Decisions API is alpha (2.14).** The endpoint, request and response shapes may change without notice, and the default router model is new and free-tier (tight rate limits). The router is opt-in and every failure falls back to the rewriter, so a break costs the short-circuit, not the turn. Visitor messages and recent history go to that provider, like the rewriter's.
+- **Unprompted greeting (Phase 5).** A bubble that appears by itself can annoy visitors or cover the CV on a phone. It shows once per tab session, never takes focus, can be closed at once, and closes itself on a phone after a screen of scrolling. The robot also adds a few KB of SVG and CSS to the public chat chunk; it loads no images or packages.
 - **Public session gate.** The home page redirects cookie-less clients to session issuance; crawlers that drop cookies may not index the CV page. Out of scope; do not change it without asking.
