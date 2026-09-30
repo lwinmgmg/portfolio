@@ -3,6 +3,7 @@
 import { useEffect, useReducer, useRef } from "react";
 
 import { streamChat } from "@/client/api/chat";
+import { sendChatFeedback } from "@/client/api/chat-feedback";
 import { sendContactEmail } from "@/client/api/contact-email";
 import { PublicApiError } from "@/client/api/public-http";
 import {
@@ -17,7 +18,7 @@ import {
   readStoredChat,
   writeStoredChat,
 } from "@/app/(public)/_components/chat/chat-storage";
-import { CHAT_MESSAGE_MAX_CHARS } from "@/server/domain/chat";
+import { CHAT_MESSAGE_MAX_CHARS, type ChatFeedback } from "@/server/domain/chat";
 
 export function useChat() {
   const [state, dispatch] = useReducer(chatReducer, INITIAL_CHAT_STATE);
@@ -83,13 +84,25 @@ export function useChat() {
     dispatch({ type: "draft", entryId, draftId: draft.id, state: draftStateFor(outcome) });
   }
 
+  // The thumb shows only once the server has stored it, so it never claims more than the admin
+  // will see. A refused or failed request leaves the buttons as they were.
+  async function rateAnswer(entryId: string, value: ChatFeedback) {
+    const { conversationId } = state;
+    const entry = state.entries.find((item) => item.id === entryId);
+    if (!conversationId || entry?.role !== "assistant" || entry.messageIndex === null) return;
+    if (entry.feedback === value) return;
+    if (await sendChatFeedback({ conversationId, messageIndex: entry.messageIndex, value })) {
+      dispatch({ type: "feedback", entryId, value });
+    }
+  }
+
   function reset() {
     if (state.streaming) return;
     restored.current = true;
     dispatch({ type: "reset" });
   }
 
-  return { state, restore, send, stop, reset, actOnDraft };
+  return { state, restore, send, stop, reset, actOnDraft, rateAnswer };
 }
 
 let lastEntry = 0;

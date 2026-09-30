@@ -81,7 +81,13 @@ export function parseChatEvent(value: unknown): ChatEvent | null {
         ? { type: "sources", sources: value.sources }
         : null;
     case "done":
-      return { type: "done" };
+      return {
+        type: "done",
+        messageIndex:
+          typeof value.messageIndex === "number" && Number.isInteger(value.messageIndex)
+            ? value.messageIndex
+            : null,
+      };
     case "error": {
       const code = ERROR_CODES.find((known) => known === value.code);
       return code ? { type: "error", code } : null;

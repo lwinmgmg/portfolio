@@ -12,12 +12,17 @@ export const CHAT_SESSION_MESSAGE_LIMIT = 20;
 // Conversations are removed this long after their last message.
 export const CHAT_CONVERSATION_TTL_SECONDS = 30 * 24 * 3600;
 
+// The visitor's thumb on an answer.
+export type ChatFeedback = "up" | "down";
+
 // Only the text is stored. Retrieved chunks never enter the history.
 export type StoredMessage = ChatTurn & {
   // CV entities the answer cited. Empty for user messages.
   citedEntityKeys: string[];
   // The retrieval trace behind an answer. Null for user messages.
   traceId: string | null;
+  // Set by the visitor on an assistant message; null until then, and always for user messages.
+  feedback: ChatFeedback | null;
   createdAt: string;
 };
 
@@ -93,6 +98,23 @@ export interface EmailDraftStore {
   // Writes `failed` on drafts claimed before `claimedBefore` and still `sending`.
   failEmailDraftsStuckSince(claimedBefore: Date): Promise<void>;
   findForSession(id: string, sessionId: string): Promise<Conversation | null>;
+}
+
+// The feedback side of the conversation store. Its own interface, like EmailDraftStore, so the
+// chat turn's fakes need not grow.
+export interface MessageFeedbackStore {
+  // Sets (or replaces) the thumb on an assistant message of the session's own conversation.
+  // False when the conversation, the message or the session's ownership does not match.
+  setFeedback(
+    conversationId: string,
+    sessionId: string,
+    messageIndex: number,
+    value: ChatFeedback,
+  ): Promise<boolean>;
+  // The feedback on the answers behind these traces. Traces without feedback are left out.
+  feedbackByTraceId(traceIds: readonly string[]): Promise<Map<string, ChatFeedback>>;
+  // Traces whose answer got this feedback, newest conversation activity first.
+  traceIdsWithFeedback(value: ChatFeedback, limit: number): Promise<string[]>;
 }
 
 // A source an answer cited, linked to its place on the CV page.
@@ -193,6 +215,8 @@ export type ChatEvent =
   // The send_email tool drafted this; it is sent only when the visitor presses Send.
   | { type: "email_draft"; draft: { id: string; text: string } }
   | { type: "sources"; sources: ChatSource[] }
-  | { type: "done" }
+  // `messageIndex`: where the answer sits in the stored conversation, the address of its
+  // feedback. Null when the turn was not stored.
+  | { type: "done"; messageIndex: number | null }
   | { type: "error"; code: ChatErrorCode }
   | { type: "limit"; code: ChatLimitCode };

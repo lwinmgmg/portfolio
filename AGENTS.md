@@ -72,6 +72,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
         [indexId]/            Index detail with chunks.
         playground/           Retrieval playground: run the pipeline with any config and index, see its trace; "Use for chat" saves the config.
         _components/          Shared trace view (summary, timing bars, stage panels, final sources).
+      rag/traces/             Trace history (kind and 👎 filters), trace detail with the answer, feedback and an "Add to golden set" download.
       email/                  Connect Gmail (link to the connect route), disconnect, test email; reuses the RAG admin styles.
       robot/                  Preview of every robot mood at two sizes, light and dark, moving and still.
   api/
@@ -79,7 +80,7 @@ app/                          Routes. Keep them thin: parse input, call a servic
     admin/cv/[versionId]/pdf/ Admin PDF download.
     admin/email/              Gmail OAuth: connect/ (state + PKCE cookie, redirect to Google) and callback/ (saves the token).
     public/session/           Public session status; issue/ creates one (rate limited).
-    public/chat/              Chat turn: withPublicSession, NDJSON stream of ChatEvents. email/: the visitor's Send or Discard on a draft (JSON).
+    public/chat/              Chat turn: withPublicSession, NDJSON stream of ChatEvents. email/: the visitor's Send or Discard on a draft (JSON). feedback/: the visitor's thumb on an answer.
   cv/download/                Public CV PDF download.
 
 client/                       Browser-side data access.
@@ -101,6 +102,7 @@ server/                       All server logic. Layered: domain -> repositories/
     public-session-service.ts Public session issue and lookup.
     chat-service.ts           Chat turn: limits, conversation, retrieval, step and reasoning events, answer via runAnswerLoop (tools looked up per turn), stored turn and trace.
     email-service.ts          Gmail connection: OAuth connect/callback, disconnect, test email, isReady, the cached sender and outbox (email-runtime wires it).
+    chat-feedback-service.ts  The visitor's thumb on an answer (ownership checked by the store); trace-history-service.ts is the admin's trace list and detail (wired in chat-runtime).
     contact-email-service.ts  Sends a chat draft at most once (atomic claim via EmailDraftStore, limits) or discards it; wired in chat-runtime.
     *-runtime.ts              server-only wiring: builds services from env, exposes cached reads for pages.
   auth/                       Admin env, credential check, scrypt verifier, JWT signer, session cookie, login schema.

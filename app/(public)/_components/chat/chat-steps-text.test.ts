@@ -43,6 +43,8 @@ function entry(overrides: Partial<AssistantEntry>): AssistantEntry {
     steps: [],
     reasoning: "",
     emailDraft: null,
+    messageIndex: null,
+    feedback: null,
     ...overrides,
   };
 }

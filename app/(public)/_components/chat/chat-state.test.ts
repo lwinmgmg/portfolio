@@ -46,7 +46,7 @@ test("a streamed answer collects deltas and sources, then settles", () => {
     event({ type: "delta", text: "At " }),
     event({ type: "delta", text: "Acme [S1]." }),
     event({ type: "sources", sources: [SOURCE] }),
-    event({ type: "done" }),
+    event({ type: "done", messageIndex: null }),
     { type: "end", outcome: "complete" },
   );
   expect(state).toEqual({
@@ -64,6 +64,8 @@ test("a streamed answer collects deltas and sources, then settles", () => {
         steps: [],
         reasoning: "",
         emailDraft: null,
+        messageIndex: null,
+        feedback: null,
       },
     ],
   });
@@ -169,7 +171,7 @@ test("a full turn keeps its steps in start order and its reasoning", () => {
     event({ type: "delta", text: "At Acme [S1]." }),
     ended("generate", "done", 30),
     event({ type: "sources", sources: [SOURCE] }),
-    event({ type: "done" }),
+    event({ type: "done", messageIndex: null }),
     { type: "end", outcome: "complete" },
   );
   expect(pending(state)).toMatchObject({ status: "done", reasoning: "The CV says Acme." });
@@ -271,14 +273,14 @@ test("a stream that completes with a step still running marks it stopped", () =>
     ended("rewrite"),
     running("generate"),
     event({ type: "delta", text: "Hello." }),
-    event({ type: "done" }),
+    event({ type: "done", messageIndex: null }),
   );
   expect(pending(state).status).toBe("done");
   expect(pending(state).steps.map((step) => step.status)).toEqual(["done", "stopped"]);
 });
 
 test("steps and reasoning outside a stream are ignored", () => {
-  const settled = run(INITIAL_CHAT_STATE, send("Hi"), event({ type: "done" }), {
+  const settled = run(INITIAL_CHAT_STATE, send("Hi"), event({ type: "done", messageIndex: null }), {
     type: "end",
     outcome: "complete",
   });
@@ -346,7 +348,7 @@ test("a new conversation id from the server drops the older turns", () => {
     INITIAL_CHAT_STATE,
     send("One"),
     event({ type: "meta", conversationId: "c1" }),
-    event({ type: "done" }),
+    event({ type: "done", messageIndex: null }),
     { type: "end", outcome: "complete" },
   );
   const same = run(first, send("Two", 2), event({ type: "meta", conversationId: "c1" }));
@@ -367,4 +369,28 @@ test("restore fills only an untouched chat, and reset clears it", () => {
   const again = run(restored, { type: "restore", conversationId: "c9", entries: [] });
   expect(again).toBe(restored);
   expect(run(restored, { type: "reset" })).toEqual(INITIAL_CHAT_STATE);
+});
+
+test("done records where the answer is stored, and a rating is kept on that entry", () => {
+  const rated = run(
+    INITIAL_CHAT_STATE,
+    send("Where?"),
+    event({ type: "meta", conversationId: "c1" }),
+    event({ type: "delta", text: "At Acme." }),
+    event({ type: "done", messageIndex: 3 }),
+    { type: "end", outcome: "complete" },
+    { type: "feedback", entryId: "a1", value: "down" },
+  );
+
+  const answer = rated.entries.at(-1);
+  expect(answer?.role === "assistant" && [answer.messageIndex, answer.feedback]).toEqual([3, "down"]);
+});
+
+test("a feedback action for an unknown entry changes nothing", () => {
+  const state = run(INITIAL_CHAT_STATE, send("Hi"), { type: "feedback", entryId: "zzz", value: "up" });
+
+  expect(state.entries.map((entry) => entry.role === "assistant" && entry.feedback)).toEqual([
+    false,
+    null,
+  ]);
 });

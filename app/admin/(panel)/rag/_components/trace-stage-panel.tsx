@@ -80,6 +80,8 @@ function StageBody({ detail }: { detail: StageDetail }) {
       return <RerankBody detail={detail} />;
     case "filter":
       return <FilterBody detail={detail} />;
+    case "generate":
+      return <GenerateBody detail={detail} />;
     case "tool":
       return <ToolBody detail={detail} />;
     case "raw":
@@ -320,6 +322,49 @@ function FilterBody({ detail }: { detail: Extract<StageDetail, { kind: "filter" 
         dropped {dropped.length}.
       </p>
       {dropped.length > 0 ? <HitTable hits={dropped} scoreLabel="Rerank score" /> : null}
+    </div>
+  );
+}
+
+function GenerateBody({ detail }: { detail: Extract<StageDetail, { kind: "generate" }> }) {
+  const { input, output } = detail;
+  const { usage } = output;
+  return (
+    <div className="space-y-3 text-sm">
+      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[max-content_1fr]">
+        <dt className="font-medium">Model</dt>
+        <dd className="break-all font-mono">{output.model}</dd>
+        <dt className="font-medium">Mode</dt>
+        <dd>
+          {input.mode}, {input.sources} {input.sources === 1 ? "source" : "sources"},{" "}
+          {input.historyTurns} history {input.historyTurns === 1 ? "turn" : "turns"}
+          {input.tools && input.tools.length > 0 ? `, tools: ${input.tools.join(", ")}` : ""}
+        </dd>
+        <dt className="font-medium">Tokens</dt>
+        <dd className="tabular-nums">
+          {usage ? `${usage.promptTokens} in, ${usage.completionTokens} out` : "not reported"}
+        </dd>
+        <dt className="font-medium">Cited</dt>
+        <dd className="font-mono">
+          {output.citedSourceIds.length > 0 ? output.citedSourceIds.join(", ") : "none"}
+        </dd>
+        {output.stopped ? (
+          <>
+            <dt className="font-medium">Ended</dt>
+            <dd className="font-semibold">Stopped by the visitor</dd>
+          </>
+        ) : null}
+      </dl>
+      <div className="space-y-1">
+        <p className="font-medium">Answer</p>
+        <pre className={pre}>{output.answer || "(empty)"}</pre>
+      </div>
+      {output.reasoning ? (
+        <details className="space-y-1">
+          <summary className="cursor-pointer font-medium">Reasoning</summary>
+          <pre className={pre}>{output.reasoning}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }

@@ -1091,6 +1091,8 @@ reranked hit whose score is below the mean of that turn's reranked scores.
 
 ## Phase 2.11: Trace history and feedback
 
+**Status:** Built. Not marked Done: the done-when (find a bad answer via 👎, open its trace, see the failing stage) needs a browser and a live chat turn. `done` events now carry `messageIndex` (the address of the answer's feedback); feedback is stored as `feedback` on the `StoredMessage`.
+
 **Files:** `app/admin/(panel)/rag/traces/*`, conversation repository + chat API extensions, chat UI.
 
 **Steps**

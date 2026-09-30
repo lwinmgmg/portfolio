@@ -433,7 +433,7 @@ test("a CV question streams meta, the retrieval steps, the answer step, deltas, 
         },
       ],
     },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
 });
 
@@ -483,7 +483,7 @@ test("a CV question with no chunks gets the no-information reply without an LLM 
     { type: "meta", conversationId: "conv-1" },
     { type: "delta", text: reply },
     { type: "sources", sources: [] },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
   expect(stepLog(events).some((step) => step.startsWith("generate"))).toBe(false);
   expect(chat.requests).toHaveLength(0);
@@ -510,7 +510,7 @@ test("steps are sent while the pipeline is still running", async () => {
   const rest = await collect({ [Symbol.asyncIterator]: () => events });
 
   expect(stepLog(rest).slice(0, 2)).toEqual(["embed-queries:running", "embed-queries:done"]);
-  expect(rest.at(-1)).toEqual({ type: "done" });
+  expect(rest.at(-1)).toEqual({ type: "done", messageIndex: 1 });
 });
 
 test("the answer model gets the answer settings and the sources in the final turn", async () => {
@@ -554,7 +554,7 @@ test("reasoning streams in its own step before the answer and is not part of the
     { type: "delta", text: "She worked at Acme [S1]." },
     ended("generate", 20, 5, { kind: "generate", sources: 2 }),
     { type: "sources", sources: [citedAcme] },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
   expect(conversations.rows[0]?.messages[1]?.text).toBe("She worked at Acme [S1].");
   // The trace's generate stage covers the reasoning too.
@@ -600,7 +600,7 @@ test("reasoning with no answer text still ends in a finished generate step", asy
     "generate:running",
     "generate:done",
   ]);
-  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(events.at(-1)).toEqual({ type: "done", messageIndex: 1 });
 });
 
 test("the turn is stored with cited entity keys and the trace id", async () => {
@@ -614,6 +614,7 @@ test("the turn is stored with cited entity keys and the trace id", async () => {
       text: "Where did she work?",
       citedEntityKeys: [],
       traceId: null,
+      feedback: null,
       createdAt: now.toISOString(),
     },
     {
@@ -621,6 +622,7 @@ test("the turn is stored with cited entity keys and the trace id", async () => {
       text: "She built billing at Acme [S1] and this site [S2][S9].",
       citedEntityKeys: ["experience:acme", "project:portfolio"],
       traceId: "trace-1",
+      feedback: null,
       createdAt: now.toISOString(),
     },
   ]);
@@ -699,6 +701,7 @@ test("the session limit stops the 21st message", async () => {
     text: "q",
     citedEntityKeys: [],
     traceId: null,
+    feedback: null,
     createdAt: at,
   };
   conversations.rows.push({
@@ -755,7 +758,7 @@ test("an off-topic message gets the fixed reply without an LLM call", async () =
     }),
     { type: "delta", text: reply },
     { type: "sources", sources: [] },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
   expect(chat.requests).toHaveLength(0);
   expect(conversations.rows[0]?.messages.map((message) => message.text)).toEqual([
@@ -779,7 +782,7 @@ test("small talk gets the fixed reply without an LLM call", async () => {
     ended("rewrite", 0, 1, { kind: "rewrite", queries: ["Hello"], scope: "smalltalk", fallback: false }),
     { type: "delta", text: reply },
     { type: "sources", sources: [] },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
   expect(chat.requests).toHaveLength(0);
   expect(conversations.rows[0]?.messages.map((message) => message.text)).toEqual(["Hello", reply]);
@@ -1018,7 +1021,7 @@ test("storage failures are logged and the stream still finishes", async () => {
 
   const events = await collect(service.reply(ask));
 
-  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(events.at(-1)).toEqual({ type: "done", messageIndex: null });
   expect(logged).toEqual(["Could not store the chat messages."]);
 });
 
@@ -1085,7 +1088,7 @@ test("a contact turn yields the tool steps, the draft, then round 2's answer and
     { type: "delta", text: "Check it and press Send." },
     ended("generate", 25, 5, { kind: "generate", sources: 0 }),
     { type: "sources", sources: [] },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
 
   // Round 1 offered the tool; round 2 saw the call and its result, with the tool on `none`.
@@ -1149,7 +1152,7 @@ test("a CV question with tools offered keeps its sources and adds the tool rules
 
   const events = await collect(service.reply(ask));
 
-  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(events.at(-1)).toEqual({ type: "done", messageIndex: 1 });
   expect(chat.requests).toHaveLength(1);
   expect(chat.requests[0]?.tools?.map((tool) => tool.name)).toEqual(["send_email"]);
   expect(messageText(chat.requests[0], 0)).toContain("Messages to Jane Doe:");
@@ -1171,7 +1174,7 @@ test("without email configured no tools are offered and a contact request gets a
     { type: "meta", conversationId: "conv-1" },
     { type: "delta", text: reply },
     { type: "sources", sources: [] },
-    { type: "done" },
+    { type: "done", messageIndex: 1 },
   ]);
   expect(contact.chat.requests).toHaveLength(0);
   expect(contact.saved[0]?.stages.map((stage) => stage.name)).toEqual(["rewrite"]);
@@ -1210,7 +1213,7 @@ test("off topic and small talk keep their fixed replies with tools offered", asy
 
     const events = await collect(service.reply(ask));
 
-    expect(events.at(-1)).toEqual({ type: "done" });
+    expect(events.at(-1)).toEqual({ type: "done", messageIndex: 1 });
     expect(chat.requests).toHaveLength(0);
     expect(conversations.rows[0]?.emailDrafts).toEqual([]);
   }
@@ -1231,7 +1234,7 @@ test("invalid arguments draft nothing; the step says so and round 2 still answer
   expect(events.some((event) => event.type === "email_draft")).toBe(false);
   const toolStep = events.find((event) => event.type === "step" && event.step.status === "done" && event.step.name === "tool");
   expect(toolStep).toMatchObject({ step: { detail: { kind: "tool", name: "send_email", outcome: "invalid" } } });
-  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(events.at(-1)).toEqual({ type: "done", messageIndex: 1 });
   expect(conversations.rows[0]?.emailDrafts).toEqual([]);
   expect(toolStages(saved[0]).map((stage) => stage.output)).toEqual([
     { outcome: "invalid", draftId: null },
@@ -1285,7 +1288,7 @@ test("a tool that fails is logged, its step fails, and the answer still finishes
     "tool:failed",
   ]);
   expect(events.some((event) => event.type === "email_draft")).toBe(false);
-  expect(events.at(-1)).toEqual({ type: "done" });
+  expect(events.at(-1)).toEqual({ type: "done", messageIndex: 1 });
   expect(logged).toEqual(["Chat tool failed."]);
   expect(toolStages(saved[0])[0]).toMatchObject({
     output: { outcome: "failed", draftId: null },

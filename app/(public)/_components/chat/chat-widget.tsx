@@ -47,7 +47,7 @@ export function ChatWidget({
   sectionIds: readonly string[];
   sectionRemarks: readonly SectionRemark[];
 }) {
-  const { state, restore, send, stop, reset, actOnDraft } = useChat();
+  const { state, restore, send, stop, reset, actOnDraft, rateAnswer } = useChat();
   const greeting = useGreeting();
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -217,6 +217,7 @@ export function ChatWidget({
             onNavigate={handleNavigate}
             ownerName={ownerName}
             onDraft={(entryId, action) => void actOnDraft(entryId, action)}
+            onRate={(entryId, value) => void rateAnswer(entryId, value)}
           />
           {state.notice ? (
             <p

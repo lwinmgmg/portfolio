@@ -137,6 +137,11 @@ function readStoredEntry(value: unknown): ChatEntry | null {
     steps: steps.flatMap((step) => readChatStep(step, ANSWER_STEP_STATUSES) ?? []),
     reasoning: reasoning.slice(0, CHAT_REASONING_MAX_CHARS),
     emailDraft: readStoredDraft(value.emailDraft),
+    messageIndex:
+      typeof value.messageIndex === "number" && Number.isInteger(value.messageIndex)
+        ? value.messageIndex
+        : null,
+    feedback: value.feedback === "up" || value.feedback === "down" ? value.feedback : null,
   };
 }
 

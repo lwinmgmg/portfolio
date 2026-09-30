@@ -430,9 +430,11 @@ export interface RagTraceRepository {
   ensureReady(): Promise<void>;
   save(trace: RetrievalTrace): Promise<void>;
   findById(id: string): Promise<RetrievalTrace | null>;
-  // Newest first.
-  list(limit: number): Promise<RetrievalTrace[]>;
+  // Newest first. `kind` keeps one kind; `ids` keeps only those traces.
+  list(limit: number, filter?: TraceListFilter): Promise<RetrievalTrace[]>;
 }
+
+export type TraceListFilter = { kind?: RetrievalTraceKind; ids?: readonly string[] };
 
 // Site-wide RAG settings. Configs are returned raw, because a stored one may predate the schema.
 export interface RagSettingsRepository {

@@ -6,6 +6,7 @@ import type {
   RagTraceRepository,
   RetrievalConfig,
   RetrievalTrace,
+  TraceListFilter,
   TraceSource,
   TraceStage,
 } from "@/server/domain/rag";
@@ -79,10 +80,13 @@ export class MongoRagTraceRepository
     return document ? this.toEntity(document) : null;
   }
 
-  async list(limit: number): Promise<RetrievalTrace[]> {
+  async list(limit: number, filter: TraceListFilter = {}): Promise<RetrievalTrace[]> {
     await this.ensureReady();
     const documents = await this.collection()
-      .find()
+      .find({
+        ...(filter.kind ? { kind: filter.kind } : {}),
+        ...(filter.ids ? { _id: { $in: [...filter.ids] } } : {}),
+      })
       .sort({ createdAt: -1 })
       .limit(limit)
       .toArray();

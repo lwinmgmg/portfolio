@@ -5,6 +5,8 @@ import {
   EmbedStageOutputSchema,
   FilterStageOutputSchema,
   FuseStageOutputSchema,
+  GenerateStageInputSchema,
+  GenerateStageOutputSchema,
   RerankStageOutputSchema,
   RewriteStageInputSchema,
   RewriteStageOutputSchema,
@@ -17,6 +19,8 @@ import {
   type EmbedStageOutput,
   type FilterStageOutput,
   type FuseStageOutput,
+  type GenerateStageInput,
+  type GenerateStageOutput,
   type RerankStageOutput,
   type RewriteStageInput,
   type RewriteStageOutput,
@@ -42,6 +46,7 @@ export type StageDetail =
   | { kind: "fuse"; output: FuseStageOutput }
   | { kind: "rerank"; output: RerankStageOutput }
   | { kind: "filter"; output: FilterStageOutput }
+  | { kind: "generate"; input: GenerateStageInput; output: GenerateStageOutput }
   | { kind: "tool"; input: ToolStageInput; output: ToolStageOutput }
   // A failed stage, a stage this reader does not know, or one whose stored shape changed.
   | { kind: "raw"; input: string; output: string };
@@ -93,6 +98,11 @@ function detailOf(stage: TraceStage): StageDetail | null {
       return withOutput("rerank", RerankStageOutputSchema, stage.output);
     case STAGE.filter:
       return withOutput("filter", FilterStageOutputSchema, stage.output);
+    case STAGE.generate: {
+      const input = parsed(GenerateStageInputSchema, stage.input);
+      const output = parsed(GenerateStageOutputSchema, stage.output);
+      return input && output ? { kind: "generate", input, output } : null;
+    }
     case STAGE.tool: {
       const input = parsed(ToolStageInputSchema, stage.input);
       const output = parsed(ToolStageOutputSchema, stage.output);

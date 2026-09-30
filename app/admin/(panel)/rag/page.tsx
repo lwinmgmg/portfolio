@@ -54,9 +54,14 @@ export default async function RagAdminPage() {
       <section className="space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-lg font-semibold">Active index</h2>
-          <Link href="/admin/rag/playground" className={`text-sm ${link}`}>
-            Open the retrieval playground →
-          </Link>
+          <span className="flex flex-wrap gap-x-4 gap-y-1">
+            <Link href="/admin/rag/playground" className={`text-sm ${link}`}>
+              Open the retrieval playground →
+            </Link>
+            <Link href="/admin/rag/traces" className={`text-sm ${link}`}>
+              Trace history →
+            </Link>
+          </span>
         </div>
         {active ? (
           <ActiveIndexSummary index={active} />

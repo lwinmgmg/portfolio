@@ -5,6 +5,7 @@ import {
   CHAT_MESSAGE_MAX_CHARS,
   CHAT_SESSION_MESSAGE_LIMIT,
   type ChatErrorCode,
+  type ChatFeedback,
   type ChatEvent,
   type ChatLimitCode,
   type ChatSource,
@@ -85,6 +86,11 @@ export type AssistantEntry = {
   reasoning: string;
   // The email the answer drafted, shown as a card with Send and Discard.
   emailDraft: EmailDraftCard | null;
+  // Where the answer sits in the stored conversation: the address of its feedback. Null until
+  // `done`, and for an answer the server did not store.
+  messageIndex: number | null;
+  // The visitor's thumb, once the server has accepted it.
+  feedback: ChatFeedback | null;
 };
 
 export type ChatEntry = UserEntry | AssistantEntry;
@@ -107,6 +113,7 @@ export type ChatAction =
   | { type: "end"; outcome: ChatStreamEnd }
   | { type: "fail"; notice: ChatNotice }
   | { type: "draft"; entryId: string; draftId: string; state: EmailDraftState }
+  | { type: "feedback"; entryId: string; value: ChatFeedback }
   | { type: "reset" };
 
 export const INITIAL_CHAT_STATE: ChatState = {
@@ -150,6 +157,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             steps: [],
             reasoning: "",
             emailDraft: null,
+            messageIndex: null,
+            feedback: null,
           },
         ],
       };
@@ -161,6 +170,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         entries: state.entries.map((entry) =>
           entry.role === "assistant" && entry.id === action.entryId && entry.emailDraft?.id === action.draftId
             ? { ...entry, emailDraft: { ...entry.emailDraft, state: action.state } }
+            : entry,
+        ),
+      };
+    case "feedback":
+      return {
+        ...state,
+        entries: state.entries.map((entry) =>
+          entry.role === "assistant" && entry.id === action.entryId
+            ? { ...entry, feedback: action.value }
             : entry,
         ),
       };
@@ -203,7 +221,10 @@ function applyEvent(state: ChatState, event: ChatEvent): ChatState {
         emailDraft: { id: event.draft.id, text: event.draft.text, state: "pending" },
       }));
     case "done":
-      return updatePending(state, (entry) => settle(entry, "done"));
+      return updatePending(state, (entry) => ({
+        ...settle(entry, "done"),
+        messageIndex: event.messageIndex,
+      }));
     case "error":
     case "limit":
       return settlePending({ ...state, notice: event.code });

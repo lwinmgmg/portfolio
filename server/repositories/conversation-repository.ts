@@ -6,16 +6,22 @@ import {
   CHAT_CONVERSATION_TTL_SECONDS,
   EMAIL_DRAFT_TTL_MS,
   EMAIL_SEND_STUCK_MS,
+  type ChatFeedback,
   type Conversation,
   type ConversationRepository,
   type EmailDraft,
   type EmailDraftStore,
+  type MessageFeedbackStore,
   type StoredMessage,
 } from "@/server/domain/chat";
 import { parseInstant } from "@/server/repositories/mongo-dates";
 import { MongoRepository } from "@/server/repositories/mongo-repository";
 
-type StoredMessageDocument = Omit<StoredMessage, "createdAt"> & { createdAt: Date };
+// `feedback` is absent in messages stored before Phase 2.11.
+type StoredMessageDocument = Omit<StoredMessage, "createdAt" | "feedback"> & {
+  feedback?: ChatFeedback | null;
+  createdAt: Date;
+};
 
 type EmailDraftDocument = Omit<EmailDraft, "createdAt" | "sentAt"> & {
   createdAt: Date;
@@ -38,7 +44,7 @@ type ConversationDocument = {
 
 export class MongoConversationRepository
   extends MongoRepository<Conversation, ConversationDocument>
-  implements ConversationRepository, EmailDraftStore
+  implements ConversationRepository, EmailDraftStore, MessageFeedbackStore
 {
   constructor(private readonly now: () => Date = () => new Date()) {
     super("chat_conversations");
@@ -54,6 +60,7 @@ export class MongoConversationRepository
         text: message.text,
         citedEntityKeys: [...message.citedEntityKeys],
         traceId: message.traceId,
+        feedback: message.feedback ?? null,
         createdAt: message.createdAt.toISOString(),
       })),
       emailDrafts: (document.emailDrafts ?? []).map((draft) => ({
@@ -118,6 +125,7 @@ export class MongoConversationRepository
       text: message.text,
       citedEntityKeys: [...message.citedEntityKeys],
       traceId: message.traceId,
+      feedback: message.feedback,
       createdAt: parseInstant(message.createdAt),
     }));
     const updatedAt = new Date(Math.max(...documents.map((message) => message.createdAt.getTime())));
@@ -271,6 +279,60 @@ export class MongoConversationRepository
         arrayFilters: [{ "stuck.status": "sending", "stuck.claimedAt": { $lt: claimedBefore } }],
       },
     );
+  }
+
+  // The filter names the message's role, so a user message (or an index past the end) matches
+  // nothing. The index is a number the caller checked, so it is safe as a field-path segment.
+  async setFeedback(
+    conversationId: string,
+    sessionId: string,
+    messageIndex: number,
+    value: ChatFeedback,
+  ): Promise<boolean> {
+    const objectId = this.parseId(conversationId);
+    if (!objectId || !Number.isSafeInteger(messageIndex) || messageIndex < 0) return false;
+    await this.ensureReady();
+    const result = await this.collection().updateOne(
+      { _id: objectId, sessionId, [`messages.${messageIndex}.role`]: "assistant" },
+      { $set: { [`messages.${messageIndex}.feedback`]: value } },
+    );
+    return result.matchedCount > 0;
+  }
+
+  async feedbackByTraceId(traceIds: readonly string[]): Promise<Map<string, ChatFeedback>> {
+    const found = new Map<string, ChatFeedback>();
+    if (traceIds.length === 0) return found;
+    await this.ensureReady();
+    const rows = await this.collection()
+      .aggregate<{ traceId: string; feedback: ChatFeedback }>([
+        { $match: { "messages.traceId": { $in: [...traceIds] } } },
+        { $unwind: "$messages" },
+        {
+          $match: {
+            "messages.traceId": { $in: [...traceIds] },
+            "messages.feedback": { $in: ["up", "down"] },
+          },
+        },
+        { $project: { _id: 0, traceId: "$messages.traceId", feedback: "$messages.feedback" } },
+      ])
+      .toArray();
+    for (const row of rows) found.set(row.traceId, row.feedback);
+    return found;
+  }
+
+  async traceIdsWithFeedback(value: ChatFeedback, limit: number): Promise<string[]> {
+    await this.ensureReady();
+    const rows = await this.collection()
+      .aggregate<{ traceId: string }>([
+        { $match: { messages: { $elemMatch: { feedback: value, traceId: { $ne: null } } } } },
+        { $sort: { updatedAt: -1 } },
+        { $limit: limit },
+        { $unwind: "$messages" },
+        { $match: { "messages.feedback": value, "messages.traceId": { $ne: null } } },
+        { $project: { _id: 0, traceId: "$messages.traceId" } },
+      ])
+      .toArray();
+    return rows.map((row) => row.traceId);
   }
 
   async countUserMessagesForSession(sessionId: string): Promise<number> {

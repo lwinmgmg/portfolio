@@ -19,7 +19,13 @@ import {
   type DiscardResult,
   type SendResult,
 } from "@/server/services/contact-email-service";
+import {
+  ChatFeedbackService,
+  type FeedbackRequest,
+  type FeedbackResult,
+} from "@/server/services/chat-feedback-service";
 import { getEmail } from "@/server/services/email-runtime";
+import { TraceHistoryService, type TraceHistoryFilter } from "@/server/services/trace-history-service";
 
 const conversations = new MongoConversationRepository();
 const indexes = new MongoRagIndexRepository();
@@ -91,3 +97,18 @@ export function sendContactEmail(request: ContactDraftRequest): Promise<SendResu
 export function discardContactEmail(request: ContactDraftRequest): Promise<DiscardResult> {
   return contactEmail.discard(request);
 }
+
+const feedback = new ChatFeedbackService(conversations);
+
+const traceHistory = new TraceHistoryService({ traces, feedback: conversations });
+
+// The visitor's thumb on an answer.
+export function rateChatAnswer(request: FeedbackRequest): Promise<FeedbackResult> {
+  return feedback.rate(request);
+}
+
+export function listTraceHistory(filter: TraceHistoryFilter) {
+  return traceHistory.list(filter);
+}
+
+export const getTraceDetail = cache((id: string) => traceHistory.get(id));

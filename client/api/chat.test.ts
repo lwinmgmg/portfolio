@@ -63,7 +63,7 @@ test("streams the events in order and reports a complete answer", async () => {
     { type: "reasoning", text: "The CV says Acme." },
     { type: "delta", text: "At Acme [S1]." },
     { type: "sources", sources: [SOURCE] },
-    { type: "done" },
+    { type: "done", messageIndex: null },
   ];
   const end = await withFetch([{ status: 200, body: lines(stream) }], async (calls) => {
     const result = await streamChat(REQUEST, (event) => events.push(event));
@@ -159,7 +159,7 @@ test("parseChatEvent accepts known events and rejects the rest", () => {
   expect(parseChatEvent({ type: "error", code: "boom" })).toBeNull();
   expect(parseChatEvent({ type: "delta", text: 3 })).toBeNull();
   expect(parseChatEvent({ type: "trace", id: "t1" })).toBeNull();
-  expect(parseChatEvent([{ type: "done" }])).toBeNull();
+  expect(parseChatEvent([{ type: "done", messageIndex: null }])).toBeNull();
   expect(
     parseChatEvent({ type: "sources", sources: [{ ...SOURCE, anchor: "javascript:alert(1)" }] }),
   ).toBeNull();

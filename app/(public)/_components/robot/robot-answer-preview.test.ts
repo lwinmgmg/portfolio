@@ -21,6 +21,8 @@ function answer(text: string): AssistantEntry {
     steps: [],
     reasoning: "",
     emailDraft: null,
+    messageIndex: null,
+    feedback: null,
   };
 }
 

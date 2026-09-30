@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { ChatAnswer } from "@/app/(public)/_components/chat/chat-answer";
+import { canRate, ChatFeedbackButtons } from "@/app/(public)/_components/chat/chat-feedback";
 import { ChatEmailDraft } from "@/app/(public)/_components/chat/chat-email-draft";
 import type { ChatEntry } from "@/app/(public)/_components/chat/chat-state";
 import { stepAnnouncement } from "@/app/(public)/_components/chat/chat-steps-text";
@@ -10,6 +11,7 @@ import { focusRing } from "@/app/(public)/_components/cv/cv-styles";
 import { Robot } from "@/app/(public)/_components/robot/robot";
 import { panelIntro } from "@/app/(public)/_components/robot/robot-greeting-text";
 import { ROBOT_NAME } from "@/app/(public)/_components/robot/robot-mood";
+import type { ChatFeedback } from "@/server/domain/chat";
 
 // How close to the bottom (px) still counts as following the answer.
 const FOLLOW_THRESHOLD = 48;
@@ -22,6 +24,7 @@ type ChatMessagesProps = {
   onNavigate: () => void;
   ownerName: string | null;
   onDraft: (entryId: string, action: "send" | "discard") => void;
+  onRate: (entryId: string, value: ChatFeedback) => void;
 };
 
 export function ChatMessages({
@@ -32,6 +35,7 @@ export function ChatMessages({
   onNavigate,
   ownerName,
   onDraft,
+  onRate,
 }: ChatMessagesProps) {
   const scroller = useRef<HTMLDivElement>(null);
   // Follows the stream only while the reader is at the bottom, so scrolling up to reread is not
@@ -108,6 +112,12 @@ export function ChatMessages({
               <li key={entry.id}>
                 <span className="sr-only">Assistant: </span>
                 <ChatAnswer entry={entry} onNavigate={onNavigate} />
+                {canRate(entry) ? (
+                  <ChatFeedbackButtons
+                    feedback={entry.feedback}
+                    onRate={(value) => onRate(entry.id, value)}
+                  />
+                ) : null}
                 {entry.emailDraft ? (
                   <ChatEmailDraft
                     draft={entry.emailDraft}

@@ -25,6 +25,7 @@ Newest first:
 
 | Commit | What it is |
 |---|---|
+| (next) | Phase 2.11. `/admin/rag/traces` (list with kind and 👎 filters) and `/admin/rag/traces/[traceId]` (trace view, `generate` panel, feedback, "Add to golden set" download built in the browser). `POST /api/public/chat/feedback`, `MessageFeedbackStore` on the conversation repository, thumbs under a finished answer. `ChatEvent` `done` now has `messageIndex` (server: conversation length + 1 at reply time; null when the turn was not stored). Built, not browser-checked. |
 | (next) | Phase 2.15 steps 1–2. `QueryScope` gains `injection` (rewriter schema and prompt, first in `scopeDefinitions`; `RouteScope` excludes it and `routeCriteria` folds it into `cv`); probe set has 12 injection and 8 look-alike items; `scripts/probe-scope-router.ts --rewriter`, `summarizeRewriter`, `injectionsShortCircuited`. Compile-only stubs for the new scope in trace schema, trace view, stage panel and step labels. Stopped at the step 2 checkpoint (see below). |
 | (next) | Phase 5.6. Section remarks: `sectionRemarks` (pure lines with counts), `useSectionRemarks` on `useScrollSpy`'s new `onChange`, `cv-chat:remarked` in sessionStorage, a `remark` bubble ("Note from Bit"). Once per section per tab, only after the greeting, closes when another section becomes current (owner's choice over the planned 6 s). Built; hand browser checks wait for the owner. |
 | `4306a5c` | Phase 5.7 (owner's request). The robot acts out the steps before the answer: moods `searching`, `reading`, `writing` (props: magnifier, page, envelope), and `robotMood` picks the mood of the latest running step while no answer text has arrived (`STEP_MOODS` in `robot-mood.ts`). Built; the look and browser checks wait for the owner. |
@@ -563,3 +564,12 @@ Do not move the `getLlm()` cache back onto `globalThis`. A client shared across 
 - Do not add `serverExternalPackages` unless a build failure requires it.
 - Do not run the RAG index build inside the publish transaction or await it in the publish action. It runs in `after()` through `ragPublishListener`.
 - Do not create the RAG runtime (`getRag()`) at module scope.
+
+
+## Trace history and feedback (Phase 2.11)
+
+- `StoredMessage.feedback` (`"up" | "down" | null`; absent in older documents reads as null). `MessageFeedbackStore` (`setFeedback`, `feedbackByTraceId`, `traceIdsWithFeedback`) is implemented by `MongoConversationRepository`. `setFeedback` filters on the session id and on `messages.<i>.role = assistant`, so a visitor cannot rate another's conversation or a user message.
+- The client learns an answer's index from `done.messageIndex` and shows a thumb only after the server accepted it (`rateAnswer` in `use-chat`). An answer whose turn was not stored has no index and no thumbs. Two tabs answering in one conversation at once could misaddress an index; accepted.
+- `RagTraceRepository.list(limit, { kind, ids })`. `TraceHistoryService` (wired in `chat-runtime`) builds `TraceSummary` rows (`summarizeTrace`) and `TraceDetail` with `goldenSnippetFor`. The 👎 filter reads conversations first (up to 100), then the matching traces; it implies kind `chat`.
+- A trace whose router short-circuited has no `rewrite` stage, so its list row shows "(question not recorded)" and it has no golden snippet.
+- `readTrace` now parses the `generate` stage (`kind: "generate"`), shown in the trace view as a panel with the answer, tokens and reasoning.

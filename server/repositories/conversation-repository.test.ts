@@ -42,6 +42,7 @@ function message(role: StoredMessage["role"], createdAt: string): StoredMessage 
     text: `${role} text`,
     citedEntityKeys: role === "assistant" ? ["experience:acme"] : [],
     traceId: role === "assistant" ? "trace-1" : null,
+    feedback: null,
     createdAt,
   };
 }
@@ -104,6 +105,7 @@ test("findForSession filters by id and owner and maps dates to ISO strings", asy
             text: "Hi [S1]",
             citedEntityKeys: ["profile"],
             traceId: "trace-1",
+            feedback: null,
             createdAt: now,
           },
         ],
@@ -126,6 +128,7 @@ test("findForSession filters by id and owner and maps dates to ISO strings", asy
       text: "Hi [S1]",
       citedEntityKeys: ["profile"],
       traceId: "trace-1",
+      feedback: null,
       createdAt: now.toISOString(),
     },
   ]);
@@ -272,6 +275,7 @@ test("append pushes the messages as BSON dates and moves updatedAt forward", asy
             text: "user text",
             citedEntityKeys: [],
             traceId: null,
+            feedback: null,
             createdAt: new Date("2026-09-29T10:00:00.000Z"),
           },
           {
@@ -279,6 +283,7 @@ test("append pushes the messages as BSON dates and moves updatedAt forward", asy
             text: "assistant text",
             citedEntityKeys: ["experience:acme"],
             traceId: "trace-1",
+            feedback: null,
             createdAt: new Date("2026-09-29T10:00:05.000Z"),
           },
         ],
@@ -536,4 +541,67 @@ test("failEmailDraftsStuckSince fails every draft claimed before the cutoff and 
       { arrayFilters: [{ "stuck.status": "sending", "stuck.claimedAt": { $lt: cutoff } }] },
     ],
   ]);
+});
+
+test("setFeedback rates only an assistant message of the session's conversation", async () => {
+  const calls: unknown[][] = [];
+  const matched = [1, 0];
+  activeCollection = readyCollection({
+    updateOne: async (...args: unknown[]) => {
+      calls.push(args);
+      return { matchedCount: matched.shift() ?? 0 };
+    },
+  });
+  const repository = new MongoConversationRepository();
+
+  expect(await repository.setFeedback(conversationId, "s1", 3, "down")).toBe(true);
+  expect(await repository.setFeedback(conversationId, "s1", 1, "up")).toBe(false);
+  expect(await repository.setFeedback("nope", "s1", 1, "up")).toBe(false);
+  expect(await repository.setFeedback(conversationId, "s1", -1, "up")).toBe(false);
+  expect(await repository.setFeedback(conversationId, "s1", 1.5, "up")).toBe(false);
+
+  expect(calls).toHaveLength(2);
+  const [filter, update] = calls[0] as [Record<string, unknown>, unknown];
+  expect(filter.sessionId).toBe("s1");
+  expect(filter["messages.3.role"]).toBe("assistant");
+  expect(update).toEqual({ $set: { "messages.3.feedback": "down" } });
+});
+
+test("feedbackByTraceId maps rated traces, and reads nothing for no ids", async () => {
+  let aggregated = 0;
+  activeCollection = readyCollection({
+    aggregate: () => {
+      aggregated += 1;
+      return {
+        toArray: async () => [
+          { traceId: "t1", feedback: "down" },
+          { traceId: "t3", feedback: "up" },
+        ],
+      };
+    },
+  });
+  const repository = new MongoConversationRepository();
+
+  expect(await repository.feedbackByTraceId([])).toEqual(new Map());
+  expect(aggregated).toBe(0);
+  expect(await repository.feedbackByTraceId(["t1", "t2", "t3"])).toEqual(
+    new Map([
+      ["t1", "down"],
+      ["t3", "up"],
+    ]),
+  );
+});
+
+test("traceIdsWithFeedback lists the trace ids of answers with that thumb", async () => {
+  const pipelines: unknown[] = [];
+  activeCollection = readyCollection({
+    aggregate: (pipeline: unknown) => {
+      pipelines.push(pipeline);
+      return { toArray: async () => [{ traceId: "t1" }, { traceId: "t9" }] };
+    },
+  });
+  const repository = new MongoConversationRepository();
+
+  expect(await repository.traceIdsWithFeedback("down", 50)).toEqual(["t1", "t9"]);
+  expect(JSON.stringify(pipelines[0])).toContain('"feedback":"down"');
 });

@@ -59,6 +59,8 @@ const ANSWER: AssistantEntry = {
   ],
   reasoning: "The CV says Acme.",
   emailDraft: null,
+  messageIndex: null,
+  feedback: null,
 };
 
 // Stopped while reasoning: no text, and the running step marked stopped.
@@ -71,6 +73,8 @@ const STOPPED: AssistantEntry = {
   steps: [{ name: "reasoning", status: "stopped", startedAt: 5, durationMs: null, detail: null }],
   reasoning: "Looking",
   emailDraft: { id: "d1", text: "Hi Lwin,\nI'm Jane.", state: "sent" },
+  messageIndex: null,
+  feedback: null,
 };
 
 const ENTRIES: ChatEntry[] = [
@@ -246,4 +250,16 @@ test("remarked sections accumulate once each and drop unknown values", () => {
   expect(readRemarked(storage)).toEqual([]);
   storage.setItem(REMARKED_KEY, '{"projects":true}');
   expect(readRemarked(storage)).toEqual([]);
+});
+
+test("a stored rating and message index come back; an entry stored before them loads without", () => {
+  const storage = new MemoryStorage();
+  writeStoredChat(storage, {
+    conversationId: "c1",
+    entries: [QUESTION, { ...ANSWER, messageIndex: 1, feedback: "up" }],
+  });
+  expect(readStoredChat(storage).entries[1]).toMatchObject({ messageIndex: 1, feedback: "up" });
+
+  storedWith(storage, { messageIndex: undefined, feedback: undefined });
+  expect(readStoredChat(storage).entries[1]).toMatchObject({ messageIndex: null, feedback: null });
 });

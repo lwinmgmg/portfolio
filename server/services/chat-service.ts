@@ -281,10 +281,10 @@ export class ChatService {
   // LLM call.
   private async *fixedReply(turn: Turn, text: string): AsyncGenerator<ChatEvent, void, undefined> {
     yield { type: "delta", text };
-    await this.appendTurn(turn, text, []);
+    const messageIndex = await this.appendTurn(turn, text, []);
     await this.saveTrace(turn.retrieval.trace);
     yield { type: "sources", sources: [] };
-    yield { type: "done" };
+    yield { type: "done", messageIndex };
   }
 
   private async *generate(
@@ -332,6 +332,7 @@ export class ChatService {
     let error: string | null = null;
     let sources: ChatSource[] = [];
     let ended = started;
+    let messageIndex: number | null = null;
     try {
       try {
         const loop = runAnswerLoop({
@@ -418,7 +419,7 @@ export class ChatService {
       const trace = withGenerateStage(turn, input, output, error, started, ended, toolStages);
       // A failed answer is not stored, so it does not count toward the limits.
       if (outcome !== "failed") {
-        await this.appendTurn(turn, stopped ? stoppedText(text) : text, sources, trace.id);
+        messageIndex = await this.appendTurn(turn, stopped ? stoppedText(text) : text, sources, trace.id);
       }
       await this.saveTrace(trace);
     }
@@ -431,23 +432,26 @@ export class ChatService {
     if (outcome === "stopped") return;
     yield* steps.end(ended, null);
     yield { type: "sources", sources };
-    yield { type: "done" };
+    yield { type: "done", messageIndex };
   }
 
-  // Persistence failures are logged; the visitor already has the answer.
+  // Persistence failures are logged; the visitor already has the answer. Returns where the
+  // answer now sits in the conversation (the address of its feedback), or null when not stored.
   private async appendTurn(
     turn: Turn,
     text: string,
     sources: readonly ChatSource[],
     traceId: string = turn.retrieval.trace.id,
-  ): Promise<void> {
+  ): Promise<number | null> {
     try {
       await this.deps.conversations.append(turn.conversation.id, [
         turn.userMessage,
         this.stored("assistant", text, citedEntityKeys(sources), traceId),
       ]);
+      return turn.conversation.messages.length + 1;
     } catch (error) {
       this.log("Could not store the chat messages.", error);
+      return null;
     }
   }
 
@@ -465,7 +469,14 @@ export class ChatService {
     entityKeys: string[],
     traceId: string | null,
   ): StoredMessage {
-    return { role, text, citedEntityKeys: entityKeys, traceId, createdAt: this.now().toISOString() };
+    return {
+      role,
+      text,
+      citedEntityKeys: entityKeys,
+      traceId,
+      feedback: null,
+      createdAt: this.now().toISOString(),
+    };
   }
 }
 
